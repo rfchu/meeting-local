@@ -1,0 +1,140 @@
+import io, wave
+import pytest
+from fastapi.testclient import TestClient
+from app.main import create_app
+from app.db import uid,encode
+from app.providers import attach_speakers
+from app.worker import Cancelled
+
+def wav_bytes(seconds=1):
+    out=io.BytesIO()
+    with wave.open(out,'wb') as wav:
+        wav.setnchannels(1);wav.setsampwidth(2);wav.setframerate(16000);wav.writeframes(b'\0\0'*int(16000*seconds))
+    return out.getvalue()
+
+@pytest.fixture
+def client(tmp_path):
+    with TestClient(create_app(tmp_path,start_worker=False)) as c: yield c
+
+def upload(c):
+    r=c.post('/api/meetings',files={'file':('测试会议.wav',wav_bytes(),'audio/wav')})
+    assert r.status_code==201
+    return r.json()['id']
+
+def sample():return [{'id':'seg1','start':0,'end':.5,'text':'确定周五交付。','speaker':'发言人 1','boundary_review':False}]
+
+def test_meeting_can_be_renamed(client):
+    mid=upload(client)
+    response=client.patch(f'/api/meetings/{mid}',json={'title':'新的会议名称'})
+    assert response.status_code==200
+    assert client.get(f'/api/meetings/{mid}').json()['title']=='新的会议名称'
+
+def test_version_conflict_export_and_range(client):
+    mid=upload(client)
+    assert client.put(f'/api/meetings/{mid}/transcript',json={'revision':0,'segments':sample()}).json()['revision']==1
+    assert client.put(f'/api/meetings/{mid}/transcript',json={'revision':0,'segments':sample()}).status_code==409
+    edited=sample();edited[0]['text']='确定下周五交付。'
+    assert client.put(f'/api/meetings/{mid}/transcript',json={'revision':1,'segments':edited}).status_code==200
+    assert client.get(f'/api/meetings/{mid}/revisions/1').json()['segments']==sample()
+    srt=client.get(f'/api/meetings/{mid}/export/srt')
+    assert '00:00:00,000 --> 00:00:00,500' in srt.text
+    assert '下周五' in srt.text
+    assert client.get(f'/api/meetings/{mid}/audio',headers={'Range':'bytes=0-15'}).status_code==206
+    for fmt in ['txt','md','json']: assert client.get(f'/api/meetings/{mid}/export/{fmt}').status_code==200
+
+def test_upload_validation_and_origin(client):
+    assert client.post('/api/meetings',files={'file':('a.exe',b'x')}).status_code==400
+    assert client.post('/api/meetings',files={'file':('a.wav',b'')}).status_code==400
+    assert client.post('/api/meetings',headers={'origin':'https://evil.test'},files={'file':('a.wav',b'x')}).status_code==403
+    assert client.get('/api/status',headers={'host':'evil.test'}).status_code==403
+    assert client.get('/api/meetings').json()==[]
+
+def test_duplicate_segments_and_invalid_times(client):
+    mid=upload(client);s=sample()
+    assert client.put(f'/api/meetings/{mid}/transcript',json={'revision':0,'segments':s+s}).status_code==400
+    s[0]['end']=-1
+    assert client.put(f'/api/meetings/{mid}/transcript',json={'revision':0,'segments':s}).status_code==422
+
+def test_queue_cancel_retry_delete(client,monkeypatch):
+    monkeypatch.setattr('app.main.WhisperCpp.ready',lambda _:True)
+    mid=upload(client)
+    r=client.post(f'/api/meetings/{mid}/jobs',json={});assert r.status_code==201
+    jid=r.json()['id']
+    assert client.post(f'/api/meetings/{mid}/jobs',json={}).status_code==409
+    assert client.delete(f'/api/meetings/{mid}').status_code==409
+    assert client.post(f'/api/jobs/{jid}/cancel').status_code==200
+    assert client.post(f'/api/jobs/{jid}/retry').status_code==200
+    client.post(f'/api/jobs/{jid}/cancel')
+    assert client.delete(f'/api/meetings/{mid}').status_code==200
+    assert client.get(f'/api/meetings/{mid}').status_code==404
+    assert not client.app.state.store.directory(mid).exists()
+
+def test_speaker_overlap_aggregation():
+    turns=[{'start':0,'end':1,'speaker':'A'},{'start':1,'end':2.5,'speaker':'B'},{'start':2.5,'end':4,'speaker':'A'}]
+    assert attach_speakers([{'start':0,'end':4,'speaker':'unknown'}],turns)[0]['speaker']=='A'
+
+def test_checkpoint_reuse_preserves_manual_edit(client,monkeypatch):
+    mid=upload(client);store=client.app.state.store;worker=client.app.state.worker
+    jid=uid();config={'base_revision':0,'diarization':False,'punctuation':False,'pipeline_version':2}
+    store.execute('INSERT INTO jobs(id,meeting_id,state,stage,config) VALUES(?,?,?,?,?)',(jid,mid,'running','test',encode(config)))
+    folder=store.directory(mid)/jid;folder.mkdir();(folder/'audio.wav').write_bytes(wav_bytes())
+    (folder/'chunk-0.checkpoint.json').write_text(encode(sample()))
+    monkeypatch.setattr('app.worker.WhisperCpp.ready',lambda _:True)
+    monkeypatch.setattr('app.worker.WhisperCpp.transcribe',lambda *_:pytest.fail('should reuse checkpoint'))
+    store.save_revision(mid,[dict(sample()[0],text='人工校对')],'manual',expected=0)
+    worker.process(store.one('SELECT * FROM jobs WHERE id=?',(jid,)))
+    result=client.get(f'/api/meetings/{mid}').json()
+    assert result['segments'][0]['text']=='人工校对'
+    assert result['artifacts'][0]['kind']=='transcript_candidate'
+    assert result['jobs'][0]['state']=='completed'
+
+def test_cancelled_job_will_not_publish(client):
+    mid=upload(client);store=client.app.state.store;jid=uid()
+    store.execute('INSERT INTO jobs(id,meeting_id,state,stage,config) VALUES(?,?,?,?,?)',(jid,mid,'cancelled','test','{}'))
+    with pytest.raises(Cancelled):client.app.state.worker.check(jid)
+    assert client.get(f'/api/meetings/{mid}').json()['revision']==0
+
+def test_future_analysis_citations_and_staleness(client):
+    from app.analysis import AnalysisResult, AnalysisItem, save_analysis
+    mid=upload(client);store=client.app.state.store
+    store.save_revision(mid,sample(),'manual',expected=0)
+    result=AnalysisResult(kind='action_items',items=[AnalysisItem(content='交付',source_segment_ids=['seg1'])])
+    save_analysis(store,mid,1,result,{'model':'test','template_version':'1'})
+    assert not client.get(f'/api/meetings/{mid}').json()['artifacts'][0]['stale']
+    store.save_revision(mid,sample(),'manual',expected=1)
+    assert client.get(f'/api/meetings/{mid}').json()['artifacts'][0]['stale']
+    result.items[0].source_segment_ids=['missing']
+    with pytest.raises(ValueError):save_analysis(store,mid,1,result,{})
+
+def test_single_worker_lock_and_restart_requeues(client):
+    from app.worker import Worker
+    from app.db import Store
+    worker=client.app.state.worker
+    # Keep the actual loop idle while testing its recovery and lock behavior.
+    worker.loop=lambda:None
+    mid=upload(client);jid=uid()
+    client.app.state.store.execute('INSERT INTO jobs(id,meeting_id,state,stage,config) VALUES(?,?,?,?,?)',(jid,mid,'running','test','{}'))
+    worker.start()
+    try:
+        assert client.app.state.store.one('SELECT state FROM jobs WHERE id=?',(jid,))['state']=='queued'
+        other=Worker(Store(client.app.state.store.root))
+        with pytest.raises(RuntimeError):other.start()
+    finally: worker.close()
+
+def test_different_boundary_segmentation_does_not_drop_words():
+    from app.providers import merge_overlapping_chunks
+    first=[{'start':297.91,'end':300.31,'text':'和你们一起走过很多很多的路'},
+           {'start':300.31,'end':301.25,'text':'坚持到底'}]
+    second=[{'start':298.35,'end':301.25,'text':'我们一起走过很多很多的路,坚持到底'},
+            {'start':301.25,'end':309.04,'text':'下面播放下一条音频'}]
+    result=merge_overlapping_chunks([first,second])
+    assert ''.join(x['text'] for x in result)=='和你们一起走过很多很多的路坚持到底下面播放下一条音频'
+
+def test_overlap_preserves_new_suffix_and_uncertain_text():
+    from app.providers import merge_overlapping_chunks
+    first=[{'start':0,'end':5,'text':'我们明天一起讨论'}]
+    second=[{'start':4,'end':8,'text':'一起讨论，交付计划'}]
+    result=merge_overlapping_chunks([first,second])
+    assert result[1]['text']=='交付计划'
+    uncertain=merge_overlapping_chunks([first,[{'start':4,'end':6,'text':'另外一个声音'}]])
+    assert uncertain[1]['boundary_review']

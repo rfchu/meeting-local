@@ -1,0 +1,30 @@
+{
+  "whisper_cpp_commit": "d09f61a708f3487afa956ff578e60eae5e7a233c",
+  "files": [
+    {
+      "file": "models/ggml-large-v3-turbo.bin",
+      "bytes": 1624555275,
+      "sha256": "1fc70f774d38eb169993ac391eea357ef47c88757ef72ee5943879b7e8e2bc69"
+    },
+    {
+      "file": "models/ggml-silero-v6.2.0.bin",
+      "bytes": 885098,
+      "sha256": "2aa269b785eeb53a82983a20501ddf7c1d9c48e33ab63a41391ac6c9f7fb6987"
+    },
+    {
+      "file": "models/3dspeaker.onnx",
+      "bytes": 39593761,
+      "sha256": "1a331345f04805badbb495c775a6ddffcdd1a732567d5ec8b3d5749e3c7a5e4b"
+    },
+    {
+      "file": "models/sherpa-onnx-pyannote-segmentation-3-0/model.onnx",
+      "bytes": 5992913,
+      "sha256": "220ad67ca923bef2fa91f2390c786097bf305bceb5e261d4af67b38e938e1079"
+    },
+    {
+      "file": "models/sherpa-onnx-punct-ct-transformer-zh-en-vocab272727-2024-04-12-int8/model.int8.onnx",
+      "bytes": 75519198,
+      "sha256": "65a3fb9f5ad7bfb96bf69e0dc4481df97f6ee60513c1d94ce981ba6effd524b1"
+    }
+  ]
+}
