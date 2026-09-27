@@ -9,6 +9,31 @@ from .db import uid, encode
 BASE=Path(__file__).resolve().parents[1]
 TEMPLATE_VERSION='meeting-analysis-v1'
 SECTION_NAMES=('summary','key_points','decisions','action_items','open_questions')
+DEFAULT_CONTEXT_WINDOW=32768
+
+
+def context_window_from_metadata(row):
+    """Read common, non-standard context-window fields from model metadata."""
+    if not isinstance(row,dict):return None
+    sources=[row]
+    for key in ('capabilities','metadata','config'):
+        if isinstance(row.get(key),dict):sources.append(row[key])
+    for source in sources:
+        for key in ('context_window','context_length','max_context_length','max_model_len','max_position_embeddings'):
+            value=source.get(key)
+            if isinstance(value,(int,float)) and not isinstance(value,bool) and 4096<=value<=2_000_000:
+                return int(value)
+    return None
+
+
+def analysis_chunk_chars(context_window):
+    """Convert model tokens to a conservative character budget for cited JSON extraction."""
+    window=max(4096,min(2_000_000,int(context_window or DEFAULT_CONTEXT_WINDOW)))
+    # Use at most 60% of context, reserve 8K output and prompt/schema overhead,
+    # and cap long-context extraction so detail recall stays reliable.
+    budget=int((window*.6-8192)*.75)
+    budget=(budget//1000)*1000
+    return max(8000,min(48000,budget))
 
 class AnalysisItem(BaseModel):
     content: str=Field(min_length=1)
@@ -254,7 +279,9 @@ def validate_llm_endpoint(provider_type,base_url):
 
 
 def public_llm_config(row):
+    context_window=int(row.get('context_window') or DEFAULT_CONTEXT_WINDOW)
     return {key:row[key] for key in ('id','name','provider_type','base_url','model','is_default','created','updated')} | {
+        'context_window':context_window,'analysis_max_chars':analysis_chunk_chars(context_window),
         'is_default':bool(row['is_default']),'has_api_key':bool(row.get('api_key'))}
 
 
@@ -265,9 +292,11 @@ class OpenAICompatibleProvider(LMStudioProvider):
         self.provider_type=self.profile['provider_type']
         self.base_url=validate_llm_endpoint(self.provider_type,self.profile['base_url'])
         self.token=self.profile.get('api_key','')
+        self._catalog_cache=None
         if self.provider_type=='cloud' and not self.token:raise ValueError('云端模型需要 API Key')
 
-    def models(self,timeout=8):
+    def model_catalog(self,timeout=8):
+        if self._catalog_cache is not None:return self._catalog_cache
         request=urllib.request.Request(self.base_url+'/models',headers=self._headers())
         try:
             with urllib.request.urlopen(request,timeout=timeout) as response:payload=json.load(response)
@@ -276,7 +305,15 @@ class OpenAICompatibleProvider(LMStudioProvider):
             raise RuntimeError(f'模型服务返回 HTTP {error.code}') from error
         except (urllib.error.URLError,TimeoutError) as error:
             raise RuntimeError('无法连接模型服务，请检查地址和服务状态') from error
-        return [row['id'] for row in payload.get('data',[]) if isinstance(row,dict) and row.get('id')]
+        self._catalog_cache=[row for row in payload.get('data',[]) if isinstance(row,dict) and row.get('id')]
+        return self._catalog_cache
+
+    def models(self,timeout=8):
+        return [row['id'] for row in self.model_catalog(timeout)]
+
+    def model_context_window(self,model,timeout=8):
+        row=next((item for item in self.model_catalog(timeout) if item['id']==model),None)
+        return context_window_from_metadata(row)
 
     def resolve_model(self,requested=None):
         model=(requested or self.profile.get('model') or '').strip()

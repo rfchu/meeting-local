@@ -93,10 +93,14 @@ export const api = {
       ? request<LLMConfig>(`/llm-configs/${body.config_id}`, json("PUT", body))
       : request<LLMConfig>("/llm-configs", json("POST", body)),
   testConfig: (body: LLMConfigInput) =>
-    request<{ ok: boolean; models: string[]; model_available: boolean }>(
-      "/llm-configs/test",
-      json("POST", body),
-    ),
+    request<{
+      ok: boolean;
+      models: string[];
+      model_available: boolean;
+      detected_context_window: number | null;
+      effective_context_window: number;
+      analysis_max_chars: number;
+    }>("/llm-configs/test", json("POST", body)),
   deleteConfig: (id: string) =>
     request(`/llm-configs/${id}`, { method: "DELETE" }),
 };

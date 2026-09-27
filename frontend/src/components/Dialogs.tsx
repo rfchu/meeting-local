@@ -96,6 +96,7 @@ const emptyConfig = (hasConfigs: boolean): LLMConfigInput => ({
   provider_type: "local",
   base_url: "http://127.0.0.1:1234/v1",
   model: "",
+  context_window: 32768,
   api_key: "",
   is_default: !hasConfigs,
 });
@@ -129,6 +130,7 @@ export function ModelConfigDialog({
       provider_type: config.provider_type,
       base_url: config.base_url,
       model: config.model,
+      context_window: config.context_window,
       api_key: "",
       is_default: config.is_default,
     });
@@ -249,6 +251,30 @@ export function ModelConfigDialog({
             />
           </label>
           <label>
+            上下文窗口（tokens）
+            <input
+              type="number"
+              required
+              min={4096}
+              max={2000000}
+              step={1024}
+              value={form.context_window}
+              onChange={(e) => field("context_window", Number(e.target.value))}
+            />
+          </label>
+          <small>
+            当前将按约{" "}
+            {(
+              Math.floor(
+                Math.max(
+                  8000,
+                  Math.min(48000, (form.context_window * 0.6 - 8192) * 0.75),
+                ) / 1000,
+              ) * 1000
+            ).toLocaleString()}{" "}
+            个字符自动分块；测试连接会在接口提供元数据时自动回填。
+          </small>
+          <label>
             API Key
             <input
               type="password"
@@ -297,9 +323,13 @@ export function ModelConfigDialog({
                 setResult("正在连接模型服务…");
                 try {
                   const value = await api.testConfig(form);
+                  if (value.detected_context_window)
+                    field("context_window", value.detected_context_window);
                   setResult(
                     value.model_available
-                      ? `连接成功，已找到模型（共 ${value.models.length} 个）`
+                      ? value.detected_context_window
+                        ? `连接成功，已自动识别 ${value.detected_context_window.toLocaleString()} tokens 上下文窗口；分析分块约 ${value.analysis_max_chars.toLocaleString()} 字符`
+                        : `连接成功，已找到模型；接口未返回上下文长度，继续使用填写值 ${value.effective_context_window.toLocaleString()} tokens`
                       : `连接成功，但模型列表中没有“${form.model}”`,
                   );
                 } catch (error) {

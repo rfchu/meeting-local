@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 from .db import Store, uid, encode
 from .worker import Worker
 from .providers import WhisperCpp, get_asr_provider, engine_catalog, LocalDiarization, LocalPunctuation
-from .analysis import LMStudioProvider,OpenAICompatibleProvider,MeetingAnalysis,validate_llm_endpoint,public_llm_config,TEMPLATE_VERSION,SECTION_NAMES
+from .analysis import LMStudioProvider,OpenAICompatibleProvider,MeetingAnalysis,validate_llm_endpoint,public_llm_config,analysis_chunk_chars,TEMPLATE_VERSION,SECTION_NAMES
 from .minutes import MeetingMinutes,build_minutes,build_ai_minutes,apply_polished_minutes,validate_minutes_citations,minutes_markdown,minutes_docx,minutes_pdf,MINUTES_VERSION
 
 BASE=Path(__file__).resolve().parents[1]
@@ -38,6 +38,7 @@ class LLMConfigInput(BaseModel):
     provider_type: Literal['local','cloud']
     base_url: str=Field(min_length=1,max_length=1000)
     model: str=Field(min_length=1,max_length=500)
+    context_window: int=Field(default=32768,ge=4096,le=2_000_000)
     api_key: str | None=Field(default=None,max_length=10000)
     is_default: bool=False
     clear_api_key: bool=False
@@ -118,7 +119,7 @@ def create_app(data_dir=None, start_worker=True):
         except ValueError as error:raise HTTPException(400,str(error))
         api_key=(body.api_key or '').strip()
         if body.provider_type=='cloud' and not api_key:raise HTTPException(400,'云端模型需要 API Key')
-        return base_url,api_key
+        return base_url,api_key,body.context_window
 
     @app.get('/api/llm-configs')
     def list_llm_configs():
@@ -132,25 +133,31 @@ def create_app(data_dir=None, start_worker=True):
         api_key=(body.api_key or '').strip() or (old['api_key'] if old else '')
         if body.provider_type=='cloud' and not api_key:raise HTTPException(400,'云端模型需要 API Key')
         profile={'provider_type':body.provider_type,'base_url':base_url,'model':body.model.strip(),'api_key':api_key}
-        result=OpenAICompatibleProvider(profile).status()
+        provider=OpenAICompatibleProvider(profile);result=provider.status()
         if not result['ready']:raise HTTPException(409,result['error'])
-        return {'ok':True,'models':result['models'],'model_available':body.model.strip() in result['models']}
+        detected=provider.model_context_window(body.model.strip()) if body.model.strip() in result['models'] else None
+        effective=detected or body.context_window
+        return {'ok':True,'models':result['models'],'model_available':body.model.strip() in result['models'],
+            'detected_context_window':detected,'effective_context_window':effective,'analysis_max_chars':analysis_chunk_chars(effective)}
 
     @app.post('/api/llm-configs/{cid}/test')
     def test_saved_llm_config(cid:str):
-        profile=llm_config(cid);result=OpenAICompatibleProvider(profile).status()
+        profile=llm_config(cid);provider=OpenAICompatibleProvider(profile);result=provider.status()
         if not result['ready']:raise HTTPException(409,result['error'])
-        return {'ok':True,'models':result['models'],'model_available':profile['model'] in result['models']}
+        detected=provider.model_context_window(profile['model']) if profile['model'] in result['models'] else None
+        effective=detected or profile['context_window']
+        return {'ok':True,'models':result['models'],'model_available':profile['model'] in result['models'],
+            'detected_context_window':detected,'effective_context_window':effective,'analysis_max_chars':analysis_chunk_chars(effective)}
 
     @app.post('/api/llm-configs',status_code=201)
     def create_llm_config(body:LLMConfigInput):
-        base_url,api_key=checked_config(body);cid=uid()
+        base_url,api_key,context_window=checked_config(body);cid=uid()
         with store.connect() as db:
             db.execute('BEGIN IMMEDIATE')
             make_default=body.is_default or not db.execute('SELECT 1 FROM llm_configs LIMIT 1').fetchone()
             if make_default:db.execute('UPDATE llm_configs SET is_default=0')
-            db.execute('INSERT INTO llm_configs(id,name,provider_type,base_url,model,api_key,is_default) VALUES(?,?,?,?,?,?,?)',
-                (cid,body.name.strip(),body.provider_type,base_url,body.model.strip(),api_key,int(make_default)))
+            db.execute('INSERT INTO llm_configs(id,name,provider_type,base_url,model,api_key,is_default,context_window) VALUES(?,?,?,?,?,?,?,?)',
+                (cid,body.name.strip(),body.provider_type,base_url,body.model.strip(),api_key,int(make_default),context_window))
         return public_llm_config(llm_config(cid))
 
     @app.put('/api/llm-configs/{cid}')
@@ -163,8 +170,8 @@ def create_app(data_dir=None, start_worker=True):
         with store.connect() as db:
             db.execute('BEGIN IMMEDIATE')
             if body.is_default:db.execute('UPDATE llm_configs SET is_default=0')
-            db.execute('UPDATE llm_configs SET name=?,provider_type=?,base_url=?,model=?,api_key=?,is_default=?,updated=CURRENT_TIMESTAMP WHERE id=?',
-                (body.name.strip(),body.provider_type,base_url,body.model.strip(),api_key,int(body.is_default or old['is_default']),cid))
+            db.execute('UPDATE llm_configs SET name=?,provider_type=?,base_url=?,model=?,api_key=?,is_default=?,context_window=?,updated=CURRENT_TIMESTAMP WHERE id=?',
+                (body.name.strip(),body.provider_type,base_url,body.model.strip(),api_key,int(body.is_default or old['is_default']),body.context_window,cid))
         return public_llm_config(llm_config(cid))
 
     @app.delete('/api/llm-configs/{cid}')
@@ -252,7 +259,7 @@ def create_app(data_dir=None, start_worker=True):
         try:
             if profile:
                 provider=OpenAICompatibleProvider(profile);model=provider.resolve_model(body.model)
-                provider_snapshot={'id':profile['id'],'name':profile['name'],'provider_type':profile['provider_type'],'base_url':profile['base_url']}
+                provider_snapshot={'id':profile['id'],'name':profile['name'],'provider_type':profile['provider_type'],'base_url':profile['base_url'],'context_window':profile['context_window']}
             else:
                 provider=LMStudioProvider();model=provider.resolve_model(body.model);provider_snapshot={'name':'LM Studio','provider_type':'local','base_url':getattr(provider,'base_url','http://127.0.0.1:1234/v1')}
         except (RuntimeError,ValueError) as error:raise HTTPException(409,str(error))
@@ -260,7 +267,9 @@ def create_app(data_dir=None, start_worker=True):
         with store.connect() as db:
             db.execute('BEGIN IMMEDIATE')
             if db.execute("SELECT 1 FROM jobs WHERE meeting_id=? AND state IN ('running','queued')",(mid,)).fetchone():raise HTTPException(409,'已有任务正在处理')
-            config={'revision':row['revision'],'profile_id':profile['id'] if profile else None,'provider':provider_snapshot,'model':model,'template_version':TEMPLATE_VERSION,'max_chars':8000}
+            context_window=int(profile['context_window']) if profile else 32768
+            config={'revision':row['revision'],'profile_id':profile['id'] if profile else None,'provider':provider_snapshot,'model':model,
+                'template_version':TEMPLATE_VERSION,'context_window':context_window,'max_chars':analysis_chunk_chars(context_window)}
             db.execute('INSERT INTO jobs(id,meeting_id,state,stage,config,kind) VALUES(?,?,?,?,?,?)',
                 (jid,mid,'queued','等待分析',encode(config),'analysis'))
         return {'id':jid,'model':model,'revision':row['revision']}

@@ -102,6 +102,8 @@ export interface LLMConfig {
   provider_type: "local" | "cloud";
   base_url: string;
   model: string;
+  context_window: number;
+  analysis_max_chars: number;
   has_api_key: boolean;
   is_default: boolean;
 }
@@ -127,6 +129,7 @@ export interface LLMConfigInput {
   provider_type: "local" | "cloud";
   base_url: string;
   model: string;
+  context_window: number;
   api_key?: string;
   is_default: boolean;
   clear_api_key?: boolean;

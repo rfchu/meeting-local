@@ -1,7 +1,7 @@
 import io,json,wave,zipfile
 import pytest
 from fastapi.testclient import TestClient
-from app.analysis import AnalysisItem,MeetingAnalysis,AIMinutesBasicInfo,AIMinutesResult,chunk_segments,sanitize_citations,LMStudioProvider
+from app.analysis import AnalysisItem,MeetingAnalysis,AIMinutesBasicInfo,AIMinutesResult,chunk_segments,sanitize_citations,LMStudioProvider,analysis_chunk_chars,context_window_from_metadata
 from app.db import uid,encode
 from app.main import create_app
 from app.minutes import MeetingMinutes,minutes_markdown
@@ -86,6 +86,15 @@ def test_analysis_chunking_preserves_every_segment():
     assert [s['id'] for chunk in chunks for s in chunk]==[s['id'] for s in segments]
 
 
+def test_analysis_chunk_budget_scales_with_context_window():
+    assert analysis_chunk_chars(32768)==8000
+    assert 20000<analysis_chunk_chars(65536)<30000
+    assert analysis_chunk_chars(262144)==48000
+    assert context_window_from_metadata({'id':'x','max_context_length':262144})==262144
+    assert context_window_from_metadata({'id':'x','capabilities':{'context_window':131072}})==131072
+    assert context_window_from_metadata({'id':'x'}) is None
+
+
 def test_analysis_schema_restricts_and_sanitizes_citations():
     schema=LMStudioProvider._response_format({'seg1','seg2'})
     ids=schema['json_schema']['schema']['properties']['summary']['items']['properties']['source_segment_ids']['items']['enum']
@@ -137,7 +146,7 @@ def test_analysis_json_reads_reasoning_field_and_downgrades_format(monkeypatch):
 
 def test_llm_config_crud_hides_secret_and_binds_analysis_job(client):
     local={'name':'本机模型','provider_type':'local','base_url':'http://127.0.0.1:1234/v1',
-        'model':'qwen-local','api_key':'local-secret','is_default':True}
+        'model':'qwen-local','api_key':'local-secret','is_default':True,'context_window':262144}
     created=client.post('/api/llm-configs',json=local)
     assert created.status_code==201
     profile=created.json()
@@ -145,6 +154,7 @@ def test_llm_config_crud_hides_secret_and_binds_analysis_job(client):
     assert 'local-secret' not in client.get('/api/llm-configs').text
     saved=client.app.state.store.one('SELECT * FROM llm_configs WHERE id=?',(profile['id'],))
     assert saved['api_key']=='local-secret'
+    assert saved['context_window']==262144 and profile['analysis_max_chars']==48000
 
     mid=upload(client);client.app.state.store.save_revision(mid,sample(),'manual',expected=0)
     response=client.post(f'/api/meetings/{mid}/analysis-jobs',json={'profile_id':profile['id']})
@@ -152,6 +162,7 @@ def test_llm_config_crud_hides_secret_and_binds_analysis_job(client):
     job=client.app.state.store.one('SELECT config FROM jobs WHERE id=?',(response.json()['id'],))
     config=json.loads(job['config'])
     assert config['profile_id']==profile['id'] and config['model']=='qwen-local'
+    assert config['context_window']==262144 and config['max_chars']==48000
     assert 'local-secret' not in job['config']
 
 

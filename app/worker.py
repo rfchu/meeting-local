@@ -114,7 +114,8 @@ class Worker:
         self.check(jid);self.update(jid,'校验原文引用',.96)
         result=results[0];valid_ids={s['id'] for s in segments};validate_citations(result,valid_ids)
         save_meeting_analysis(self.store,mid,revision,result,{'provider':config.get('provider',{}).get('name','LM Studio'),'provider_type':config.get('provider',{}).get('provider_type','local'),'model':model,
-            'template_version':config.get('template_version',TEMPLATE_VERSION),'job':jid,'chunks':len(chunks)},job_id=jid)
+            'template_version':config.get('template_version',TEMPLATE_VERSION),'job':jid,'chunks':len(chunks),
+            'context_window':config.get('context_window'),'max_chars':config.get('max_chars',8000)},job_id=jid)
 
     def process_transcription(self,job):
         mid=job['meeting_id']; jid=job['id']; config=json.loads(job['config'])

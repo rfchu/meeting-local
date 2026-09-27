@@ -40,7 +40,10 @@ class Store:
             columns={row['name'] for row in db.execute('PRAGMA table_info(jobs)')}
             if 'kind' not in columns:
                 db.execute("ALTER TABLE jobs ADD COLUMN kind TEXT NOT NULL DEFAULT 'transcription'")
-            db.execute('PRAGMA user_version=3')
+            config_columns={row['name'] for row in db.execute('PRAGMA table_info(llm_configs)')}
+            if 'context_window' not in config_columns:
+                db.execute('ALTER TABLE llm_configs ADD COLUMN context_window INTEGER NOT NULL DEFAULT 32768')
+            db.execute('PRAGMA user_version=4')
         os.chmod(self.path,0o600)
     @contextmanager
     def connect(self):
