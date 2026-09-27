@@ -133,4 +133,5 @@ GPU 单独检查日志确认：`use gpu = 1`，设备为 `MTL0 (Apple M4 Max)`�
 - `npm run typecheck` 和 Vite 生产构建通过；构建产物约 301 KB JavaScript、19 KB CSS，直接写入 `app/static/` 并由 FastAPI 提供。
 - Python 自动化回归保持 44 项全部通过，后端 API、SQLite、任务队列、ASR 与 LLM 推理链路未改动。
 - 浏览器实测 React 生产版首页、会议选择、771 段长文字稿展示、会议纪要编辑、四步进度、重命名弹窗和 LLM 模型配置页；刷新后数据由现有 API 正常恢复。
+- 修复 React 弹窗仅设置 `open` 后落入长页面文档流的问题；统一通过原生 `showModal()` 进入顶层，并验证模型配置、运行环境、重命名、查找替换、发言人管理、版本对比和纪要导出预览均能正常打开及关闭。
 - 原生部署保持主方案：最终用户运行 `start.command` 时不需要 Node.js；前端开发或重新构建时才需要 Node/npm。

@@ -1,5 +1,6 @@
 import { memo, useMemo, useState } from "react";
 import { api } from "../../api";
+import Modal from "../../components/Modal";
 import type { Meeting, Revision, Segment } from "../../types";
 import { clock, revisionLabel } from "../../utils";
 
@@ -81,7 +82,7 @@ function CompareDialog({
     </option>
   ));
   return (
-    <dialog open id="compareDialog">
+    <Modal id="compareDialog" onClose={onClose}>
       <div className="compare-header">
         <div>
           <h2>对比转写版本</h2>
@@ -131,7 +132,7 @@ function CompareDialog({
           </section>
         ))}
       </div>
-    </dialog>
+    </Modal>
   );
 }
 
@@ -283,7 +284,7 @@ export default function TranscriptView({
         </div>
       )}
       {speakerOpen && (
-        <dialog open id="speakerDialog">
+        <Modal id="speakerDialog" onClose={() => setSpeakerOpen(false)}>
           <div className="config-header">
             <div>
               <h2>管理发言人</h2>
@@ -348,10 +349,10 @@ export default function TranscriptView({
               <button className="primary">应用到全部片段</button>
             </div>
           </form>
-        </dialog>
+        </Modal>
       )}
       {replaceOpen && (
-        <dialog open className="small-dialog">
+        <Modal className="small-dialog" onClose={() => setReplaceOpen(false)}>
           <form
             onSubmit={(e) => {
               e.preventDefault();
@@ -395,7 +396,7 @@ export default function TranscriptView({
               <button className="primary">全部替换</button>
             </div>
           </form>
-        </dialog>
+        </Modal>
       )}
       {compareOpen && (
         <CompareDialog

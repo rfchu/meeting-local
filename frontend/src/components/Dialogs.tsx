@@ -6,6 +6,7 @@ import type {
   LLMConfigInput,
   MeetingMinutes,
 } from "../types";
+import Modal from "./Modal";
 
 export function RenameDialog({
   title,
@@ -19,7 +20,7 @@ export function RenameDialog({
   const [value, setValue] = useState(title),
     [saving, setSaving] = useState(false);
   return (
-    <dialog open id="renameDialog">
+    <Modal id="renameDialog" onClose={onClose}>
       <form
         id="renameForm"
         onSubmit={async (e) => {
@@ -53,7 +54,7 @@ export function RenameDialog({
           </button>
         </div>
       </form>
-    </dialog>
+    </Modal>
   );
 }
 
@@ -75,7 +76,7 @@ export function EnvironmentDialog({
     `数据目录：${environment.data_dir}`,
   ];
   return (
-    <dialog open>
+    <Modal onClose={onClose}>
       <h2>本机运行环境</h2>
       <div>
         {lines.map((line) => (
@@ -86,7 +87,7 @@ export function EnvironmentDialog({
       <button className="primary" onClick={onClose}>
         知道了
       </button>
-    </dialog>
+    </Modal>
   );
 }
 
@@ -136,7 +137,7 @@ export function ModelConfigDialog({
     value: LLMConfigInput[K],
   ) => setForm((old) => ({ ...old, [key]: value }));
   return (
-    <dialog open id="modelConfigDialog">
+    <Modal id="modelConfigDialog" onClose={onClose}>
       <div className="config-header">
         <div>
           <h2>LLM 模型配置</h2>
@@ -314,7 +315,7 @@ export function ModelConfigDialog({
           </div>
         </form>
       </div>
-    </dialog>
+    </Modal>
   );
 }
 
@@ -347,7 +348,7 @@ export function MinutesPreview({
             "open_questions",
           ];
   return (
-    <dialog open id="minutesPreviewDialog">
+    <Modal id="minutesPreviewDialog" onClose={onClose}>
       <div className="preview-header">
         <div>
           <h2>纪要导出预览</h2>
@@ -406,6 +407,6 @@ export function MinutesPreview({
           导出 PDF
         </button>
       </div>
-    </dialog>
+    </Modal>
   );
 }
