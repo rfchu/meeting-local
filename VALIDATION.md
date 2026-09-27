@@ -126,3 +126,11 @@ GPU 单独检查日志确认：`use gpu = 1`，设备为 `MTL0 (Apple M4 Max)`�
 - 浏览器实测四步处理进度、下一步按钮、发言人批量管理弹窗、AI 快速/完整模式选择、导出预览和 Word/PDF 入口均正常显示。
 - 文字稿编辑时立即显示派生结果即将过期；保存为新版本后，旧会议分析与旧纪要继续标记为过期，直到重新生成当前版本结果。
 - PDF 使用 macOS 原生打印过滤器生成，不额外安装运行时依赖；Word、PDF 和 Markdown 均基于保存后的同一份纪要数据。
+
+## v1.0 React / TypeScript 前端迁移验证
+
+- 原有静态 DOM 脚本迁移为 React 19、TypeScript、Vite 和 TanStack Query；文字稿、会议分析、会议纪要、播放控件、流程引导及配置弹窗按功能拆分组件。
+- `npm run typecheck` 和 Vite 生产构建通过；构建产物约 301 KB JavaScript、19 KB CSS，直接写入 `app/static/` 并由 FastAPI 提供。
+- Python 自动化回归保持 44 项全部通过，后端 API、SQLite、任务队列、ASR 与 LLM 推理链路未改动。
+- 浏览器实测 React 生产版首页、会议选择、771 段长文字稿展示、会议纪要编辑、四步进度、重命名弹窗和 LLM 模型配置页；刷新后数据由现有 API 正常恢复。
+- 原生部署保持主方案：最终用户运行 `start.command` 时不需要 Node.js；前端开发或重新构建时才需要 Node/npm。

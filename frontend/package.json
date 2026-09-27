@@ -1,0 +1,26 @@
+{
+  "name": "meeting-local-ui",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "typecheck": "tsc -b --pretty false",
+    "format": "prettier --write \"src/**/*.{ts,tsx,css}\" \"*.{json,ts,html}\"",
+    "format:check": "prettier --check \"src/**/*.{ts,tsx,css}\" \"*.{json,ts,html}\""
+  },
+  "dependencies": {
+    "@tanstack/react-query": "^5.90.2",
+    "react": "^19.1.1",
+    "react-dom": "^19.1.1"
+  },
+  "devDependencies": {
+    "@types/react": "^19.1.16",
+    "@types/react-dom": "^19.1.9",
+    "@vitejs/plugin-react": "^5.0.4",
+    "prettier": "^3.9.9",
+    "typescript": "^5.9.2",
+    "vite": "^7.1.7"
+  }
+}

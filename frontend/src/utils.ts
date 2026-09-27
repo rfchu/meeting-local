@@ -1,0 +1,60 @@
+import type {
+  Artifact,
+  Job,
+  Meeting,
+  MeetingAnalysis,
+  MeetingMinutes,
+} from "./types";
+
+export const clock = (seconds = 0) => {
+  const value = Math.max(0, Math.floor(seconds));
+  const hours =
+    value >= 3600
+      ? `${String(Math.floor(value / 3600)).padStart(2, "0")}:`
+      : "";
+  return `${hours}${String(Math.floor(value / 60) % 60).padStart(2, "0")}:${String(value % 60).padStart(2, "0")}`;
+};
+
+export const engineLabel = (id?: string) =>
+  id === "qwen"
+    ? "千问 Qwen3-ASR-1.7B"
+    : id === "whisper" || id === "whisper.cpp"
+      ? "Whisper large-v3-turbo"
+      : id || "模型识别";
+export const revisionLabel = (source?: string) => {
+  if (!source) return "—";
+  if (source === "manual") return "人工校对";
+  try {
+    const value = JSON.parse(source) as {
+      engine_label?: string;
+      engine?: string;
+    };
+    return value.engine_label || engineLabel(value.engine);
+  } catch {
+    return "模型识别";
+  }
+};
+export const latestJob = (
+  meeting: Meeting | null,
+  kind: "transcription" | "analysis",
+) => meeting?.jobs.find((job) => (job.kind || "transcription") === kind);
+export const currentAnalysis = (meeting: Meeting | null) =>
+  meeting?.artifacts.find(
+    (item) =>
+      item.kind === "meeting_analysis" && item.revision === meeting.revision,
+  ) as Artifact<MeetingAnalysis> | undefined;
+export const latestAnalysis = (meeting: Meeting | null) =>
+  meeting?.artifacts.find((item) => item.kind === "meeting_analysis") as
+    Artifact<MeetingAnalysis> | undefined;
+export const currentMinutes = (meeting: Meeting | null) =>
+  meeting?.artifacts.find(
+    (item) =>
+      item.kind === "meeting_minutes" && item.revision === meeting.revision,
+  ) as Artifact<MeetingMinutes> | undefined;
+export const latestMinutes = (meeting: Meeting | null) =>
+  (currentMinutes(meeting) ||
+    meeting?.artifacts.find((item) => item.kind === "meeting_minutes")) as
+    Artifact<MeetingMinutes> | undefined;
+export const isRunning = (job?: Job) =>
+  !!job && (job.state === "queued" || job.state === "running");
+export const clone = <T>(value: T): T => structuredClone(value);

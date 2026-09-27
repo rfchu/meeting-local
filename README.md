@@ -1,4 +1,4 @@
-# 听记 · 本地会议工作台 v0.9
+# 听记 · 本地会议工作台 v1.0
 
 面向普通话会议的 macOS 应用。录音转写、文字校对和导出均在本机完成；会议分析可选择本机模型，也可按需使用云端 OpenAI 兼容接口。
 
@@ -22,6 +22,8 @@ bash scripts/setup.sh
 ```
 
 安装阶段需要联网下载依赖和模型。使用本地分析模型时可离线运行；选择云端分析模型时，文字稿会发送到所配置的服务。应用默认只监听 `127.0.0.1`。
+
+发布包已经包含构建完成的 React 静态资源，日常启动不需要安装 Node.js，也不会在后台运行 Node 服务。`start.command` 仍然只启动本机 FastAPI、SQLite 和推理工作进程；Whisper 使用 Metal，千问使用 MLX。
 
 ## 使用流程
 
@@ -65,7 +67,7 @@ bash scripts/setup.sh
 - Whisper 每 5 分钟、千问每 2 分钟分块，两侧各带 2 秒上下文，结合时间与文字去重合并。不确定的重叠会保留并标记“核对”，边界仍需要真实长会议验证。
 - 标点按片段恢复，片段边界的语义连贯性需要校对。
 - 目前没有 120 分钟真实会议、多人并发或正式 CER/DER 验收结果。短音频耗时不能直接外推为长会议吞吐量。
-- 前端首版使用本地静态 HTML/CSS/JavaScript，无 CDN 或 npm 运行依赖。HTTP API 与前端解耦，后续可迁移到 React/TypeScript。
+- 暂未做超长文字稿的窗口化渲染；片段行已拆成独立的 React 组件并使用稳定 ID，实际长会议仍需继续观察浏览器内存和滚动性能。
 
 ## 数据与架构
 
@@ -76,7 +78,8 @@ app/worker.py         持久化任务调度、检查点、进程管理
 app/providers.py      识别/标点/发言人适配器
 app/analysis.py       OpenAI 兼容模型适配、摘要分析与引用校验
 app/minutes.py        会议纪要编排、引用校验与 Markdown/Word 生成
-app/static/           本地网页界面
+frontend/             React 19 + TypeScript + Vite 前端源码
+app/static/           Vite 生产构建产物，由 FastAPI 直接提供
 scripts/diarize.py    独立 ONNX 发言人进程
 scripts/punctuate.py  独立标点进程
 scripts/qwen_transcribe.py  独立 MLX 千问识别与时间戳对齐进程
@@ -98,12 +101,25 @@ SQLite 与录音默认保存在 `data/`。LLM API Key 保存于本机 SQLite，�
 
 会议分析读取固定文稿版本，返回结构化条目与 `source_segment_ids`。分析模型与转写模型共用重型任务串行队列；分析结果绑定输入版本，当前文稿变化时自动标记过期。配置与使用方法见 [ANALYSIS.md](ANALYSIS.md)。
 
+## 前端开发
+
+前端使用 React、TypeScript、Vite 和 TanStack Query。生产模式仍由 FastAPI 提供静态资源，因此本机部署没有额外常驻进程。
+
+```bash
+cd frontend
+npm ci
+npm run typecheck
+npm run build
+```
+
+`npm run build` 会清空并重建 `app/static/`。仓库提交生产构建产物，使没有 Node.js 的本机也能直接运行。开发时可执行 `npm run dev`，Vite 会把 `/api` 代理到 `http://127.0.0.1:8765`。也可在项目根目录执行 `bash scripts/build_frontend.sh` 完成确定性安装和构建。
+
 ## 验证
 
 ```bash
 .venv/bin/pip install pytest httpx
 .venv/bin/python -m pytest -q
-node --check app/static/app.js
+cd frontend && npm ci && npm run build
 ```
 
 详细实际验证记录见 `VALIDATION.md`。千问安装、模型配置与版本对比说明见 [DUAL-ENGINE.md](DUAL-ENGINE.md)。
