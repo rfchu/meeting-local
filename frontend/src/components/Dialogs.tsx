@@ -97,9 +97,32 @@ const emptyConfig = (hasConfigs: boolean): LLMConfigInput => ({
   base_url: "http://127.0.0.1:1234/v1",
   model: "",
   context_window: 32768,
+  analysis_chunk_mode: "auto",
+  analysis_chunk_chars: 0,
   api_key: "",
   is_default: !hasConfigs,
 });
+
+const safeChunkChars = (contextWindow: number) =>
+  Math.max(
+    8000,
+    Math.floor(((contextWindow * 0.6 - 8192) * 0.75) / 1000) * 1000,
+  );
+
+const estimatedChunkChars = (form: LLMConfigInput) => {
+  const safe = safeChunkChars(form.context_window);
+  if (form.analysis_chunk_mode === "quality") return Math.min(safe, 48000);
+  if (form.analysis_chunk_mode === "speed") return Math.min(safe, 96000);
+  if (form.analysis_chunk_mode === "custom")
+    return form.analysis_chunk_chars || 8000;
+  const cap =
+    form.context_window <= 262144
+      ? 48000
+      : form.context_window <= 524288
+        ? 64000
+        : 96000;
+  return Math.min(safe, cap);
+};
 export function ModelConfigDialog({
   onClose,
   onChanged,
@@ -131,6 +154,8 @@ export function ModelConfigDialog({
       base_url: config.base_url,
       model: config.model,
       context_window: config.context_window,
+      analysis_chunk_mode: config.analysis_chunk_mode,
+      analysis_chunk_chars: config.analysis_chunk_chars,
       api_key: "",
       is_default: config.is_default,
     });
@@ -262,18 +287,56 @@ export function ModelConfigDialog({
               onChange={(e) => field("context_window", Number(e.target.value))}
             />
           </label>
-          <small>
-            当前将按约{" "}
-            {(
-              Math.floor(
-                Math.max(
-                  8000,
-                  Math.min(48000, (form.context_window * 0.6 - 8192) * 0.75),
-                ) / 1000,
-              ) * 1000
-            ).toLocaleString()}{" "}
-            个字符自动分块；测试连接会在接口提供元数据时自动回填。
-          </small>
+          <small>测试连接会在接口提供元数据时自动回填。</small>
+          <details>
+            <summary>高级设置</summary>
+            <label>
+              最大分析分块
+              <select
+                value={form.analysis_chunk_mode}
+                onChange={(e) => {
+                  const mode = e.target
+                    .value as LLMConfigInput["analysis_chunk_mode"];
+                  setForm((old) => ({
+                    ...old,
+                    analysis_chunk_mode: mode,
+                    analysis_chunk_chars:
+                      mode === "custom" && !old.analysis_chunk_chars
+                        ? Math.min(48000, safeChunkChars(old.context_window))
+                        : old.analysis_chunk_chars,
+                  }));
+                }}
+              >
+                <option value="auto">自动 · 按上下文窗口调整</option>
+                <option value="quality">质量优先 · 最高 48,000 字符</option>
+                <option value="speed">速度优先 · 最高 96,000 字符</option>
+                <option value="custom">自定义</option>
+              </select>
+            </label>
+            {form.analysis_chunk_mode === "custom" && (
+              <label>
+                自定义字符数
+                <input
+                  type="number"
+                  required
+                  min={8000}
+                  max={safeChunkChars(form.context_window)}
+                  step={1000}
+                  value={form.analysis_chunk_chars || 8000}
+                  onChange={(e) =>
+                    field("analysis_chunk_chars", Number(e.target.value))
+                  }
+                />
+              </label>
+            )}
+            <small>
+              当前将按约 {estimatedChunkChars(form).toLocaleString()}{" "}
+              个字符分块；当前上下文的安全预算不超过{" "}
+              {safeChunkChars(form.context_window).toLocaleString()}{" "}
+              字符。自动模式在 256K、512K 和更长上下文下最高分别使用 48K、64K 和
+              96K 字符。
+            </small>
+          </details>
           <label>
             API Key
             <input

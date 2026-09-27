@@ -35,6 +35,9 @@ class Store:
               provider_type TEXT NOT NULL CHECK(provider_type IN ('local','cloud')),
               base_url TEXT NOT NULL, model TEXT NOT NULL, api_key TEXT NOT NULL DEFAULT '',
               is_default INTEGER NOT NULL DEFAULT 0,
+              context_window INTEGER NOT NULL DEFAULT 32768,
+              analysis_chunk_mode TEXT NOT NULL DEFAULT 'auto',
+              analysis_chunk_chars INTEGER NOT NULL DEFAULT 0,
               created TEXT DEFAULT CURRENT_TIMESTAMP, updated TEXT DEFAULT CURRENT_TIMESTAMP);
             ''')
             columns={row['name'] for row in db.execute('PRAGMA table_info(jobs)')}
@@ -43,7 +46,11 @@ class Store:
             config_columns={row['name'] for row in db.execute('PRAGMA table_info(llm_configs)')}
             if 'context_window' not in config_columns:
                 db.execute('ALTER TABLE llm_configs ADD COLUMN context_window INTEGER NOT NULL DEFAULT 32768')
-            db.execute('PRAGMA user_version=4')
+            if 'analysis_chunk_mode' not in config_columns:
+                db.execute("ALTER TABLE llm_configs ADD COLUMN analysis_chunk_mode TEXT NOT NULL DEFAULT 'auto'")
+            if 'analysis_chunk_chars' not in config_columns:
+                db.execute('ALTER TABLE llm_configs ADD COLUMN analysis_chunk_chars INTEGER NOT NULL DEFAULT 0')
+            db.execute('PRAGMA user_version=5')
         os.chmod(self.path,0o600)
     @contextmanager
     def connect(self):

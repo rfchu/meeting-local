@@ -103,6 +103,8 @@ export interface LLMConfig {
   base_url: string;
   model: string;
   context_window: number;
+  analysis_chunk_mode: "auto" | "quality" | "speed" | "custom";
+  analysis_chunk_chars: number;
   analysis_max_chars: number;
   has_api_key: boolean;
   is_default: boolean;
@@ -130,6 +132,8 @@ export interface LLMConfigInput {
   base_url: string;
   model: string;
   context_window: number;
+  analysis_chunk_mode: "auto" | "quality" | "speed" | "custom";
+  analysis_chunk_chars: number;
   api_key?: string;
   is_default: boolean;
   clear_api_key?: boolean;

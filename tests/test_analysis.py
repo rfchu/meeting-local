@@ -90,6 +90,12 @@ def test_analysis_chunk_budget_scales_with_context_window():
     assert analysis_chunk_chars(32768)==8000
     assert 20000<analysis_chunk_chars(65536)<30000
     assert analysis_chunk_chars(262144)==48000
+    assert analysis_chunk_chars(524288)==64000
+    assert analysis_chunk_chars(1_000_000)==96000
+    assert analysis_chunk_chars(1_000_000,'quality')==48000
+    assert analysis_chunk_chars(1_000_000,'speed')==96000
+    assert analysis_chunk_chars(1_000_000,'custom',120000)==120000
+    with pytest.raises(ValueError,match='安全预算'):analysis_chunk_chars(32768,'custom',120000)
     assert context_window_from_metadata({'id':'x','max_context_length':262144})==262144
     assert context_window_from_metadata({'id':'x','capabilities':{'context_window':131072}})==131072
     assert context_window_from_metadata({'id':'x'}) is None

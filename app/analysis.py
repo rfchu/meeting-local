@@ -26,14 +26,28 @@ def context_window_from_metadata(row):
     return None
 
 
-def analysis_chunk_chars(context_window):
+def context_safe_chars(context_window):
     """Convert model tokens to a conservative character budget for cited JSON extraction."""
     window=max(4096,min(2_000_000,int(context_window or DEFAULT_CONTEXT_WINDOW)))
-    # Use at most 60% of context, reserve 8K output and prompt/schema overhead,
-    # and cap long-context extraction so detail recall stays reliable.
+    # Use at most 60% of context and reserve 8K output plus prompt/schema overhead.
     budget=int((window*.6-8192)*.75)
     budget=(budget//1000)*1000
-    return max(8000,min(48000,budget))
+    return max(8000,budget)
+
+
+def analysis_chunk_chars(context_window,mode='auto',custom_chars=0):
+    safe=context_safe_chars(context_window)
+    if mode=='quality':return min(safe,48000)
+    if mode=='speed':return min(safe,96000)
+    if mode=='custom':
+        value=int(custom_chars or 0)
+        if value<8000:raise ValueError('自定义分析分块不能小于 8,000 字符')
+        if value>safe:raise ValueError(f'自定义分析分块不能超过当前上下文的安全预算 {safe:,} 字符')
+        return value
+    if mode!='auto':raise ValueError('不支持的分析分块策略')
+    window=int(context_window or DEFAULT_CONTEXT_WINDOW)
+    cap=48000 if window<=262144 else 64000 if window<=524288 else 96000
+    return min(safe,cap)
 
 class AnalysisItem(BaseModel):
     content: str=Field(min_length=1)
@@ -280,8 +294,10 @@ def validate_llm_endpoint(provider_type,base_url):
 
 def public_llm_config(row):
     context_window=int(row.get('context_window') or DEFAULT_CONTEXT_WINDOW)
+    mode=row.get('analysis_chunk_mode') or 'auto';custom=int(row.get('analysis_chunk_chars') or 0)
     return {key:row[key] for key in ('id','name','provider_type','base_url','model','is_default','created','updated')} | {
-        'context_window':context_window,'analysis_max_chars':analysis_chunk_chars(context_window),
+        'context_window':context_window,'analysis_chunk_mode':mode,'analysis_chunk_chars':custom,
+        'analysis_max_chars':analysis_chunk_chars(context_window,mode,custom),
         'is_default':bool(row['is_default']),'has_api_key':bool(row.get('api_key'))}
 
 

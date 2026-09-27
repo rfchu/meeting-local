@@ -39,6 +39,8 @@ class LLMConfigInput(BaseModel):
     base_url: str=Field(min_length=1,max_length=1000)
     model: str=Field(min_length=1,max_length=500)
     context_window: int=Field(default=32768,ge=4096,le=2_000_000)
+    analysis_chunk_mode: Literal['auto','quality','speed','custom']='auto'
+    analysis_chunk_chars: int=Field(default=0,ge=0,le=1_000_000)
     api_key: str | None=Field(default=None,max_length=10000)
     is_default: bool=False
     clear_api_key: bool=False
@@ -119,6 +121,8 @@ def create_app(data_dir=None, start_worker=True):
         except ValueError as error:raise HTTPException(400,str(error))
         api_key=(body.api_key or '').strip()
         if body.provider_type=='cloud' and not api_key:raise HTTPException(400,'云端模型需要 API Key')
+        try:analysis_chunk_chars(body.context_window,body.analysis_chunk_mode,body.analysis_chunk_chars)
+        except ValueError as error:raise HTTPException(400,str(error))
         return base_url,api_key,body.context_window
 
     @app.get('/api/llm-configs')
@@ -137,8 +141,10 @@ def create_app(data_dir=None, start_worker=True):
         if not result['ready']:raise HTTPException(409,result['error'])
         detected=provider.model_context_window(body.model.strip()) if body.model.strip() in result['models'] else None
         effective=detected or body.context_window
+        try:max_chars=analysis_chunk_chars(effective,body.analysis_chunk_mode,body.analysis_chunk_chars)
+        except ValueError as error:raise HTTPException(400,str(error))
         return {'ok':True,'models':result['models'],'model_available':body.model.strip() in result['models'],
-            'detected_context_window':detected,'effective_context_window':effective,'analysis_max_chars':analysis_chunk_chars(effective)}
+            'detected_context_window':detected,'effective_context_window':effective,'analysis_max_chars':max_chars}
 
     @app.post('/api/llm-configs/{cid}/test')
     def test_saved_llm_config(cid:str):
@@ -146,8 +152,9 @@ def create_app(data_dir=None, start_worker=True):
         if not result['ready']:raise HTTPException(409,result['error'])
         detected=provider.model_context_window(profile['model']) if profile['model'] in result['models'] else None
         effective=detected or profile['context_window']
+        max_chars=analysis_chunk_chars(effective,profile['analysis_chunk_mode'],profile['analysis_chunk_chars'])
         return {'ok':True,'models':result['models'],'model_available':profile['model'] in result['models'],
-            'detected_context_window':detected,'effective_context_window':effective,'analysis_max_chars':analysis_chunk_chars(effective)}
+            'detected_context_window':detected,'effective_context_window':effective,'analysis_max_chars':max_chars}
 
     @app.post('/api/llm-configs',status_code=201)
     def create_llm_config(body:LLMConfigInput):
@@ -156,8 +163,8 @@ def create_app(data_dir=None, start_worker=True):
             db.execute('BEGIN IMMEDIATE')
             make_default=body.is_default or not db.execute('SELECT 1 FROM llm_configs LIMIT 1').fetchone()
             if make_default:db.execute('UPDATE llm_configs SET is_default=0')
-            db.execute('INSERT INTO llm_configs(id,name,provider_type,base_url,model,api_key,is_default,context_window) VALUES(?,?,?,?,?,?,?,?)',
-                (cid,body.name.strip(),body.provider_type,base_url,body.model.strip(),api_key,int(make_default),context_window))
+            db.execute('INSERT INTO llm_configs(id,name,provider_type,base_url,model,api_key,is_default,context_window,analysis_chunk_mode,analysis_chunk_chars) VALUES(?,?,?,?,?,?,?,?,?,?)',
+                (cid,body.name.strip(),body.provider_type,base_url,body.model.strip(),api_key,int(make_default),context_window,body.analysis_chunk_mode,body.analysis_chunk_chars))
         return public_llm_config(llm_config(cid))
 
     @app.put('/api/llm-configs/{cid}')
@@ -167,11 +174,13 @@ def create_app(data_dir=None, start_worker=True):
         except ValueError as error:raise HTTPException(400,str(error))
         api_key='' if body.clear_api_key else ((body.api_key or '').strip() or old['api_key'])
         if body.provider_type=='cloud' and not api_key:raise HTTPException(400,'云端模型需要 API Key')
+        try:analysis_chunk_chars(body.context_window,body.analysis_chunk_mode,body.analysis_chunk_chars)
+        except ValueError as error:raise HTTPException(400,str(error))
         with store.connect() as db:
             db.execute('BEGIN IMMEDIATE')
             if body.is_default:db.execute('UPDATE llm_configs SET is_default=0')
-            db.execute('UPDATE llm_configs SET name=?,provider_type=?,base_url=?,model=?,api_key=?,is_default=?,context_window=?,updated=CURRENT_TIMESTAMP WHERE id=?',
-                (body.name.strip(),body.provider_type,base_url,body.model.strip(),api_key,int(body.is_default or old['is_default']),body.context_window,cid))
+            db.execute('UPDATE llm_configs SET name=?,provider_type=?,base_url=?,model=?,api_key=?,is_default=?,context_window=?,analysis_chunk_mode=?,analysis_chunk_chars=?,updated=CURRENT_TIMESTAMP WHERE id=?',
+                (body.name.strip(),body.provider_type,base_url,body.model.strip(),api_key,int(body.is_default or old['is_default']),body.context_window,body.analysis_chunk_mode,body.analysis_chunk_chars,cid))
         return public_llm_config(llm_config(cid))
 
     @app.delete('/api/llm-configs/{cid}')
@@ -259,7 +268,8 @@ def create_app(data_dir=None, start_worker=True):
         try:
             if profile:
                 provider=OpenAICompatibleProvider(profile);model=provider.resolve_model(body.model)
-                provider_snapshot={'id':profile['id'],'name':profile['name'],'provider_type':profile['provider_type'],'base_url':profile['base_url'],'context_window':profile['context_window']}
+                provider_snapshot={'id':profile['id'],'name':profile['name'],'provider_type':profile['provider_type'],'base_url':profile['base_url'],
+                    'context_window':profile['context_window'],'analysis_chunk_mode':profile['analysis_chunk_mode']}
             else:
                 provider=LMStudioProvider();model=provider.resolve_model(body.model);provider_snapshot={'name':'LM Studio','provider_type':'local','base_url':getattr(provider,'base_url','http://127.0.0.1:1234/v1')}
         except (RuntimeError,ValueError) as error:raise HTTPException(409,str(error))
@@ -268,8 +278,10 @@ def create_app(data_dir=None, start_worker=True):
             db.execute('BEGIN IMMEDIATE')
             if db.execute("SELECT 1 FROM jobs WHERE meeting_id=? AND state IN ('running','queued')",(mid,)).fetchone():raise HTTPException(409,'已有任务正在处理')
             context_window=int(profile['context_window']) if profile else 32768
+            chunk_mode=profile['analysis_chunk_mode'] if profile else 'auto';custom_chars=int(profile['analysis_chunk_chars']) if profile else 0
             config={'revision':row['revision'],'profile_id':profile['id'] if profile else None,'provider':provider_snapshot,'model':model,
-                'template_version':TEMPLATE_VERSION,'context_window':context_window,'max_chars':analysis_chunk_chars(context_window)}
+                'template_version':TEMPLATE_VERSION,'context_window':context_window,'analysis_chunk_mode':chunk_mode,
+                'max_chars':analysis_chunk_chars(context_window,chunk_mode,custom_chars)}
             db.execute('INSERT INTO jobs(id,meeting_id,state,stage,config,kind) VALUES(?,?,?,?,?,?)',
                 (jid,mid,'queued','等待分析',encode(config),'analysis'))
         return {'id':jid,'model':model,'revision':row['revision']}
