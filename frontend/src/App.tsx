@@ -401,6 +401,10 @@ export default function App() {
       `/meetings/${meeting!.id}/minutes/export/${format}?include_citations=${showCitations}`,
     );
   };
+  const openMinutesPreview = async () => {
+    await saveMinutes();
+    setPreviewOpen(true);
+  };
   const environment = envQuery.data,
     transcriptionJob = latestJob(meeting, "transcription"),
     transcriptionRunning = isRunning(transcriptionJob),
@@ -566,7 +570,7 @@ export default function App() {
               onSave={() => void saveTranscript()}
               onAnalysis={() => setWorkspace("analysis")}
               onMinutes={() => setWorkspace("minutes")}
-              onPreview={() => setPreviewOpen(true)}
+              onPreview={() => void openMinutesPreview()}
             />
             <div className="workspace">
               <div className="transcript-panel">
@@ -648,7 +652,7 @@ export default function App() {
                       setMinutesDirty(true);
                     }}
                     onSave={() => void saveMinutes()}
-                    onPreview={() => setPreviewOpen(true)}
+                    onPreview={() => void openMinutesPreview()}
                     onSeek={(time) => seekRef.current?.(time)}
                   />
                 )}
@@ -746,7 +750,8 @@ export default function App() {
       )}
       {previewOpen && minutesDraft && (
         <MinutesPreview
-          draft={minutesDraft}
+          meetingId={meeting!.id}
+          includeCitations={showCitations}
           onClose={() => setPreviewOpen(false)}
           onExport={(format) => void exportMinutes(format)}
         />

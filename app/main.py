@@ -476,7 +476,7 @@ def create_app(data_dir=None, start_worker=True):
         return public_artifact(store.one('SELECT * FROM artifacts WHERE id=?',(aid,)))
 
     @app.get('/api/meetings/{mid}/minutes/export/{format}')
-    def export_minutes(mid:str,format:str,include_citations:bool=False):
+    def export_minutes(mid:str,format:str,include_citations:bool=False,inline:bool=False):
         if format not in ('md','docx','pdf'):raise HTTPException(400,'会议纪要仅支持 Markdown、Word 或 PDF')
         row=meeting(mid)
         artifact=store.one("SELECT * FROM artifacts WHERE meeting_id=? AND revision=? AND kind='meeting_minutes' ORDER BY created DESC,rowid DESC LIMIT 1",(mid,row['revision']))
@@ -494,7 +494,9 @@ def create_app(data_dir=None, start_worker=True):
             except RuntimeError as error:raise HTTPException(503,str(error))
             media_type='application/pdf'
         filename=quote(document.title+'.'+format,safe='')
-        return Response(content,media_type=media_type,headers={'Content-Disposition':f"attachment; filename*=UTF-8''{filename}"})
+        disposition='inline' if inline and format=='pdf' else 'attachment'
+        return Response(content,media_type=media_type,headers={
+            'Content-Disposition':f"{disposition}; filename*=UTF-8''{filename}",'Cache-Control':'no-store'})
     app.mount('/',StaticFiles(directory=BASE/'app/static',html=True),name='ui')
     return app
 

@@ -1,13 +1,24 @@
 """Editable, source-grounded meeting minutes and document exports."""
 from io import BytesIO
-import shutil
-import subprocess
-import tempfile
 from pathlib import Path
 from xml.sax.saxutils import escape
-from zipfile import ZIP_DEFLATED, ZipFile
 
+from docx import Document
+from docx.enum.table import WD_CELL_VERTICAL_ALIGNMENT, WD_TABLE_ALIGNMENT
+from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.oxml import OxmlElement
+from docx.oxml.ns import qn
+from docx.shared import Cm, Pt, RGBColor
 from pydantic import BaseModel, Field
+from reportlab.lib import colors
+from reportlab.lib.enums import TA_CENTER
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.styles import ParagraphStyle
+from reportlab.lib.units import mm
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
+from reportlab.pdfgen.canvas import Canvas
+from reportlab.platypus import BaseDocTemplate, Frame, LongTable, PageTemplate, Paragraph, TableStyle
 
 from .analysis import AnalysisItem, MeetingAnalysis, AIMinutesResult, SECTION_NAMES, validate_citations
 
@@ -207,100 +218,305 @@ def _content_with_ref(item, by_id, include_citations):
     return content
 
 
-def _paragraph(text, style=None, bold=False):
-    safe = escape(str(text))
-    pstyle = f'<w:pStyle w:val="{style}"/>' if style else ""
-    weight = "<w:b/>" if bold else ""
-    return f'<w:p><w:pPr>{pstyle}</w:pPr><w:r><w:rPr>{weight}<w:rFonts w:eastAsia="PingFang SC"/></w:rPr><w:t xml:space="preserve">{safe}</w:t></w:r></w:p>'
+STYLE_NAMES = {"formal":"正式会议纪要","brief":"精简会议纪要","internal":"内部工作纪要","ai":"AI 会议纪要"}
+INK = "1E293B"; MUTED = "667085"; NAVY = "253A5B"; PALE = "F5F7FA"; LINE = "D9E0E8"
+DOCX_FONT = "Heiti SC"
 
 
-def _table(rows):
-    cells = []
-    for row_index, row in enumerate(rows):
-        cells.append("<w:tr>" + "".join(
-            '<w:tc><w:tcPr><w:tcW w:w="0" w:type="auto"/></w:tcPr>' +
-            _paragraph(value or "—", bold=row_index == 0) + "</w:tc>" for value in row
-        ) + "</w:tr>")
-    return '<w:tbl><w:tblPr><w:tblBorders><w:top w:val="single" w:sz="4" w:color="D9DEE8"/><w:left w:val="single" w:sz="4" w:color="D9DEE8"/><w:bottom w:val="single" w:sz="4" w:color="D9DEE8"/><w:right w:val="single" w:sz="4" w:color="D9DEE8"/><w:insideH w:val="single" w:sz="4" w:color="D9DEE8"/><w:insideV w:val="single" w:sz="4" w:color="D9DEE8"/></w:tblBorders></w:tblPr>' + "".join(cells) + "</w:tbl>"
+def _citation_index(document: MeetingMinutes, segments: list[dict]):
+    by_id={segment["id"]:segment for segment in segments}
+    ordered=[]
+    for sid in document.basic_info_source_segment_ids:
+        if sid in by_id and sid not in ordered:ordered.append(sid)
+    labels,sections=_style_layout(document.style)
+    for section in sections:
+        for item in getattr(document,section):
+            for sid in item.source_segment_ids:
+                if sid in by_id and sid not in ordered:ordered.append(sid)
+    return by_id,{sid:index+1 for index,sid in enumerate(ordered)},ordered
+
+
+def _reference_marks(ids,reference_numbers):
+    return " ".join(f"[{reference_numbers[sid]}]" for sid in ids if sid in reference_numbers)
+
+
+def _excerpt(value,limit=240):
+    text=" ".join(str(value or "").split())
+    return text if len(text)<=limit else text[:limit-1]+"…"
+
+
+def _set_docx_font(run,size=None,bold=None,color=INK):
+    run.font.name=DOCX_FONT;run._element.get_or_add_rPr().rFonts.set(qn("w:eastAsia"),DOCX_FONT)
+    if size:run.font.size=Pt(size)
+    if bold is not None:run.bold=bold
+    run.font.color.rgb=RGBColor.from_string(color)
+
+
+def _shade_cell(cell,color):
+    tc_pr=cell._tc.get_or_add_tcPr();shading=tc_pr.find(qn("w:shd"))
+    if shading is None:shading=OxmlElement("w:shd");tc_pr.append(shading)
+    shading.set(qn("w:fill"),color)
+
+
+def _cell_margins(cell,top=100,start=120,bottom=100,end=120):
+    tc_pr=cell._tc.get_or_add_tcPr();margins=tc_pr.first_child_found_in("w:tcMar")
+    if margins is None:margins=OxmlElement("w:tcMar");tc_pr.append(margins)
+    for edge,value in (("top",top),("start",start),("bottom",bottom),("end",end)):
+        node=margins.find(qn("w:"+edge))
+        if node is None:node=OxmlElement("w:"+edge);margins.append(node)
+        node.set(qn("w:w"),str(value));node.set(qn("w:type"),"dxa")
+
+
+def _cant_split(row):
+    props=row._tr.get_or_add_trPr();node=props.find(qn("w:cantSplit"))
+    if node is None:props.append(OxmlElement("w:cantSplit"))
+
+
+def _repeat_header(row):
+    props=row._tr.get_or_add_trPr();node=props.find(qn("w:tblHeader"))
+    if node is None:props.append(OxmlElement("w:tblHeader"))
+
+
+def _set_table_borders(table,color=LINE,size="4"):
+    tbl_pr=table._tbl.tblPr;borders=tbl_pr.first_child_found_in("w:tblBorders")
+    if borders is None:borders=OxmlElement("w:tblBorders");tbl_pr.append(borders)
+    for edge in ("top","left","bottom","right","insideH","insideV"):
+        node=borders.find(qn("w:"+edge))
+        if node is None:node=OxmlElement("w:"+edge);borders.append(node)
+        node.set(qn("w:val"),"single");node.set(qn("w:sz"),size);node.set(qn("w:color"),color)
+
+
+def _write_docx_text(paragraph,text,bold=False,color=INK,size=10.5):
+    run=paragraph.add_run(str(text));_set_docx_font(run,size,bold,color);return run
+
+
+def _write_docx_item(paragraph,item,reference_numbers,prefix=""):
+    if prefix:_write_docx_text(paragraph,prefix,color=MUTED)
+    _write_docx_text(paragraph,item.content)
+    marks=_reference_marks(item.source_segment_ids,reference_numbers)
+    if marks:_write_docx_text(paragraph," "+marks,color=MUTED,size=8)
+
+
+def _configure_docx(document):
+    section=document.sections[0];section.page_width=Cm(21);section.page_height=Cm(29.7)
+    section.top_margin=Cm(2);section.bottom_margin=Cm(1.8);section.left_margin=Cm(2.1);section.right_margin=Cm(2.1)
+    normal=document.styles["Normal"];normal.font.name=DOCX_FONT;normal._element.get_or_add_rPr().rFonts.set(qn("w:eastAsia"),DOCX_FONT)
+    normal.font.size=Pt(10.5);normal.font.color.rgb=RGBColor.from_string(INK)
+    normal.paragraph_format.line_spacing=1.4;normal.paragraph_format.space_after=Pt(6)
+    title=document.styles["Title"];title.font.name=DOCX_FONT;title._element.get_or_add_rPr().rFonts.set(qn("w:eastAsia"),DOCX_FONT)
+    title.font.size=Pt(21);title.font.bold=True;title.font.color.rgb=RGBColor(0,0,0)
+    title.paragraph_format.space_after=Pt(5);title.paragraph_format.alignment=WD_ALIGN_PARAGRAPH.CENTER
+    title_props=title._element.get_or_add_pPr();title_borders=title_props.find(qn("w:pBdr"))
+    if title_borders is not None:title_props.remove(title_borders)
+    heading=document.styles["Heading 1"];heading.font.name=DOCX_FONT;heading._element.get_or_add_rPr().rFonts.set(qn("w:eastAsia"),DOCX_FONT)
+    heading.font.size=Pt(13);heading.font.bold=True;heading.font.color.rgb=RGBColor(0,0,0)
+    heading.paragraph_format.space_before=Pt(14);heading.paragraph_format.space_after=Pt(7);heading.paragraph_format.keep_with_next=True
+    return section
+
+
+def _add_docx_field(paragraph,instruction):
+    run=paragraph.add_run();begin=OxmlElement("w:fldChar");begin.set(qn("w:fldCharType"),"begin")
+    code=OxmlElement("w:instrText");code.set(qn("xml:space"),"preserve");code.text=instruction
+    separate=OxmlElement("w:fldChar");separate.set(qn("w:fldCharType"),"separate")
+    text=OxmlElement("w:t");text.text="1";end=OxmlElement("w:fldChar");end.set(qn("w:fldCharType"),"end")
+    for node in (begin,code,separate,text,end):run._r.append(node)
+    _set_docx_font(run,8,color=MUTED)
+
+
+def _add_docx_header_footer(section,document):
+    header=section.header;table=header.add_table(rows=1,cols=2,width=Cm(16.8));table.autofit=False
+    table.columns[0].width=Cm(11.8);table.columns[1].width=Cm(5)
+    left,right=table.rows[0].cells;left.width=Cm(11.8);right.width=Cm(5)
+    left_p=left.paragraphs[0];right_p=right.paragraphs[0];right_p.alignment=WD_ALIGN_PARAGRAPH.RIGHT
+    _write_docx_text(left_p,_excerpt(document.title,45),size=8,color=MUTED)
+    _write_docx_text(right_p,document.meeting_date or STYLE_NAMES[document.style],size=8,color=MUTED)
+    footer=section.footer.paragraphs[0];footer.alignment=WD_ALIGN_PARAGRAPH.CENTER
+    _write_docx_text(footer,"第 ",size=8,color=MUTED);_add_docx_field(footer,"PAGE")
+    _write_docx_text(footer," 页 / 共 ",size=8,color=MUTED);_add_docx_field(footer,"NUMPAGES")
+    _write_docx_text(footer," 页",size=8,color=MUTED)
+
+
+def _docx_table(document,headers,rows,widths,item_column=None,reference_numbers=None):
+    table=document.add_table(rows=1,cols=len(headers));table.alignment=WD_TABLE_ALIGNMENT.CENTER;table.autofit=False
+    _set_table_borders(table)
+    for index,(cell,label,width) in enumerate(zip(table.rows[0].cells,headers,widths)):
+        cell.width=Cm(width);cell.vertical_alignment=WD_CELL_VERTICAL_ALIGNMENT.CENTER;_shade_cell(cell,NAVY);_cell_margins(cell,120,140,120,140)
+        paragraph=cell.paragraphs[0];paragraph.alignment=WD_ALIGN_PARAGRAPH.LEFT;paragraph.paragraph_format.space_after=Pt(0)
+        _write_docx_text(paragraph,label,bold=True,color="FFFFFF",size=9.5)
+    _repeat_header(table.rows[0])
+    for row_index,row_values in enumerate(rows):
+        row=table.add_row();_cant_split(row)
+        for column,(cell,value,width) in enumerate(zip(row.cells,row_values,widths)):
+            cell.width=Cm(width);cell.vertical_alignment=WD_CELL_VERTICAL_ALIGNMENT.CENTER;_cell_margins(cell,120,140,120,140)
+            if row_index%2:_shade_cell(cell,PALE)
+            paragraph=cell.paragraphs[0];paragraph.paragraph_format.space_after=Pt(0);paragraph.paragraph_format.line_spacing=1.25
+            if item_column==column and isinstance(value,MinutesItem):_write_docx_item(paragraph,value,reference_numbers or {})
+            else:_write_docx_text(paragraph,value or "待确认",size=9.5)
+    document.add_paragraph().paragraph_format.space_after=Pt(0)
+
+
+def _docx_metadata(document,minutes,reference_numbers):
+    rows=[("日期",minutes.meeting_date), ("会议形式",minutes.meeting_form), ("地点",minutes.location),
+          ("参会人员",minutes.attendees), ("记录人",minutes.recorder), ("会议目的",minutes.purpose)]
+    rows=[row for row in rows if row[1]]
+    table=document.add_table(rows=0,cols=2);table.alignment=WD_TABLE_ALIGNMENT.CENTER;table.autofit=False;_set_table_borders(table)
+    for label,value in rows:
+        cells=table.add_row().cells;_cant_split(table.rows[-1]);cells[0].width=Cm(2.8);cells[1].width=Cm(14)
+        for cell in cells:cell.vertical_alignment=WD_CELL_VERTICAL_ALIGNMENT.CENTER;_cell_margins(cell,110,140,110,140)
+        _shade_cell(cells[0],PALE);p=cells[0].paragraphs[0];p.paragraph_format.space_after=Pt(0);_write_docx_text(p,label,bold=True,size=9.5)
+        p=cells[1].paragraphs[0];p.paragraph_format.space_after=Pt(0);_write_docx_text(p,value,size=9.5)
+        if label=="会议目的":
+            marks=_reference_marks(minutes.basic_info_source_segment_ids,reference_numbers)
+            if marks:_write_docx_text(p," "+marks,color=MUTED,size=8)
 
 
 def minutes_docx(document: MeetingMinutes, segments: list[dict], include_citations=False):
-    """Create a compact Word document using only the Python standard library."""
-    by_id = {segment["id"]: segment for segment in segments}
-    body = [_paragraph(document.title, "Title")]
-    metadata = [
-        ("日期", document.meeting_date), ("地点", document.location),
-        ("会议形式", document.meeting_form), ("参会人", document.attendees), ("记录人", document.recorder),
-    ]
-    if any(value for _, value in metadata):
-        body.append(_table([["会议要素", "内容"]] + [[label, value] for label, value in metadata if value]))
-    if document.purpose: body.extend([_paragraph("会议目标", "Heading1"), _paragraph(document.purpose)])
-    labels, sections = _style_layout(document.style)
-    for section in sections:
-        body.append(_paragraph(labels[section], "Heading1"))
-        items = getattr(document, section)
-        if section == "decisions" and items and document.style != "internal":
-            rows = [["决策事项", "负责人", "生效/完成时间"]]
-            for item in items:
-                rows.append([_content_with_ref(item, by_id, include_citations), item.owner or "待确认", item.due_date or "待确认"])
-            body.append(_table(rows)); continue
-        if section == "action_items" and items and document.style != "internal":
-            rows = [["行动项", "负责人", "截止时间", "状态"]]
-            for item in items:
-                content = _content_with_ref(item, by_id, include_citations)
-                rows.append([content, item.owner or "待确认", item.due_date or "待确认", item.status or "待开始"])
-            body.append(_table(rows)); continue
+    """Create an editable, A4 Word document with stable Chinese typography and tables."""
+    by_id,reference_numbers,ordered=_citation_index(document,segments)
+    if not include_citations:reference_numbers={};ordered=[]
+    word=Document();section=_configure_docx(word);_add_docx_header_footer(section,document)
+    title=word.add_paragraph(style="Title");_write_docx_text(title,document.title,bold=True,color="000000",size=21)
+    subtitle=word.add_paragraph();subtitle.alignment=WD_ALIGN_PARAGRAPH.CENTER;subtitle.paragraph_format.space_after=Pt(16)
+    _write_docx_text(subtitle,STYLE_NAMES[document.style]+(" · "+document.meeting_date if document.meeting_date else ""),size=9,color=MUTED)
+    number=1;word.add_heading(f"{number} 会议基本信息",level=1);_docx_metadata(word,document,reference_numbers);number+=1
+    labels,sections=_style_layout(document.style)
+    for section_name in sections:
+        items=getattr(document,section_name)
+        if document.style=="brief" and not items:continue
+        word.add_heading(f"{number} {labels[section_name]}",level=1);number+=1
         if not items:
-            body.append(_paragraph("无")); continue
+            paragraph=word.add_paragraph();_write_docx_text(paragraph,"无明确内容",color=MUTED);continue
+        if section_name=="decisions":
+            _docx_table(word,["决策事项","负责人","生效或完成时间"],
+                [[item,item.owner or "待确认",item.due_date or "待确认"] for item in items],[10.1,3,3.7],0,reference_numbers);continue
+        if section_name=="action_items":
+            _docx_table(word,["行动项","负责人","截止时间","状态"],
+                [[item,item.owner or "待确认",item.due_date or "待确认",item.status or "待开始"] for item in items],[8.5,2.6,3.4,2.3],0,reference_numbers);continue
         for item in items:
-            details = []
-            if item.owner: details.append("负责人：" + item.owner)
-            if item.due_date: details.append("截止：" + item.due_date)
-            if item.status: details.append("状态：" + item.status)
-            if include_citations:
-                refs = _citation_text(item, by_id)
-                if refs: details.append("原文：" + refs)
-            body.append(_paragraph("• " + item.content + (f"（{'；'.join(details)}）" if details else "")))
-    document_xml = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' + \
-        '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>' + \
-        "".join(body) + '<w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1200" w:right="1200" w:bottom="1200" w:left="1200"/></w:sectPr></w:body></w:document>'
-    styles = '''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
-<w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:rPr><w:sz w:val="22"/><w:szCs w:val="22"/></w:rPr></w:style>
-<w:style w:type="paragraph" w:styleId="Title"><w:name w:val="Title"/><w:basedOn w:val="Normal"/><w:rPr><w:b/><w:sz w:val="36"/><w:szCs w:val="36"/></w:rPr></w:style>
-<w:style w:type="paragraph" w:styleId="Heading1"><w:name w:val="heading 1"/><w:basedOn w:val="Normal"/><w:rPr><w:b/><w:color w:val="365CE6"/><w:sz w:val="28"/></w:rPr></w:style>
-</w:styles>'''
-    content_types = '''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/></Types>'''
-    root_rels = '''<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>'''
-    doc_rels = '''<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>'''
-    output = BytesIO()
-    with ZipFile(output, "w", ZIP_DEFLATED) as archive:
-        archive.writestr("[Content_Types].xml", content_types)
-        archive.writestr("_rels/.rels", root_rels)
-        archive.writestr("word/document.xml", document_xml)
-        archive.writestr("word/styles.xml", styles)
-        archive.writestr("word/_rels/document.xml.rels", doc_rels)
-    return output.getvalue()
+            paragraph=word.add_paragraph(style="List Bullet");paragraph.paragraph_format.keep_together=True
+            _write_docx_item(paragraph,item,reference_numbers)
+            details=[]
+            if item.owner:details.append("负责人："+item.owner)
+            if item.due_date:details.append("时间："+item.due_date)
+            if item.status:details.append("状态："+item.status)
+            if details:_write_docx_text(paragraph,"（"+"；".join(details)+"）",size=9,color=MUTED)
+    if ordered:
+        word.add_heading(f"{number} 原文依据",level=1)
+        rows=[]
+        for sid in ordered:
+            segment=by_id[sid];rows.append([f"[{reference_numbers[sid]}]",stamp(segment.get("start")),segment.get("speaker") or "未分配",_excerpt(segment.get("text"))])
+        _docx_table(word,["编号","时间","发言人","原文摘录"],rows,[1.5,2.2,2.8,10.3])
+    output=BytesIO();word.save(output);return output.getvalue()
+
+
+class _NumberedCanvas(Canvas):
+    def __init__(self,*args,**kwargs):super().__init__(*args,**kwargs);self._saved_page_states=[]
+    def showPage(self):self._saved_page_states.append(dict(self.__dict__));self._startPage()
+    def save(self):
+        page_count=len(self._saved_page_states)
+        for state in self._saved_page_states:
+            self.__dict__.update(state);self.setFillColor(colors.HexColor("#667085"));self.setFont("MinutesBody",8)
+            self.drawCentredString(A4[0]/2,11*mm,f"第 {self._pageNumber} 页 / 共 {page_count} 页");Canvas.showPage(self)
+        Canvas.save(self)
+
+
+def _register_pdf_fonts():
+    if "MinutesBody" in pdfmetrics.getRegisteredFontNames():return
+    regular=next((path for path in (Path("/System/Library/Fonts/Supplemental/Arial Unicode.ttf"),Path("/Library/Fonts/Arial Unicode.ttf")) if path.exists()),None)
+    bold=Path("/System/Library/Fonts/STHeiti Medium.ttc")
+    if not regular or not bold.exists():raise RuntimeError("当前系统缺少 PDF 中文字体")
+    pdfmetrics.registerFont(TTFont("MinutesBody",str(regular)))
+    pdfmetrics.registerFont(TTFont("MinutesBold",str(bold)))
+    pdfmetrics.registerFontFamily("MinutesBody",normal="MinutesBody",bold="MinutesBold")
+
+
+def _pdf_styles():
+    return {
+        "title":ParagraphStyle("title",fontName="MinutesBold",fontSize=20,leading=27,textColor=colors.black,alignment=TA_CENTER,spaceAfter=5*mm,wordWrap="CJK"),
+        "subtitle":ParagraphStyle("subtitle",fontName="MinutesBody",fontSize=9,leading=13,textColor=colors.HexColor("#667085"),alignment=TA_CENTER,spaceAfter=8*mm,wordWrap="CJK"),
+        "heading":ParagraphStyle("heading",fontName="MinutesBold",fontSize=13,leading=18,textColor=colors.black,spaceBefore=5*mm,spaceAfter=2.5*mm,keepWithNext=True,wordWrap="CJK"),
+        "body":ParagraphStyle("body",fontName="MinutesBody",fontSize=10,leading=15,textColor=colors.HexColor("#1E293B"),spaceAfter=2.2*mm,wordWrap="CJK"),
+        "bullet":ParagraphStyle("bullet",fontName="MinutesBody",fontSize=10,leading=15,textColor=colors.HexColor("#1E293B"),leftIndent=5*mm,firstLineIndent=-3.5*mm,spaceAfter=2.2*mm,wordWrap="CJK"),
+        "cell":ParagraphStyle("cell",fontName="MinutesBody",fontSize=9,leading=13,textColor=colors.HexColor("#1E293B"),wordWrap="CJK"),
+        "head":ParagraphStyle("head",fontName="MinutesBold",fontSize=9,leading=13,textColor=colors.white,wordWrap="CJK"),
+        "muted":ParagraphStyle("muted",fontName="MinutesBody",fontSize=8.5,leading=12,textColor=colors.HexColor("#667085"),wordWrap="CJK"),
+    }
+
+
+def _pdf_paragraph(value,style,marks=""):
+    content=escape(str(value or "待确认"))
+    if marks:content+=f' <font name="MinutesBody" size="8" color="#667085">{escape(marks)}</font>'
+    return Paragraph(content,style)
+
+
+def _pdf_table(headers,rows,widths,styles,item_column=None,reference_numbers=None):
+    data=[[_pdf_paragraph(label,styles["head"]) for label in headers]]
+    for row in rows:
+        values=[]
+        for index,value in enumerate(row):
+            if index==item_column and isinstance(value,MinutesItem):
+                values.append(_pdf_paragraph(value.content,styles["cell"],_reference_marks(value.source_segment_ids,reference_numbers or {})))
+            else:values.append(_pdf_paragraph(value,styles["cell"]))
+        data.append(values)
+    table=LongTable(data,colWidths=[width*mm for width in widths],repeatRows=1,hAlign="LEFT",splitByRow=1)
+    commands=[("BACKGROUND",(0,0),(-1,0),colors.HexColor("#253A5B")),("GRID",(0,0),(-1,-1),0.5,colors.HexColor("#D9E0E8")),
+        ("VALIGN",(0,0),(-1,-1),"MIDDLE"),("LEFTPADDING",(0,0),(-1,-1),6),("RIGHTPADDING",(0,0),(-1,-1),6),
+        ("TOPPADDING",(0,0),(-1,-1),6),("BOTTOMPADDING",(0,0),(-1,-1),6)]
+    for row_index in range(2,len(data),2):commands.append(("BACKGROUND",(0,row_index),(-1,row_index),colors.HexColor("#F5F7FA")))
+    table.setStyle(TableStyle(commands));return table
+
+
+def _pdf_header(canvas,doc):
+    canvas.saveState();canvas.setFillColor(colors.HexColor("#667085"));canvas.setFont("MinutesBody",8)
+    canvas.drawString(20*mm,A4[1]-12*mm,_excerpt(doc.meeting_title,48))
+    if doc.meeting_date:canvas.drawRightString(A4[0]-20*mm,A4[1]-12*mm,doc.meeting_date)
+    canvas.restoreState()
 
 
 def minutes_pdf(document: MeetingMinutes, segments: list[dict], include_citations=False):
-    """Render a Unicode PDF with the native macOS print filter."""
-    cupsfilter=shutil.which('cupsfilter') or ('/usr/sbin/cupsfilter' if Path('/usr/sbin/cupsfilter').exists() else None)
-    if not cupsfilter:raise RuntimeError('当前系统缺少 PDF 转换组件')
-    lines=[]
-    for line in minutes_markdown(document,segments,include_citations).splitlines():
-        if line.startswith('| ---'):continue
-        if line.startswith('#'):line=line.lstrip('#').strip()
-        line=line.replace('**','')
-        if line.startswith('|'):line='  '.join(cell.strip() for cell in line.strip('|').split('|'))
-        lines.append(line)
-    with tempfile.NamedTemporaryFile('w',suffix='.txt',encoding='utf-8',delete=False) as source:
-        source.write('\n'.join(lines));path=Path(source.name)
-    try:
-        result=subprocess.run([cupsfilter,'-m','application/pdf',str(path)],capture_output=True,timeout=30)
-        if result.returncode or not result.stdout.startswith(b'%PDF'):
-            raise RuntimeError('PDF 生成失败：'+result.stderr.decode(errors='replace')[-500:])
-        return result.stdout
-    except subprocess.TimeoutExpired as error:raise RuntimeError('PDF 生成超时') from error
-    finally:path.unlink(missing_ok=True)
+    """Render a polished A4 PDF with wrapping tables, page headers and source appendix."""
+    _register_pdf_fonts();styles=_pdf_styles();by_id,reference_numbers,ordered=_citation_index(document,segments)
+    if not include_citations:reference_numbers={};ordered=[]
+    output=BytesIO();pdf=BaseDocTemplate(output,pagesize=A4,leftMargin=20*mm,rightMargin=20*mm,topMargin=20*mm,bottomMargin=19*mm,
+        title=document.title,author="听记");pdf.meeting_title=document.title;pdf.meeting_date=document.meeting_date
+    frame=Frame(pdf.leftMargin,pdf.bottomMargin,pdf.width,pdf.height,id="content",leftPadding=0,rightPadding=0,topPadding=0,bottomPadding=0)
+    pdf.addPageTemplates(PageTemplate(id="minutes",frames=[frame],onPage=_pdf_header))
+    story=[_pdf_paragraph(document.title,styles["title"]),_pdf_paragraph(STYLE_NAMES[document.style]+(" · "+document.meeting_date if document.meeting_date else ""),styles["subtitle"])]
+    number=1;story.append(_pdf_paragraph(f"{number} 会议基本信息",styles["heading"]));number+=1
+    metadata=[("日期",document.meeting_date),("会议形式",document.meeting_form),("地点",document.location),("参会人员",document.attendees),("记录人",document.recorder),("会议目的",document.purpose)]
+    metadata=[item for item in metadata if item[1]]
+    meta_data=[]
+    for label,value in metadata:
+        marks=_reference_marks(document.basic_info_source_segment_ids,reference_numbers) if label=="会议目的" else ""
+        meta_data.append([_pdf_paragraph(label,styles["head"]),_pdf_paragraph(value,styles["cell"],marks)])
+    meta=LongTable(meta_data,colWidths=[28*mm,142*mm],splitByRow=1)
+    meta.setStyle(TableStyle([("BACKGROUND",(0,0),(0,-1),colors.HexColor("#253A5B")),("GRID",(0,0),(-1,-1),0.5,colors.HexColor("#D9E0E8")),
+        ("VALIGN",(0,0),(-1,-1),"MIDDLE"),("LEFTPADDING",(0,0),(-1,-1),7),("RIGHTPADDING",(0,0),(-1,-1),7),
+        ("TOPPADDING",(0,0),(-1,-1),6),("BOTTOMPADDING",(0,0),(-1,-1),6)]));story.append(meta)
+    labels,sections=_style_layout(document.style)
+    for section_name in sections:
+        items=getattr(document,section_name)
+        if document.style=="brief" and not items:continue
+        story.append(_pdf_paragraph(f"{number} {labels[section_name]}",styles["heading"]));number+=1
+        if not items:story.append(_pdf_paragraph("无明确内容",styles["muted"]));continue
+        if section_name=="decisions":
+            story.append(_pdf_table(["决策事项","负责人","生效或完成时间"],[[item,item.owner or "待确认",item.due_date or "待确认"] for item in items],[102,30,38],styles,0,reference_numbers));continue
+        if section_name=="action_items":
+            story.append(_pdf_table(["行动项","负责人","截止时间","状态"],[[item,item.owner or "待确认",item.due_date or "待确认",item.status or "待开始"] for item in items],[86,26,35,23],styles,0,reference_numbers));continue
+        for item in items:
+            details=[]
+            if item.owner:details.append("负责人："+item.owner)
+            if item.due_date:details.append("时间："+item.due_date)
+            if item.status:details.append("状态："+item.status)
+            text="• "+escape(item.content)
+            if details:text+=f' <font size="8.5" color="#667085">（{escape("；".join(details))}）</font>'
+            marks=_reference_marks(item.source_segment_ids,reference_numbers)
+            if marks:text+=f' <font size="8" color="#667085">{escape(marks)}</font>'
+            story.append(Paragraph(text,styles["bullet"]))
+    if ordered:
+        story.append(_pdf_paragraph(f"{number} 原文依据",styles["heading"]))
+        rows=[]
+        for sid in ordered:
+            segment=by_id[sid];rows.append([f"[{reference_numbers[sid]}]",stamp(segment.get("start")),segment.get("speaker") or "未分配",_excerpt(segment.get("text"))])
+        story.append(_pdf_table(["编号","时间","发言人","原文摘录"],rows,[14,22,28,106],styles))
+    pdf.build(story,canvasmaker=_NumberedCanvas);return output.getvalue()

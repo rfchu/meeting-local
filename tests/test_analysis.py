@@ -197,14 +197,17 @@ def test_minutes_generate_edit_and_export_word(client):
     assert saved.status_code==201 and saved.json()['provenance']['edited']
     markdown=client.get(f'/api/meetings/{mid}/minutes/export/md?include_citations=true')
     assert markdown.status_code==200 and '第一会议室' in markdown.text and '原文：00:00' in markdown.text
-    word=client.get(f'/api/meetings/{mid}/minutes/export/docx')
+    word=client.get(f'/api/meetings/{mid}/minutes/export/docx?include_citations=true')
     assert word.status_code==200 and word.headers['content-type'].startswith('application/vnd.openxmlformats')
     with zipfile.ZipFile(io.BytesIO(word.content)) as archive:
         xml=archive.read('word/document.xml').decode()
-        assert '项目会议纪要' in xml and '完成交付' in xml
-    pdf=client.get(f'/api/meetings/{mid}/minutes/export/pdf')
+        assert '项目会议纪要' in xml and '完成交付' in xml and '原文依据' in xml
+        assert 'w:pgSz w:w="11906" w:h="16838"' in xml
+    pdf=client.get(f'/api/meetings/{mid}/minutes/export/pdf?include_citations=true&inline=true')
     assert pdf.status_code==200 and pdf.headers['content-type']=='application/pdf'
     assert pdf.content.startswith(b'%PDF')
+    assert pdf.headers['content-disposition'].startswith('inline;')
+    assert pdf.headers['cache-control']=='no-store'
 
 
 def test_minutes_require_current_analysis_and_reject_unknown_citation(client):

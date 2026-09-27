@@ -1,11 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
-import type {
-  Environment,
-  LLMConfig,
-  LLMConfigInput,
-  MeetingMinutes,
-} from "../types";
+import type { Environment, LLMConfig, LLMConfigInput } from "../types";
 import Modal from "./Modal";
 
 export function RenameDialog({
@@ -413,86 +408,30 @@ export function ModelConfigDialog({
 }
 
 export function MinutesPreview({
-  draft,
+  meetingId,
+  includeCitations,
   onClose,
   onExport,
 }: {
-  draft: MeetingMinutes;
+  meetingId: string;
+  includeCitations: boolean;
   onClose: () => void;
   onExport: (format: "docx" | "pdf") => void;
 }) {
-  const labels: Record<string, string> = {
-    overview: "核心内容纪要",
-    conclusions: "会议总结",
-    decisions: "决策事项",
-    action_items: "待办事项（Action Items）",
-    open_questions: "风险与待确认",
-  };
-  const sections =
-    draft.style === "ai"
-      ? ["overview", "action_items", "conclusions"]
-      : draft.style === "brief"
-        ? ["overview", "decisions", "action_items", "open_questions"]
-        : [
-            "overview",
-            "conclusions",
-            "decisions",
-            "action_items",
-            "open_questions",
-          ];
+  const previewUrl = `/api/meetings/${meetingId}/minutes/export/pdf?include_citations=${includeCitations}&inline=true`;
   return (
     <Modal id="minutesPreviewDialog" onClose={onClose}>
       <div className="preview-header">
         <div>
           <h2>纪要导出预览</h2>
-          <p>预览内容与当前保存的纪要一致。</p>
+          <p>按最终 A4 PDF 版式显示；Word 使用相同的信息层级和表格规格。</p>
         </div>
         <button className="text-btn" onClick={onClose}>
           关闭
         </button>
       </div>
       <div id="minutesPreviewContent">
-        <div className={`minutes-document minutes-${draft.style}`}>
-          <div className="minutes-style-badge">会议纪要</div>
-          <h1 className="minutes-title">{draft.title}</h1>
-          <div className="minutes-meta">
-            {[
-              ["日期", draft.meeting_date],
-              ["会议形式", draft.meeting_form],
-              ["地点", draft.location],
-              ["参会人", draft.attendees],
-              ["记录人", draft.recorder],
-            ].map(([label, value]) => (
-              <div key={label} className="preview-value">
-                <b>{label}</b>　{value || "待确认"}
-              </div>
-            ))}
-          </div>
-          <div className="minutes-purpose preview-value">
-            <b>会议目的</b>
-            <br />
-            {draft.purpose}
-          </div>
-          {sections.map((section) => (
-            <section className="minutes-section" key={section}>
-              <h3>{labels[section]}</h3>
-              {(
-                draft[section as keyof MeetingMinutes] as unknown as {
-                  content: string;
-                  owner?: string | null;
-                  due_date?: string | null;
-                }[]
-              ).map((item, index) => (
-                <div className="preview-value" key={index}>
-                  {index + 1}. {item.content}
-                  {item.owner
-                    ? `（负责人：${item.owner}${item.due_date ? `；截止：${item.due_date}` : ""}）`
-                    : ""}
-                </div>
-              ))}
-            </section>
-          ))}
-        </div>
+        <iframe title="会议纪要 A4 导出预览" src={previewUrl} />
       </div>
       <div className="preview-actions">
         <button onClick={() => onExport("docx")}>导出 Word</button>
