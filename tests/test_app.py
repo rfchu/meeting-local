@@ -39,8 +39,13 @@ def test_version_conflict_export_and_range(client):
     srt=client.get(f'/api/meetings/{mid}/export/srt')
     assert '00:00:00,000 --> 00:00:00,500' in srt.text
     assert '下周五' in srt.text
+    assert srt.headers['content-disposition'].endswith(".srt")
     assert client.get(f'/api/meetings/{mid}/audio',headers={'Range':'bytes=0-15'}).status_code==206
-    for fmt in ['txt','md','json']: assert client.get(f'/api/meetings/{mid}/export/{fmt}').status_code==200
+    for fmt in ['txt','md','json']:
+        exported=client.get(f'/api/meetings/{mid}/export/{fmt}')
+        assert exported.status_code==200
+        assert exported.headers['content-disposition'].endswith(f".{fmt}")
+        assert '测试会议' in exported.text
 
 def test_upload_validation_and_origin(client):
     assert client.post('/api/meetings',files={'file':('a.exe',b'x')}).status_code==400

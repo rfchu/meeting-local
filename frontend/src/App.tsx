@@ -562,9 +562,10 @@ export default function App() {
                 value=""
                 aria-label="导出格式"
                 onChange={async (e) => {
-                  if (!e.target.value) return;
+                  const format = e.target.value;
+                  if (!format) return;
                   await saveTranscript();
-                  download(`/meetings/${meeting.id}/export/${e.target.value}`);
+                  download(`/meetings/${meeting.id}/export/${format}`);
                 }}
               >
                 <option value="">导出文字稿 ↓</option>

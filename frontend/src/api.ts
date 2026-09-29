@@ -117,5 +117,8 @@ export const download = (path: string) => {
   const link = document.createElement("a");
   link.href = path.startsWith("/api/") ? path : downloadUrl(path);
   link.download = "";
+  link.hidden = true;
+  document.body.appendChild(link);
   link.click();
+  link.remove();
 };
