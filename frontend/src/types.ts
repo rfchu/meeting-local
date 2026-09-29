@@ -46,6 +46,27 @@ export interface MeetingAnalysis {
 export interface MinutesItem extends AnalysisItem {
   status?: string | null;
 }
+export type MinutesSectionSource =
+  "overview" | "conclusions" | "decisions" | "action_items" | "open_questions";
+export interface MinutesTemplateSection {
+  id: string;
+  title: string;
+  source: MinutesSectionSource;
+  kind: "list" | "decision_table" | "action_table";
+  required: boolean;
+  evidence_required: boolean;
+  max_items: number;
+}
+export interface MinutesTemplate {
+  id: string;
+  name: string;
+  description: string;
+  category: string;
+  version: number;
+  builtin: boolean;
+  generation_instruction: string;
+  sections: MinutesTemplateSection[];
+}
 export interface MeetingMinutes {
   title: string;
   meeting_date: string;
@@ -55,6 +76,9 @@ export interface MeetingMinutes {
   recorder: string;
   purpose: string;
   style: MinutesStyle;
+  template_id: string;
+  template_version: number;
+  template_snapshot?: MinutesTemplate | null;
   basic_info_source_segment_ids: string[];
   overview: MinutesItem[];
   conclusions: MinutesItem[];

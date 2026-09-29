@@ -5,6 +5,8 @@ import type {
   Meeting,
   MeetingMinutes,
   MinutesItem,
+  MinutesTemplate,
+  MinutesTemplateSection,
   MinutesStyle,
 } from "../../types";
 import {
@@ -76,11 +78,14 @@ interface Props {
   dirty: boolean;
   transcriptDirty: boolean;
   style: MinutesStyle;
+  templates: MinutesTemplate[];
+  templateId: string;
   mode: "quick" | "full";
   model: string;
   showCitations: boolean;
   generating: boolean;
   onStyle: (value: MinutesStyle) => void;
+  onTemplate: (value: string) => void;
   onMode: (value: "quick" | "full") => void;
   onModel: (value: string) => void;
   onCitations: (value: boolean) => void;
@@ -99,6 +104,8 @@ export default function MinutesView(props: Props) {
     dirty,
     transcriptDirty,
     style,
+    templates,
+    templateId,
     mode,
     model,
     showCitations,
@@ -144,12 +151,46 @@ export default function MinutesView(props: Props) {
       ),
     );
   const byId = new Map(meeting.segments.map((item) => [item.id, item]));
-  const layout = layouts[draft?.style || style];
+  const selectedTemplate = templates.find((item) => item.id === templateId);
+  const template = draft
+    ? draft.template_snapshot || undefined
+    : selectedTemplate;
+  const fallback = layouts[draft?.style || style];
+  const layoutSections: MinutesTemplateSection[] = template
+    ? template.sections
+    : fallback.sections.map(([source, title]) => ({
+        id: source,
+        title,
+        source,
+        kind:
+          source === "action_items"
+            ? "action_table"
+            : source === "decisions"
+              ? "decision_table"
+              : "list",
+        required: false,
+        evidence_required: true,
+        max_items: 100,
+      }));
   return (
     <div id="minutesView">
       <div className="minutes-toolbar">
         <label>
-          纪要样式
+          纪要模板
+          <select
+            aria-label="纪要模板"
+            value={templateId}
+            onChange={(e) => props.onTemplate(e.target.value)}
+          >
+            {templates.map((item) => (
+              <option value={item.id} key={item.id}>
+                {item.name} · {item.category}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          生成方式
           <select
             aria-label="纪要样式"
             value={style}
@@ -256,13 +297,14 @@ export default function MinutesView(props: Props) {
       ) : (
         <div className={`minutes-document minutes-${draft.style}`}>
           <div className="minutes-style-badge">
-            {draft.style === "formal"
-              ? "正式纪要"
-              : draft.style === "brief"
-                ? "一页纪要"
-                : draft.style === "internal"
-                  ? "内部工作纪要"
-                  : "AI 会议纪要 · 全文整理"}
+            {template?.name ||
+              (draft.style === "formal"
+                ? "正式纪要"
+                : draft.style === "brief"
+                  ? "一页纪要"
+                  : draft.style === "internal"
+                    ? "内部工作纪要"
+                    : "AI 会议纪要 · 全文整理")}
           </div>
           <input
             className="minutes-title"
@@ -299,15 +341,13 @@ export default function MinutesView(props: Props) {
               />
             </label>
           </div>
-          {layout.sections.map(([section, label]) => {
+          {layoutSections.map(({ id, source: section, title: label, kind }) => {
             const items = draft[section],
-              table =
-                draft.style !== "internal" &&
-                (section === "decisions" || section === "action_items");
+              table = kind === "decision_table" || kind === "action_table";
             return (
               <section
                 className={`minutes-section minutes-section-${section}`}
-                key={section}
+                key={id}
               >
                 <div className="minutes-section-head">
                   <h3>{label}</h3>
@@ -476,7 +516,8 @@ export default function MinutesView(props: Props) {
             );
           })}
           <p className="minutes-reference-note">
-            {layout.hint} 发送前请确认参会人、负责人和时间。
+            {template?.description || fallback.hint}{" "}
+            发送前请确认参会人、负责人和时间。
           </p>
         </div>
       )}

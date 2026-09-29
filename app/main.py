@@ -12,6 +12,7 @@ from .worker import Worker
 from .providers import WhisperCpp, get_asr_provider, engine_catalog, LocalDiarization, LocalPunctuation
 from .analysis import LMStudioProvider,OpenAICompatibleProvider,MeetingAnalysis,validate_llm_endpoint,public_llm_config,analysis_chunk_chars,TEMPLATE_VERSION,SECTION_NAMES
 from .minutes import MeetingMinutes,build_minutes,build_ai_minutes,apply_polished_minutes,validate_minutes_citations,minutes_markdown,minutes_docx,minutes_pdf,MINUTES_VERSION
+from .minutes_templates import MinutesTemplate
 
 BASE=Path(__file__).resolve().parents[1]
 
@@ -48,6 +49,7 @@ class RenameInput(BaseModel):
     title: str=Field(min_length=1,max_length=200)
 class MinutesGenerateInput(BaseModel):
     style: Literal['formal','brief','internal']='formal'
+    template_id: str=Field(default='general-meeting',max_length=100)
 class MinutesSaveInput(BaseModel):
     source_analysis_id: str | None=Field(default=None,max_length=100)
     document: MeetingMinutes
@@ -56,6 +58,7 @@ class MinutesPolishInput(BaseModel):
     model: str | None=Field(default=None,max_length=500)
 class AIMinutesGenerateInput(MinutesPolishInput):
     mode: Literal['quick','full']='quick'
+    template_id: str=Field(default='general-meeting',max_length=100)
 
 
 def create_app(data_dir=None, start_worker=True):
@@ -88,6 +91,10 @@ def create_app(data_dir=None, start_worker=True):
         return row
     def active(mid):
         return store.one("SELECT * FROM jobs WHERE meeting_id=? AND state IN ('running','queued')",(mid,))
+    def minutes_template(template_id):
+        row=store.one("SELECT definition FROM minutes_templates WHERE id=? AND status='active'",(template_id,))
+        if not row:raise HTTPException(404,'纪要模板不存在或已停用')
+        return MinutesTemplate.model_validate(json.loads(row['definition']))
     def decorated(row):
         row['segments']=json.loads(row['segments'])
         row['jobs']=store.all('SELECT * FROM jobs WHERE meeting_id=? ORDER BY created DESC,rowid DESC',(row['id'],))
@@ -110,6 +117,15 @@ def create_app(data_dir=None, start_worker=True):
             except ValueError as error:analysis={'ready':False,'models':[],'error':str(error),'base_url':''}
             analysis.update(profiles=[],default_profile_id=None)
         return {'engines':engine_catalog(),'default_engine':'whisper','engine_ready':engine.ready(),'engine':'whisper.cpp / Metal','model':Path(engine.model).name,'diarization_ready':diar.ready(),'punctuation_ready':LocalPunctuation().ready(),'ffmpeg_ready':bool(shutil.which('ffmpeg')),'data_dir':str(store.root),'offline':True,'analysis':analysis}
+
+    @app.get('/api/minutes-templates')
+    def list_minutes_templates():
+        return [json.loads(row['definition']) for row in store.all(
+            "SELECT definition FROM minutes_templates WHERE status='active' ORDER BY builtin DESC,rowid")]
+
+    @app.get('/api/minutes-templates/{template_id}')
+    def get_minutes_template(template_id:str):
+        return minutes_template(template_id).model_dump()
 
     def llm_config(cid):
         row=store.one('SELECT * FROM llm_configs WHERE id=?',(cid,))
@@ -378,8 +394,10 @@ def create_app(data_dir=None, start_worker=True):
         row=meeting(mid);source=minutes_source(mid,row)
         segments=json.loads(row['segments'])
         analysis=MeetingAnalysis.model_validate(json.loads(source['payload']))
-        document=build_minutes(row['title'],row['created'],segments,analysis,body.style)
-        aid=uid();provenance={'source_analysis_id':source['id'],'minutes_version':MINUTES_VERSION,'style':body.style,'edited':False}
+        template=minutes_template(body.template_id)
+        document=build_minutes(row['title'],row['created'],segments,analysis,body.style,template)
+        aid=uid();provenance={'source_analysis_id':source['id'],'minutes_version':MINUTES_VERSION,'style':body.style,
+                              'template_id':template.id,'template_version':template.version,'edited':False}
         store.execute('INSERT INTO artifacts(id,meeting_id,revision,kind,payload,provenance) VALUES(?,?,?,?,?,?)',
             (aid,mid,row['revision'],'meeting_minutes',encode(document.model_dump()),encode(provenance)))
         return public_artifact(store.one('SELECT * FROM artifacts WHERE id=?',(aid,)))
@@ -394,7 +412,8 @@ def create_app(data_dir=None, start_worker=True):
         try:validate_minutes_citations(body.document,valid_ids)
         except ValueError as error:raise HTTPException(400,str(error))
         aid=uid();provenance={'source_analysis_id':body.source_analysis_id,'source_transcript_revision':row['revision'] if body.document.style=='ai' else None,
-                              'minutes_version':MINUTES_VERSION,'style':body.document.style,'edited':True,'ai_generated':body.document.style=='ai'}
+                              'minutes_version':MINUTES_VERSION,'style':body.document.style,'template_id':body.document.template_id,
+                              'template_version':body.document.template_version,'edited':True,'ai_generated':body.document.style=='ai'}
         store.execute('INSERT INTO artifacts(id,meeting_id,revision,kind,payload,provenance) VALUES(?,?,?,?,?,?)',
             (aid,mid,row['revision'],'meeting_minutes',encode(body.document.model_dump()),encode(provenance)))
         return public_artifact(store.one('SELECT * FROM artifacts WHERE id=?',(aid,)))
@@ -403,6 +422,7 @@ def create_app(data_dir=None, start_worker=True):
     def generate_ai_minutes(mid:str,body:AIMinutesGenerateInput):
         row=meeting(mid);segments=json.loads(row['segments'])
         if not segments:raise HTTPException(409,'文字稿为空，无法生成 AI 会议纪要')
+        template=minutes_template(body.template_id)
         source_analysis=minutes_source(mid,row) if body.mode=='full' else None
         profile=None
         if body.profile_id:profile=llm_config(body.profile_id)
@@ -424,11 +444,13 @@ def create_app(data_dir=None, start_worker=True):
                     detail=(completed.stderr or completed.stdout).decode(errors='replace')[-1800:]
                     raise RuntimeError(f'AI 会议纪要进程失败（{completed.returncode}）：{detail}')
             speakers=list(dict.fromkeys(s['speaker'] for s in segments if s.get('speaker') and s['speaker']!='未分配'))
-            result=provider.generate_ai_minutes(model,segments,{'title':row['title'],'date':row['created'][:10],'known_attendees':speakers},work/'result',run)
-            document=build_ai_minutes(row['created'],result)
+            result=provider.generate_ai_minutes(model,segments,{'title':row['title'],'date':row['created'][:10],
+                'known_attendees':speakers,'minutes_template':template.model_dump()},work/'result',run)
+            document=build_ai_minutes(row['created'],result,template)
             validate_minutes_citations(document,{segment['id'] for segment in segments})
         except (RuntimeError,ValueError,subprocess.TimeoutExpired) as error:raise HTTPException(409,str(error))
-        aid=uid();provenance={'minutes_version':MINUTES_VERSION,'style':'ai','edited':False,'ai_generated':True,
+        aid=uid();provenance={'minutes_version':MINUTES_VERSION,'style':'ai','template_id':template.id,
+            'template_version':template.version,'edited':False,'ai_generated':True,
             'generation_mode':body.mode,'source_transcript_revision':row['revision'],'provider':provider_name,'provider_type':provider_type,'model':model}
         if source_analysis:provenance['source_analysis_id']=source_analysis['id']
         store.execute('INSERT INTO artifacts(id,meeting_id,revision,kind,payload,provenance) VALUES(?,?,?,?,?,?)',
@@ -469,7 +491,8 @@ def create_app(data_dir=None, start_worker=True):
         except (RuntimeError,ValueError,subprocess.TimeoutExpired) as error:raise HTTPException(409,str(error))
         source_provenance=json.loads(source['provenance'] or '{}')
         aid=uid();provenance={'source_analysis_id':source_provenance.get('source_analysis_id'),'source_minutes_id':source['id'],
-            'minutes_version':MINUTES_VERSION,'style':polished.style,'edited':False,'llm_polished':True,
+            'minutes_version':MINUTES_VERSION,'style':polished.style,'template_id':polished.template_id,
+            'template_version':polished.template_version,'edited':False,'llm_polished':True,
             'provider':provider_name,'provider_type':provider_type,'model':model}
         store.execute('INSERT INTO artifacts(id,meeting_id,revision,kind,payload,provenance) VALUES(?,?,?,?,?,?)',
             (aid,mid,row['revision'],'meeting_minutes',encode(polished.model_dump()),encode(provenance)))

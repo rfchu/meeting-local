@@ -4,7 +4,7 @@ from fastapi.testclient import TestClient
 from app.analysis import AnalysisItem,MeetingAnalysis,AIMinutesBasicInfo,AIMinutesResult,chunk_segments,sanitize_citations,LMStudioProvider,analysis_chunk_chars,context_window_from_metadata
 from app.db import uid,encode
 from app.main import create_app
-from app.minutes import MeetingMinutes,minutes_markdown
+from app.minutes import MeetingMinutes,MinutesItem,minutes_markdown
 
 
 @pytest.fixture
@@ -239,9 +239,43 @@ def test_minutes_styles_have_distinct_structure_and_action_status(client):
 
     document=MeetingMinutes.model_validate(formal)
     markdown=minutes_markdown(document,sample())
-    assert '## 会议成果' in markdown and '| 决策事项 | 负责人 | 生效/完成时间 |' in markdown
+    assert '## 核心内容' in markdown and '| 决策事项 | 负责人 | 生效/完成时间 |' in markdown
     assert '| 行动项 | 负责人 | 截止时间 | 状态 |' in markdown
     assert '## 讨论要点' not in markdown
+
+
+def test_builtin_minutes_templates_are_versioned_and_drive_sections(client):
+    from app.analysis import save_meeting_analysis
+    templates=client.get('/api/minutes-templates')
+    assert templates.status_code==200
+    values=templates.json()
+    assert [item['id'] for item in values]==['general-meeting','project-weekly','customer-interview']
+    assert all(item['version']==1 and item['builtin'] for item in values)
+
+    mid=upload(client);store=client.app.state.store;store.save_revision(mid,sample(),'manual',expected=0)
+    item=AnalysisItem(content='项目按计划推进',source_segment_ids=['seg1'])
+    source_id=save_meeting_analysis(store,mid,1,MeetingAnalysis(
+        summary=[item],key_points=[item],decisions=[item],action_items=[item],open_questions=[item]),{'model':'test'})
+    response=client.post(f'/api/meetings/{mid}/minutes',json={'style':'formal','template_id':'project-weekly'})
+    assert response.status_code==201
+    artifact=response.json();document=artifact['payload']
+    assert artifact['provenance']['source_analysis_id']==source_id
+    assert artifact['provenance']['template_id']=='project-weekly'
+    assert document['template_id']=='project-weekly' and document['template_version']==1
+    assert document['template_snapshot']['name']=='项目例会'
+    assert document['conclusions'][0]['content']=='项目按计划推进'
+    markdown=client.get(f'/api/meetings/{mid}/minutes/export/md').text
+    assert '## 项目状态摘要' in markdown
+    assert '## 本期工作进展' in markdown
+    assert '## 下一步行动' in markdown
+
+    document['template_snapshot']['name']='历史项目模板'
+    saved=client.put(f'/api/meetings/{mid}/minutes',json={'source_analysis_id':source_id,'document':document})
+    assert saved.status_code==201
+    assert saved.json()['payload']['template_snapshot']['name']=='历史项目模板'
+
+    legacy=MeetingMinutes(title='旧版纪要',overview=[MinutesItem(content='旧版内容')])
+    assert '## 会议成果' in minutes_markdown(legacy,[])
 
 
 def test_llm_polish_minutes_keeps_citations_and_rejects_invented_fields(client,monkeypatch):

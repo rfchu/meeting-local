@@ -5,6 +5,7 @@ import type {
   LLMConfigInput,
   Meeting,
   MeetingMinutes,
+  MinutesTemplate,
   MeetingSummary,
   Revision,
 } from "./types";
@@ -65,14 +66,20 @@ export const api = {
       `/meetings/${id}/analysis-jobs`,
       json("POST", body),
     ),
-  generateMinutes: (id: string, style: string) =>
+  minutesTemplates: () => request<MinutesTemplate[]>("/minutes-templates"),
+  generateMinutes: (id: string, style: string, templateId: string) =>
     request<Artifact<MeetingMinutes>>(
       `/meetings/${id}/minutes`,
-      json("POST", { style }),
+      json("POST", { style, template_id: templateId }),
     ),
   generateAiMinutes: (
     id: string,
-    body: { profile_id?: string; model?: string; mode: "quick" | "full" },
+    body: {
+      profile_id?: string;
+      model?: string;
+      mode: "quick" | "full";
+      template_id: string;
+    },
   ) =>
     request<Artifact<MeetingMinutes>>(
       `/meetings/${id}/minutes/ai`,

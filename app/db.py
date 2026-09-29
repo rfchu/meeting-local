@@ -1,6 +1,7 @@
 import json, os, sqlite3, uuid
 from contextlib import contextmanager
 from pathlib import Path
+from .minutes_templates import BUILTIN_TEMPLATES
 
 
 def uid(): return uuid.uuid4().hex
@@ -39,6 +40,12 @@ class Store:
               analysis_chunk_mode TEXT NOT NULL DEFAULT 'auto',
               analysis_chunk_chars INTEGER NOT NULL DEFAULT 0,
               created TEXT DEFAULT CURRENT_TIMESTAMP, updated TEXT DEFAULT CURRENT_TIMESTAMP);
+            CREATE TABLE IF NOT EXISTS minutes_templates (
+              id TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT NOT NULL DEFAULT '',
+              category TEXT NOT NULL DEFAULT '通用', version INTEGER NOT NULL DEFAULT 1,
+              builtin INTEGER NOT NULL DEFAULT 0, definition TEXT NOT NULL,
+              status TEXT NOT NULL DEFAULT 'active',
+              created TEXT DEFAULT CURRENT_TIMESTAMP, updated TEXT DEFAULT CURRENT_TIMESTAMP);
             ''')
             columns={row['name'] for row in db.execute('PRAGMA table_info(jobs)')}
             if 'kind' not in columns:
@@ -50,7 +57,15 @@ class Store:
                 db.execute("ALTER TABLE llm_configs ADD COLUMN analysis_chunk_mode TEXT NOT NULL DEFAULT 'auto'")
             if 'analysis_chunk_chars' not in config_columns:
                 db.execute('ALTER TABLE llm_configs ADD COLUMN analysis_chunk_chars INTEGER NOT NULL DEFAULT 0')
-            db.execute('PRAGMA user_version=5')
+            for template in BUILTIN_TEMPLATES:
+                definition=encode(template.model_dump())
+                db.execute('''INSERT INTO minutes_templates(id,name,description,category,version,builtin,definition,status)
+                    VALUES(?,?,?,?,?,?,?,'active') ON CONFLICT(id) DO UPDATE SET
+                    name=excluded.name,description=excluded.description,category=excluded.category,
+                    version=excluded.version,builtin=excluded.builtin,definition=excluded.definition,
+                    updated=CURRENT_TIMESTAMP''',
+                    (template.id,template.name,template.description,template.category,template.version,1,definition))
+            db.execute('PRAGMA user_version=6')
         os.chmod(self.path,0o600)
     @contextmanager
     def connect(self):

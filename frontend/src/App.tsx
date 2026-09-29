@@ -4,6 +4,7 @@ import { api, download } from "./api";
 import type {
   Meeting,
   MeetingMinutes,
+  MinutesTemplate,
   MinutesStyle,
   Segment,
   Workspace,
@@ -43,6 +44,10 @@ export default function App() {
     queryFn: api.environment,
     refetchInterval: 15000,
   });
+  const templatesQuery = useQuery({
+    queryKey: ["minutes-templates"],
+    queryFn: api.minutesTemplates,
+  });
   const [meeting, setMeeting] = useState<Meeting | null>(null),
     [workspace, setWorkspace] = useState<Workspace>("transcript");
   const [transcriptDirty, setTranscriptDirty] = useState(false),
@@ -51,6 +56,7 @@ export default function App() {
     [minutesDirty, setMinutesDirty] = useState(false),
     [savingMinutes, setSavingMinutes] = useState(false);
   const [minutesStyle, setMinutesStyle] = useState<MinutesStyle>("formal"),
+    [minutesTemplateId, setMinutesTemplateId] = useState("general-meeting"),
     [minutesMode, setMinutesMode] = useState<"quick" | "full">("quick"),
     [showCitations, setShowCitations] = useState(false);
   const [analysisModel, setAnalysisModel] = useState(""),
@@ -183,6 +189,7 @@ export default function App() {
       setMinutesDraft(artifact ? clone(artifact.payload) : null);
       setMinutesDirty(false);
       setMinutesStyle(artifact?.payload.style || "formal");
+      setMinutesTemplateId(artifact?.payload.template_id || "general-meeting");
       setShowCitations(artifact?.payload.style === "internal");
       setWorkspace("transcript");
       setFullPending(false);
@@ -298,11 +305,13 @@ export default function App() {
       forceMode?: "quick" | "full",
       forceStyle?: MinutesStyle,
       skipSave = false,
+      forceTemplateId?: string,
     ) => {
       const target = meetingRef.current;
       if (!target) return;
       const mode = forceMode || minutesMode,
-        selectedStyle = forceStyle || minutesStyle;
+        selectedStyle = forceStyle || minutesStyle,
+        selectedTemplateId = forceTemplateId || minutesTemplateId;
       try {
         if (!skipSave) await saveMinutes();
         setGenerating(true);
@@ -313,10 +322,19 @@ export default function App() {
           artifact = await api.generateAiMinutes(
             target.id,
             profiles.length
-              ? { profile_id: minutesModel, mode }
-              : { model: minutesModel, mode },
+              ? {
+                  profile_id: minutesModel,
+                  mode,
+                  template_id: selectedTemplateId,
+                }
+              : { model: minutesModel, mode, template_id: selectedTemplateId },
           );
-        } else artifact = await api.generateMinutes(target.id, selectedStyle);
+        } else
+          artifact = await api.generateMinutes(
+            target.id,
+            selectedStyle,
+            selectedTemplateId,
+          );
         setMeeting((old) =>
           old?.id === target.id
             ? { ...old, artifacts: [artifact, ...old.artifacts] }
@@ -325,6 +343,7 @@ export default function App() {
         setMinutesDraft(clone(artifact.payload));
         setMinutesDirty(false);
         setMinutesStyle(artifact.payload.style);
+        setMinutesTemplateId(artifact.payload.template_id || "general-meeting");
         setWorkspace("minutes");
         toast(
           selectedStyle === "ai"
@@ -344,6 +363,7 @@ export default function App() {
       minutesMode,
       minutesModel,
       minutesStyle,
+      minutesTemplateId,
       saveMinutes,
       toast,
     ],
@@ -371,7 +391,9 @@ export default function App() {
       (item) =>
         item.kind === "meeting_minutes" &&
         item.revision === meeting.revision &&
-        (item.payload as MeetingMinutes).style === value,
+        (item.payload as MeetingMinutes).style === value &&
+        ((item.payload as MeetingMinutes).template_id || "general-meeting") ===
+          minutesTemplateId,
     );
     setMinutesDraft(
       matching ? clone(matching.payload as MeetingMinutes) : null,
@@ -379,6 +401,25 @@ export default function App() {
     setMinutesDirty(false);
     if (value !== "ai" && currentAnalysis(meeting))
       await generateMinutes(undefined, value, true);
+  };
+  const changeMinutesTemplate = async (value: string) => {
+    if (!meeting) return;
+    await saveMinutes();
+    setMinutesTemplateId(value);
+    const matching = meeting.artifacts.find(
+      (item) =>
+        item.kind === "meeting_minutes" &&
+        item.revision === meeting.revision &&
+        (item.payload as MeetingMinutes).style === minutesStyle &&
+        ((item.payload as MeetingMinutes).template_id || "general-meeting") ===
+          value,
+    );
+    setMinutesDraft(
+      matching ? clone(matching.payload as MeetingMinutes) : null,
+    );
+    setMinutesDirty(false);
+    if (minutesStyle !== "ai" && currentAnalysis(meeting))
+      await generateMinutes(undefined, minutesStyle, true, value);
   };
   useEffect(() => {
     if (
@@ -637,11 +678,14 @@ export default function App() {
                     dirty={minutesDirty}
                     transcriptDirty={transcriptDirty}
                     style={minutesStyle}
+                    templates={(templatesQuery.data || []) as MinutesTemplate[]}
+                    templateId={minutesTemplateId}
                     mode={minutesMode}
                     model={minutesModel}
                     showCitations={showCitations}
                     generating={generating || fullPending}
                     onStyle={(value) => void changeMinutesStyle(value)}
+                    onTemplate={(value) => void changeMinutesTemplate(value)}
                     onMode={setMinutesMode}
                     onModel={setMinutesModel}
                     onCitations={setShowCitations}

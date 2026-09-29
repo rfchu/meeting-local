@@ -21,6 +21,7 @@ from reportlab.pdfgen.canvas import Canvas
 from reportlab.platypus import BaseDocTemplate, Frame, LongTable, PageTemplate, Paragraph, TableStyle
 
 from .analysis import AnalysisItem, MeetingAnalysis, AIMinutesResult, SECTION_NAMES, validate_citations
+from .minutes_templates import MinutesTemplate, builtin_template, template_snapshot
 
 
 MINUTES_VERSION = "meeting-minutes-v2"
@@ -51,6 +52,9 @@ class MeetingMinutes(BaseModel):
     recorder: str = Field(default="", max_length=300)
     purpose: str = Field(default="", max_length=3000)
     style: str = Field(default="formal", pattern="^(formal|brief|internal|ai)$")
+    template_id: str = Field(default="general-meeting", max_length=100)
+    template_version: int = Field(default=1, ge=1)
+    template_snapshot: dict | None = None
     basic_info_source_segment_ids: list[str] = Field(default_factory=list, max_length=100)
     overview: list[MinutesItem] = Field(default_factory=list, max_length=50)
     conclusions: list[MinutesItem] = Field(default_factory=list, max_length=50)
@@ -71,7 +75,7 @@ def validate_minutes_citations(document: MeetingMinutes, valid_ids: set[str]):
             raise ValueError("会议纪要包含不存在的原文引用")
 
 
-def build_minutes(title: str, created: str, segments: list[dict], analysis: MeetingAnalysis, style: str):
+def build_minutes(title: str, created: str, segments: list[dict], analysis: MeetingAnalysis, style: str, template: MinutesTemplate | None = None):
     """Rearrange validated analysis without asking a model to invent new facts."""
     validate_citations(analysis, {segment["id"] for segment in segments})
     speakers = list(dict.fromkeys(
@@ -83,17 +87,26 @@ def build_minutes(title: str, created: str, segments: list[dict], analysis: Meet
         values = items[:limit] if limit else items
         return [MinutesItem(**item.model_dump(), status="待开始" if action else None) for item in values]
 
+    template = template or builtin_template()
     if style == "brief":
         limits = {"summary": 1, "key_points": 0, "decisions": 3, "action_items": 5, "open_questions": 3}
     elif style == "formal":
         limits = {"summary": 2, "key_points": 0, "decisions": 8, "action_items": 12, "open_questions": 6}
     else:
         limits = {name: None for name in SECTION_NAMES}
+    source_to_analysis = {"overview":"summary","conclusions":"key_points","decisions":"decisions",
+                          "action_items":"action_items","open_questions":"open_questions"}
+    if template.id != "general-meeting" and style != "brief":
+        for section in template.sections:
+            limits[source_to_analysis[section.source]] = section.max_items
     return MeetingMinutes(
         title=f"{title}会议纪要",
         meeting_date=(created or "")[:10],
         attendees="、".join(speakers),
         style=style,
+        template_id=template.id,
+        template_version=template.version,
+        template_snapshot=template_snapshot(template),
         overview=copy(analysis.summary, limits["summary"]),
         conclusions=copy(analysis.key_points, limits["key_points"]) if limits["key_points"] != 0 else [],
         decisions=copy(analysis.decisions, limits["decisions"]),
@@ -102,13 +115,15 @@ def build_minutes(title: str, created: str, segments: list[dict], analysis: Meet
     )
 
 
-def build_ai_minutes(created: str, result: AIMinutesResult):
+def build_ai_minutes(created: str, result: AIMinutesResult, template: MinutesTemplate | None = None):
     def copy(items, action=False):
         return [MinutesItem(**item.model_dump(),status="待开始" if action else None) for item in items]
     topic=result.basic_info.topic.strip()
     title=topic if topic.endswith("会议纪要") else topic+"会议纪要"
+    template = template or builtin_template()
     return MeetingMinutes(title=title,meeting_date=(created or "")[:10],meeting_form=result.basic_info.meeting_form,
         attendees="、".join(result.basic_info.attendees),purpose=result.basic_info.purpose,style="ai",
+        template_id=template.id,template_version=template.version,template_snapshot=template_snapshot(template),
         basic_info_source_segment_ids=result.basic_info.source_segment_ids,
         overview=copy(result.core_content),action_items=copy(result.action_items,True),conclusions=copy(result.summary))
 
@@ -161,19 +176,19 @@ def minutes_markdown(document: MeetingMinutes, segments: list[dict], include_cit
         if value: lines.append(f"**{label}：** {value}")
     if any(value for _, value in metadata): lines.append("")
     if document.purpose: lines.extend(["## 会议目标", "", document.purpose, ""])
-    labels, sections = _style_layout(document.style)
+    labels, sections = _style_layout(document)
     for section in sections:
         lines.extend([f"## {labels[section]}", ""])
         items = getattr(document, section)
         if not items:
             lines.extend(["- 无", ""]); continue
-        if section == "decisions" and document.style != "internal":
+        if _section_kind(document,section) == "decision_table":
             lines.extend(["| 决策事项 | 负责人 | 生效/完成时间 |", "| --- | --- | --- |"]) 
             for item in items:
                 content = _content_with_ref(item, by_id, include_citations)
                 lines.append(f"| {_md_cell(content)} | {_md_cell(item.owner or '待确认')} | {_md_cell(item.due_date or '待确认')} |")
             lines.append(""); continue
-        if section == "action_items" and document.style != "internal":
+        if _section_kind(document,section) == "action_table":
             lines.extend(["| 行动项 | 负责人 | 截止时间 | 状态 |", "| --- | --- | --- | --- |"]) 
             for item in items:
                 content = _content_with_ref(item, by_id, include_citations)
@@ -192,7 +207,18 @@ def minutes_markdown(document: MeetingMinutes, segments: list[dict], include_cit
     return "\n".join(lines).rstrip() + "\n"
 
 
-def _style_layout(style):
+def _style_layout(value):
+    if isinstance(value, MeetingMinutes):
+        snapshot=value.template_snapshot
+        if snapshot:
+            try:
+                template=MinutesTemplate.model_validate(snapshot)
+                return ({section.source:section.title for section in template.sections},
+                        tuple(section.source for section in template.sections))
+            except ValueError:
+                pass
+        style=value.style
+    else:style=value
     if style == "ai":
         return ({"overview":"核心内容纪要","action_items":"待办事项（Action Items）","conclusions":"会议总结"},
                 ("overview","action_items","conclusions"))
@@ -204,6 +230,19 @@ def _style_layout(style):
                 MINUTES_SECTIONS)
     return ({"overview":"会议成果","decisions":"决策事项","action_items":"行动计划","open_questions":"风险与待确认"},
             ("overview","decisions","action_items","open_questions"))
+
+
+def _section_kind(document: MeetingMinutes, source: str):
+    if document.template_snapshot:
+        try:
+            template=MinutesTemplate.model_validate(document.template_snapshot)
+            section=next((item for item in template.sections if item.source==source),None)
+            if section:return section.kind
+        except ValueError:
+            pass
+    if document.style != "internal" and source=="decisions":return "decision_table"
+    if document.style != "internal" and source=="action_items":return "action_table"
+    return "list"
 
 
 def _md_cell(value):
@@ -219,6 +258,13 @@ def _content_with_ref(item, by_id, include_citations):
 
 
 STYLE_NAMES = {"formal":"正式会议纪要","brief":"精简会议纪要","internal":"内部工作纪要","ai":"AI 会议纪要"}
+
+
+def _document_label(document: MeetingMinutes):
+    if document.template_snapshot:
+        name=document.template_snapshot.get("name")
+        if isinstance(name,str) and name.strip():return name.strip()
+    return STYLE_NAMES[document.style]
 INK = "1E293B"; MUTED = "667085"; NAVY = "253A5B"; PALE = "F5F7FA"; LINE = "D9E0E8"
 DOCX_FONT = "Heiti SC"
 
@@ -228,7 +274,7 @@ def _citation_index(document: MeetingMinutes, segments: list[dict]):
     ordered=[]
     for sid in document.basic_info_source_segment_ids:
         if sid in by_id and sid not in ordered:ordered.append(sid)
-    labels,sections=_style_layout(document.style)
+    labels,sections=_style_layout(document)
     for section in sections:
         for item in getattr(document,section):
             for sid in item.source_segment_ids:
@@ -329,7 +375,7 @@ def _add_docx_header_footer(section,document):
     left,right=table.rows[0].cells;left.width=Cm(11.8);right.width=Cm(5)
     left_p=left.paragraphs[0];right_p=right.paragraphs[0];right_p.alignment=WD_ALIGN_PARAGRAPH.RIGHT
     _write_docx_text(left_p,_excerpt(document.title,45),size=8,color=MUTED)
-    _write_docx_text(right_p,document.meeting_date or STYLE_NAMES[document.style],size=8,color=MUTED)
+    _write_docx_text(right_p,document.meeting_date or _document_label(document),size=8,color=MUTED)
     footer=section.footer.paragraphs[0];footer.alignment=WD_ALIGN_PARAGRAPH.CENTER
     _write_docx_text(footer,"第 ",size=8,color=MUTED);_add_docx_field(footer,"PAGE")
     _write_docx_text(footer," 页 / 共 ",size=8,color=MUTED);_add_docx_field(footer,"NUMPAGES")
@@ -377,19 +423,19 @@ def minutes_docx(document: MeetingMinutes, segments: list[dict], include_citatio
     word=Document();section=_configure_docx(word);_add_docx_header_footer(section,document)
     title=word.add_paragraph(style="Title");_write_docx_text(title,document.title,bold=True,color="000000",size=21)
     subtitle=word.add_paragraph();subtitle.alignment=WD_ALIGN_PARAGRAPH.CENTER;subtitle.paragraph_format.space_after=Pt(16)
-    _write_docx_text(subtitle,STYLE_NAMES[document.style]+(" · "+document.meeting_date if document.meeting_date else ""),size=9,color=MUTED)
+    _write_docx_text(subtitle,_document_label(document)+(" · "+document.meeting_date if document.meeting_date else ""),size=9,color=MUTED)
     number=1;word.add_heading(f"{number} 会议基本信息",level=1);_docx_metadata(word,document,reference_numbers);number+=1
-    labels,sections=_style_layout(document.style)
+    labels,sections=_style_layout(document)
     for section_name in sections:
         items=getattr(document,section_name)
         if document.style=="brief" and not items:continue
         word.add_heading(f"{number} {labels[section_name]}",level=1);number+=1
         if not items:
             paragraph=word.add_paragraph();_write_docx_text(paragraph,"无明确内容",color=MUTED);continue
-        if section_name=="decisions":
+        if _section_kind(document,section_name)=="decision_table":
             _docx_table(word,["决策事项","负责人","生效或完成时间"],
                 [[item,item.owner or "待确认",item.due_date or "待确认"] for item in items],[10.1,3,3.7],0,reference_numbers);continue
-        if section_name=="action_items":
+        if _section_kind(document,section_name)=="action_table":
             _docx_table(word,["行动项","负责人","截止时间","状态"],
                 [[item,item.owner or "待确认",item.due_date or "待确认",item.status or "待开始"] for item in items],[8.5,2.6,3.4,2.3],0,reference_numbers);continue
         for item in items:
@@ -481,7 +527,7 @@ def minutes_pdf(document: MeetingMinutes, segments: list[dict], include_citation
         title=document.title,author="听记");pdf.meeting_title=document.title;pdf.meeting_date=document.meeting_date
     frame=Frame(pdf.leftMargin,pdf.bottomMargin,pdf.width,pdf.height,id="content",leftPadding=0,rightPadding=0,topPadding=0,bottomPadding=0)
     pdf.addPageTemplates(PageTemplate(id="minutes",frames=[frame],onPage=_pdf_header))
-    story=[_pdf_paragraph(document.title,styles["title"]),_pdf_paragraph(STYLE_NAMES[document.style]+(" · "+document.meeting_date if document.meeting_date else ""),styles["subtitle"])]
+    story=[_pdf_paragraph(document.title,styles["title"]),_pdf_paragraph(_document_label(document)+(" · "+document.meeting_date if document.meeting_date else ""),styles["subtitle"])]
     number=1;story.append(_pdf_paragraph(f"{number} 会议基本信息",styles["heading"]));number+=1
     metadata=[("日期",document.meeting_date),("会议形式",document.meeting_form),("地点",document.location),("参会人员",document.attendees),("记录人",document.recorder),("会议目的",document.purpose)]
     metadata=[item for item in metadata if item[1]]
@@ -493,15 +539,15 @@ def minutes_pdf(document: MeetingMinutes, segments: list[dict], include_citation
     meta.setStyle(TableStyle([("BACKGROUND",(0,0),(0,-1),colors.HexColor("#253A5B")),("GRID",(0,0),(-1,-1),0.5,colors.HexColor("#D9E0E8")),
         ("VALIGN",(0,0),(-1,-1),"MIDDLE"),("LEFTPADDING",(0,0),(-1,-1),7),("RIGHTPADDING",(0,0),(-1,-1),7),
         ("TOPPADDING",(0,0),(-1,-1),6),("BOTTOMPADDING",(0,0),(-1,-1),6)]));story.append(meta)
-    labels,sections=_style_layout(document.style)
+    labels,sections=_style_layout(document)
     for section_name in sections:
         items=getattr(document,section_name)
         if document.style=="brief" and not items:continue
         story.append(_pdf_paragraph(f"{number} {labels[section_name]}",styles["heading"]));number+=1
         if not items:story.append(_pdf_paragraph("无明确内容",styles["muted"]));continue
-        if section_name=="decisions":
+        if _section_kind(document,section_name)=="decision_table":
             story.append(_pdf_table(["决策事项","负责人","生效或完成时间"],[[item,item.owner or "待确认",item.due_date or "待确认"] for item in items],[102,30,38],styles,0,reference_numbers));continue
-        if section_name=="action_items":
+        if _section_kind(document,section_name)=="action_table":
             story.append(_pdf_table(["行动项","负责人","截止时间","状态"],[[item,item.owner or "待确认",item.due_date or "待确认",item.status or "待开始"] for item in items],[86,26,35,23],styles,0,reference_numbers));continue
         for item in items:
             details=[]
