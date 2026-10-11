@@ -3,6 +3,7 @@ import type {
   Environment,
   LLMConfig,
   LLMConfigInput,
+  LiveDraftSegment,
   Meeting,
   MeetingMinutes,
   MeetingNoteInput,
@@ -45,6 +46,16 @@ export const api = {
     const data = new FormData();
     data.append("file", file);
     return request<Meeting>("/meetings", { method: "POST", body: data });
+  },
+  liveTranscribe: (file: File, offset: number) => {
+    const data = new FormData();
+    data.append("file", file);
+    data.append("offset", String(offset));
+    return request<{
+      segments: LiveDraftSegment[];
+      duration: number;
+      processing_ms: number;
+    }>("/live-transcribe", { method: "POST", body: data });
   },
   rename: (id: string, title: string) =>
     request(`/meetings/${id}`, json("PATCH", { title })),

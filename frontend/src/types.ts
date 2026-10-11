@@ -46,6 +46,11 @@ export interface MeetingNote extends MeetingNoteInput {
   created: string;
   updated: string;
 }
+export interface LiveDraftSegment {
+  start: number;
+  end: number;
+  text: string;
+}
 export interface AnalysisItem {
   content: string;
   source_segment_ids: string[];

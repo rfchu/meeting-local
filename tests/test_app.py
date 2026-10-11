@@ -47,6 +47,40 @@ def test_timestamped_meeting_notes_lifecycle(client):
     assert client.delete(f'/api/meetings/{mid}/notes/{nid}').status_code==200
     assert len(client.get(f'/api/meetings/{mid}').json()['notes'])==1
 
+def test_incremental_live_transcription(client,monkeypatch):
+    monkeypatch.setattr('app.main.WhisperCpp.ready',lambda _:True)
+    monkeypatch.setattr('app.main.WhisperCpp.transcribe',lambda self,audio,output,run:[
+        {'start':.25,'end':.9,'text':'这是实时草稿','speaker':'未分配'}])
+    result=client.post('/api/live-transcribe',data={'offset':'15'},files={
+        'file':('live.wav',wav_bytes(1),'audio/wav')})
+    assert result.status_code==200
+    assert result.json()['segments']==[{'start':15.25,'end':15.9,'text':'这是实时草稿'}]
+    assert result.json()['duration']==1
+
+def test_incremental_live_transcription_validates_audio(client,monkeypatch):
+    monkeypatch.setattr('app.main.WhisperCpp.ready',lambda _:True)
+    assert client.post('/api/live-transcribe',data={'offset':'0'},files={
+        'file':('bad.wav',b'not-wave','audio/wav')}).status_code==400
+
+def test_live_inference_keeps_other_requests_responsive(client,monkeypatch):
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+    entered=threading.Event();release=threading.Event()
+    monkeypatch.setattr('app.main.WhisperCpp.ready',lambda _:True)
+    def transcribe(*args):
+        entered.set();assert release.wait(5);return []
+    monkeypatch.setattr('app.main.WhisperCpp.transcribe',transcribe)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        task=pool.submit(client.post,'/api/live-transcribe',files={'file':('live.wav',wav_bytes(),'audio/wav')})
+        try:
+            assert entered.wait(2)
+            other=pool.submit(client.get,'/api/meetings')
+            assert other.result(timeout=2).status_code==200
+            busy=client.post('/api/live-transcribe',files={'file':('live.wav',wav_bytes(),'audio/wav')})
+            assert busy.status_code==409
+        finally:release.set()
+        assert task.result(timeout=3).status_code==200
+
 def test_version_conflict_export_and_range(client):
     mid=upload(client)
     assert client.put(f'/api/meetings/{mid}/transcript',json={'revision':0,'segments':sample()}).json()['revision']==1

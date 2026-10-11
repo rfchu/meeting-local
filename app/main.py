@@ -1,11 +1,12 @@
-import hashlib, json, os, shutil, subprocess
+import hashlib, json, os, shutil, subprocess, tempfile, threading, time, wave
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Literal
 from urllib.parse import urlparse, quote
-from fastapi import FastAPI, File, UploadFile, HTTPException, Request
+from fastapi import FastAPI, File, Form, UploadFile, HTTPException, Request
 from fastapi.responses import FileResponse, Response, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.concurrency import run_in_threadpool
 from pydantic import BaseModel, Field
 from .db import Store, uid, encode
 from .worker import Worker
@@ -80,6 +81,7 @@ def create_app(data_dir=None, start_worker=True):
         worker.close()
     app=FastAPI(title='听记 · Local Meeting',lifespan=lifespan)
     app.state.store=store; app.state.worker=worker
+    live_asr_lock=threading.Lock()
 
     @app.middleware('http')
     async def local_only(request:Request,call_next):
@@ -138,6 +140,42 @@ def create_app(data_dir=None, start_worker=True):
     @app.get('/api/minutes-templates/{template_id}')
     def get_minutes_template(template_id:str):
         return minutes_template(template_id).model_dump()
+
+    @app.post('/api/live-transcribe')
+    async def live_transcribe(file:UploadFile=File(...),offset:float=Form(default=0,ge=0,allow_inf_nan=False)):
+        """Decode one short 16 kHz PCM increment for a non-authoritative live draft."""
+        if not live_asr_lock.acquire(blocking=False):
+            await file.close();raise HTTPException(409,'上一段实时草稿仍在识别')
+        started=time.monotonic()
+        try:
+            provider=WhisperCpp()
+            if not provider.ready():raise HTTPException(409,'Whisper 实时草稿模型尚未就绪')
+            payload=await file.read(4*1024*1024+1)
+            if len(payload)>4*1024*1024:raise HTTPException(413,'实时音频片段最大支持 4MB')
+            if not payload:raise HTTPException(400,'实时音频片段为空')
+            with tempfile.TemporaryDirectory(prefix='meeting-live-',dir=store.root) as folder_name:
+                folder=Path(folder_name);audio=folder/'chunk.wav';audio.write_bytes(payload)
+                try:
+                    with wave.open(str(audio),'rb') as source:
+                        duration=source.getnframes()/source.getframerate()
+                        valid=source.getnchannels()==1 and source.getsampwidth()==2 and source.getframerate()==16000
+                except (wave.Error,EOFError):raise HTTPException(400,'实时音频必须是有效的 WAV 文件')
+                if not valid:raise HTTPException(400,'实时音频必须是 16 kHz 单声道 PCM')
+                if duration<.5 or duration>45:raise HTTPException(400,'实时音频片段时长应在 0.5–45 秒之间')
+                log=folder/'whisper.log'
+                def run(args):
+                    with log.open('ab') as handle:
+                        try:result=subprocess.run(args,stdout=handle,stderr=handle,timeout=90,check=False)
+                        except subprocess.TimeoutExpired:raise RuntimeError('实时草稿识别超时')
+                    if result.returncode:
+                        tail=log.read_text(errors='replace')[-800:]
+                        raise RuntimeError(f'实时草稿识别失败：{tail}')
+                try:segments=await run_in_threadpool(provider.transcribe,audio,folder/'result',run)
+                except RuntimeError as error:raise HTTPException(503,str(error))
+            return {'segments':[{'start':round(offset+s['start'],3),'end':round(offset+s['end'],3),'text':s['text']} for s in segments],
+                'duration':duration,'processing_ms':round((time.monotonic()-started)*1000)}
+        finally:
+            await file.close();live_asr_lock.release()
 
     def llm_config(cid):
         row=store.one('SELECT * FROM llm_configs WHERE id=?',(cid,))

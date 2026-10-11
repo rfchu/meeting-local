@@ -622,12 +622,80 @@ dialog code {
   color: #ad3245;
   border-color: #e8bbc2;
 }
-.live-notes {
+.recording-workspace {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 20px;
   margin-top: 20px;
+}
+.live-draft,
+.live-notes {
+  min-width: 0;
+}
+.live-draft > header,
+.live-notes > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.live-draft h3,
+.live-notes h3 {
+  margin: 0;
+  font-size: 13px;
+}
+.live-draft header span,
+.live-notes header span {
+  color: var(--muted);
+  font-size: 10px;
+  text-align: right;
+}
+.live-draft-list,
+.live-note-list {
+  height: 280px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  padding: 0 12px;
+}
+.live-draft-list > p,
+.live-note-list > p {
+  color: var(--muted);
+  font-size: 12px;
+  text-align: center;
+  padding: 25px 8px;
+}
+.live-draft-list article {
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr) auto;
+  gap: 9px;
+  align-items: start;
+  padding: 12px 0;
+  border-top: 1px solid var(--line);
+}
+.live-draft-list article:first-child,
+.live-note-list article:first-child {
+  border-top: 0;
+}
+.live-draft-list article b {
+  color: var(--accent);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.live-draft-list article p {
+  margin: 0;
+  color: var(--ink);
+  font-size: 12px;
+  line-height: 1.65;
+}
+.live-draft-list article button {
+  font-size: 10px;
+  white-space: nowrap;
 }
 .live-note-form {
   display: grid;
-  grid-template-columns: 110px minmax(0, 1fr) 90px;
+  grid-template-columns: 82px minmax(0, 1fr) 58px;
   gap: 10px;
   align-items: stretch;
 }
@@ -640,19 +708,12 @@ dialog code {
   padding: 10px;
 }
 .live-note-list {
-  margin-top: 16px;
-  max-height: 300px;
-  overflow: auto;
-}
-.live-note-list > p {
-  color: var(--muted);
-  font-size: 12px;
-  text-align: center;
-  padding: 25px;
+  height: 218px;
+  margin-top: 10px;
 }
 .live-note-list article {
   display: grid;
-  grid-template-columns: 58px 48px 1fr auto;
+  grid-template-columns: 48px 40px minmax(0, 1fr) auto;
   gap: 10px;
   align-items: start;
   padding: 12px 4px;
@@ -1291,5 +1352,12 @@ dialog code {
   .live-note-form,
   .notes-compose {
     grid-template-columns: 1fr;
+  }
+  .recording-workspace {
+    grid-template-columns: 1fr;
+  }
+  .live-draft-list,
+  .live-note-list {
+    height: 220px;
   }
 }
