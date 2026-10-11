@@ -47,6 +47,15 @@ class LLMConfigInput(BaseModel):
     clear_api_key: bool=False
 class RenameInput(BaseModel):
     title: str=Field(min_length=1,max_length=200)
+class MeetingNoteInput(BaseModel):
+    captured_at: float=Field(default=0,ge=0,allow_inf_nan=False)
+    note_type: Literal['note','highlight','question','decision','action']='note'
+    raw_text: str=Field(min_length=1,max_length=5000)
+class MeetingNotesBatchInput(BaseModel):
+    notes: list[MeetingNoteInput]=Field(max_length=1000)
+class MeetingNoteUpdate(BaseModel):
+    note_type: Literal['note','highlight','question','decision','action']
+    raw_text: str=Field(min_length=1,max_length=5000)
 class MinutesGenerateInput(BaseModel):
     style: Literal['formal','brief','internal']='formal'
     template_id: str=Field(default='general-meeting',max_length=100)
@@ -103,6 +112,9 @@ def create_app(data_dir=None, start_worker=True):
         for a in artifacts:
             a['payload']=json.loads(a['payload']);a['provenance']=json.loads(a['provenance'] or '{}');a['stale']=a['revision'] != row['revision']
         row['artifacts']=artifacts
+        notes=store.all('SELECT * FROM meeting_notes WHERE meeting_id=? ORDER BY captured_at,created,rowid',(row['id'],))
+        for note in notes:note['source_segment_ids']=json.loads(note['source_segment_ids'] or '[]')
+        row['notes']=notes
         return row
 
     @app.get('/api/status')
@@ -240,6 +252,39 @@ def create_app(data_dir=None, start_worker=True):
     @app.patch('/api/meetings/{mid}')
     def rename(mid:str,body:RenameInput):
         meeting(mid); store.execute('UPDATE meetings SET title=? WHERE id=?',(body.title,mid)); return {'ok':True}
+    @app.post('/api/meetings/{mid}/notes',status_code=201)
+    def create_note(mid:str,body:MeetingNoteInput):
+        meeting(mid);nid=uid();text=body.raw_text.strip()
+        if not text:raise HTTPException(422,'简记内容不能为空')
+        store.execute('INSERT INTO meeting_notes(id,meeting_id,captured_at,note_type,raw_text) VALUES(?,?,?,?,?)',
+            (nid,mid,body.captured_at,body.note_type,text))
+        note=store.one('SELECT * FROM meeting_notes WHERE id=?',(nid,))
+        note['source_segment_ids']=json.loads(note['source_segment_ids'] or '[]')
+        return note
+    @app.post('/api/meetings/{mid}/notes/batch',status_code=201)
+    def create_notes_batch(mid:str,body:MeetingNotesBatchInput):
+        meeting(mid);created=[]
+        with store.connect() as db:
+            db.execute('BEGIN IMMEDIATE')
+            for item in body.notes:
+                text=item.raw_text.strip()
+                if not text:raise HTTPException(422,'简记内容不能为空')
+                nid=uid();db.execute('INSERT INTO meeting_notes(id,meeting_id,captured_at,note_type,raw_text) VALUES(?,?,?,?,?)',
+                    (nid,mid,item.captured_at,item.note_type,text));created.append(nid)
+        return {'ids':created,'count':len(created)}
+    @app.put('/api/meetings/{mid}/notes/{nid}')
+    def update_note(mid:str,nid:str,body:MeetingNoteUpdate):
+        meeting(mid)
+        if not store.one('SELECT id FROM meeting_notes WHERE id=? AND meeting_id=?',(nid,mid)):raise HTTPException(404,'简记不存在')
+        text=body.raw_text.strip()
+        if not text:raise HTTPException(422,'简记内容不能为空')
+        store.execute('UPDATE meeting_notes SET raw_text=?,note_type=?,updated=CURRENT_TIMESTAMP WHERE id=? AND meeting_id=?',
+            (text,body.note_type,nid,mid));return {'ok':True}
+    @app.delete('/api/meetings/{mid}/notes/{nid}')
+    def delete_note(mid:str,nid:str):
+        meeting(mid)
+        if not store.one('SELECT id FROM meeting_notes WHERE id=? AND meeting_id=?',(nid,mid)):raise HTTPException(404,'简记不存在')
+        store.execute('DELETE FROM meeting_notes WHERE id=? AND meeting_id=?',(nid,mid));return {'ok':True}
     @app.delete('/api/meetings/{mid}')
     def delete(mid:str):
         meeting(mid)
@@ -249,7 +294,7 @@ def create_app(data_dir=None, start_worker=True):
             db.execute('BEGIN IMMEDIATE')
             if db.execute("SELECT 1 FROM jobs WHERE meeting_id=? AND state IN ('running','queued')",(mid,)).fetchone():
                 raise HTTPException(409,'请先取消任务，等待处理停止后删除')
-            for table in ['artifacts','revisions','jobs','meetings']:
+            for table in ['meeting_notes','artifacts','revisions','jobs','meetings']:
                 key='id' if table=='meetings' else 'meeting_id'
                 db.execute(f'DELETE FROM {table} WHERE {key}=?',(mid,))
         shutil.rmtree(store.directory(mid),ignore_errors=True)

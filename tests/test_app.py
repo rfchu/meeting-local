@@ -29,6 +29,24 @@ def test_meeting_can_be_renamed(client):
     assert response.status_code==200
     assert client.get(f'/api/meetings/{mid}').json()['title']=='新的会议名称'
 
+def test_timestamped_meeting_notes_lifecycle(client):
+    mid=upload(client)
+    result=client.post(f'/api/meetings/{mid}/notes/batch',json={'notes':[
+        {'captured_at':12.5,'note_type':'highlight','raw_text':'  重点确认回款时间  '},
+        {'captured_at':4,'note_type':'question','raw_text':'预算是否确定？'},
+    ]})
+    assert result.status_code==201 and result.json()['count']==2
+    notes=client.get(f'/api/meetings/{mid}').json()['notes']
+    assert [note['captured_at'] for note in notes]==[4,12.5]
+    assert notes[1]['raw_text']=='重点确认回款时间'
+    nid=notes[0]['id']
+    assert client.put(f'/api/meetings/{mid}/notes/{nid}',json={
+        'note_type':'action','raw_text':'确认预算负责人'}).status_code==200
+    updated=client.get(f'/api/meetings/{mid}').json()['notes'][0]
+    assert updated['note_type']=='action' and updated['raw_text']=='确认预算负责人'
+    assert client.delete(f'/api/meetings/{mid}/notes/{nid}').status_code==200
+    assert len(client.get(f'/api/meetings/{mid}').json()['notes'])==1
+
 def test_version_conflict_export_and_range(client):
     mid=upload(client)
     assert client.put(f'/api/meetings/{mid}/transcript',json={'revision':0,'segments':sample()}).json()['revision']==1

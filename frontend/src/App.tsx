@@ -6,6 +6,7 @@ import type {
   MeetingMinutes,
   MinutesTemplate,
   MinutesStyle,
+  MeetingNoteInput,
   Segment,
   Workspace,
 } from "./types";
@@ -31,6 +32,8 @@ import {
 import TranscriptView from "./features/transcript/TranscriptView";
 import AnalysisView from "./features/analysis/AnalysisView";
 import MinutesView from "./features/minutes/MinutesView";
+import NotesView from "./features/notes/NotesView";
+import RecordingDialog from "./features/notes/RecordingDialog";
 
 export default function App() {
   const client = useQueryClient();
@@ -68,7 +71,8 @@ export default function App() {
     [renameOpen, setRenameOpen] = useState(false),
     [environmentOpen, setEnvironmentOpen] = useState(false),
     [modelsOpen, setModelsOpen] = useState(false),
-    [previewOpen, setPreviewOpen] = useState(false);
+    [previewOpen, setPreviewOpen] = useState(false),
+    [recordingOpen, setRecordingOpen] = useState(false);
   const [engine, setEngine] = useState("whisper"),
     [diarization, setDiarization] = useState(false),
     [numSpeakers, setNumSpeakers] = useState(0);
@@ -245,6 +249,45 @@ export default function App() {
       toast("录音已导入，可以开始转写");
     } catch (error) {
       toast((error as Error).message);
+    } finally {
+      setUploading(false);
+    }
+  };
+  const completeRecording = async (file: File, notes: MeetingNoteInput[]) => {
+    setUploading(true);
+    let created: Meeting | null = null;
+    const followUpErrors: string[] = [];
+    try {
+      toast("正在保存录音和会议简记…");
+      created = await api.upload(file);
+      if (notes.length) {
+        try {
+          await api.createNotes(created.id, notes);
+        } catch (error) {
+          followUpErrors.push(`简记保存失败：${(error as Error).message}`);
+        }
+      }
+      try {
+        await api.transcribe(created.id, {
+          engine,
+          diarization,
+          num_speakers: numSpeakers,
+        });
+      } catch (error) {
+        followUpErrors.push(`转写未启动：${(error as Error).message}`);
+      }
+      await client.invalidateQueries({ queryKey: ["meetings"] });
+      setRecordingOpen(false);
+      await openMeeting(created.id);
+      setWorkspace("notes");
+      toast(
+        followUpErrors.length
+          ? `录音已保存；${followUpErrors.join("；")}`
+          : `录音和 ${notes.length} 条简记已保存，文字稿正在本机生成`,
+      );
+    } catch (error) {
+      toast((error as Error).message);
+      if (!created) throw error;
     } finally {
       setUploading(false);
     }
@@ -462,6 +505,7 @@ export default function App() {
         uploading={uploading}
         onSelect={(id) => void openMeeting(id)}
         onUpload={(file) => void upload(file)}
+        onRecord={() => setRecordingOpen(true)}
         onModels={() => setModelsOpen(true)}
         onEnvironment={() => setEnvironmentOpen(true)}
       />
@@ -475,7 +519,10 @@ export default function App() {
           </div>
         </header>
         {!meeting ? (
-          <Welcome onUpload={(file) => void upload(file)} />
+          <Welcome
+            onUpload={(file) => void upload(file)}
+            onRecord={() => setRecordingOpen(true)}
+          />
         ) : (
           <section id="detail">
             <div className="title-row">
@@ -621,6 +668,10 @@ export default function App() {
                     {(
                       [
                         ["transcript", "会议文字稿"],
+                        [
+                          "notes",
+                          `会议简记${meeting.notes.length ? ` · ${meeting.notes.length}` : ""}`,
+                        ],
                         ["analysis", "会议分析"],
                         ["minutes", "会议纪要"],
                       ] as [Workspace, string][]
@@ -669,6 +720,16 @@ export default function App() {
                     onJobAction={(id, action) => void jobAction(id, action)}
                     onSeek={(time) => seekRef.current?.(time)}
                     transcriptDirty={transcriptDirty}
+                  />
+                )}
+                {workspace === "notes" && (
+                  <NotesView
+                    meeting={meeting}
+                    onRefresh={async () =>
+                      setMeeting(await api.meeting(meeting.id))
+                    }
+                    onSeek={(time) => seekRef.current?.(time)}
+                    toast={toast}
                   />
                 )}
                 {workspace === "minutes" && (
@@ -801,11 +862,25 @@ export default function App() {
           onExport={(format) => void exportMinutes(format)}
         />
       )}
+      {recordingOpen && (
+        <RecordingDialog
+          engineLabel={engineLabel(engine)}
+          onClose={() => setRecordingOpen(false)}
+          onComplete={completeRecording}
+          toast={toast}
+        />
+      )}
     </>
   );
 }
 
-function Welcome({ onUpload }: { onUpload: (file: File) => void }) {
+function Welcome({
+  onUpload,
+  onRecord,
+}: {
+  onUpload: (file: File) => void;
+  onRecord: () => void;
+}) {
   const [dragging, setDragging] = useState(false);
   return (
     <section id="welcome">
@@ -816,7 +891,7 @@ function Welcome({ onUpload }: { onUpload: (file: File) => void }) {
         都有迹可循。
       </h1>
       <p className="intro">
-        导入录音，生成带时间戳的文字稿。
+        实时记录会议，或导入已有录音，生成带时间戳的文字稿。
         <br />
         回听、校对、整理，全部在你的 Mac 上完成。
       </p>
@@ -839,6 +914,11 @@ function Welcome({ onUpload }: { onUpload: (file: File) => void }) {
         <span className="upload-icon">↥</span>
         <strong>拖放录音到这里，或点击选择</strong>
         <span>WAV / MP3 / M4A / MP4 等 · 最大 4GB</span>
+      </button>
+      <button className="welcome-record" onClick={onRecord}>
+        <span>●</span>
+        <strong>直接开始会议录音</strong>
+        <small>录音时可随手记下重点、问题、决策和待办</small>
       </button>
       <div className="features">
         <div>

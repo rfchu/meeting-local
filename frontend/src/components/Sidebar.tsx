@@ -14,6 +14,7 @@ interface Props {
   uploading: boolean;
   onSelect: (id: string) => void;
   onUpload: (file: File) => void;
+  onRecord: () => void;
   onModels: () => void;
   onEnvironment: () => void;
 }
@@ -24,6 +25,7 @@ export default function Sidebar({
   uploading,
   onSelect,
   onUpload,
+  onRecord,
   onModels,
   onEnvironment,
 }: Props) {
@@ -43,6 +45,13 @@ export default function Sidebar({
         onClick={choose}
       >
         {uploading ? "正在导入…" : "＋ 导入会议录音"}
+      </button>
+      <button
+        className="wide record-button"
+        disabled={uploading}
+        onClick={onRecord}
+      >
+        ● 开始实时记录
       </button>
       <input
         id="file"

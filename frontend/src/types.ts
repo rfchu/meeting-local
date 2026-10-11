@@ -1,4 +1,4 @@
-export type Workspace = "transcript" | "analysis" | "minutes";
+export type Workspace = "transcript" | "notes" | "analysis" | "minutes";
 export type JobState =
   "queued" | "running" | "completed" | "failed" | "cancelled";
 export type MinutesStyle = "formal" | "brief" | "internal" | "ai";
@@ -28,6 +28,23 @@ export interface Revision {
   created: string;
   source: string;
   segments?: Segment[];
+}
+export type MeetingNoteType =
+  "note" | "highlight" | "question" | "decision" | "action";
+export interface MeetingNoteInput {
+  captured_at: number;
+  note_type: MeetingNoteType;
+  raw_text: string;
+}
+export interface MeetingNote extends MeetingNoteInput {
+  id: string;
+  meeting_id: string;
+  expanded_text: string;
+  accepted_text: string;
+  status: "raw" | "expanded" | "accepted" | "ignored";
+  source_segment_ids: string[];
+  created: string;
+  updated: string;
 }
 export interface AnalysisItem {
   content: string;
@@ -113,6 +130,7 @@ export interface Meeting extends MeetingSummary {
   jobs: Job[];
   revisions: Revision[];
   artifacts: Artifact[];
+  notes: MeetingNote[];
 }
 
 export interface EngineInfo {

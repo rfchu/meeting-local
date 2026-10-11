@@ -46,6 +46,16 @@ class Store:
               builtin INTEGER NOT NULL DEFAULT 0, definition TEXT NOT NULL,
               status TEXT NOT NULL DEFAULT 'active',
               created TEXT DEFAULT CURRENT_TIMESTAMP, updated TEXT DEFAULT CURRENT_TIMESTAMP);
+            CREATE TABLE IF NOT EXISTS meeting_notes (
+              id TEXT PRIMARY KEY, meeting_id TEXT NOT NULL,
+              captured_at REAL NOT NULL DEFAULT 0,
+              note_type TEXT NOT NULL DEFAULT 'note',
+              raw_text TEXT NOT NULL, expanded_text TEXT NOT NULL DEFAULT '',
+              accepted_text TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'raw',
+              source_segment_ids TEXT NOT NULL DEFAULT '[]',
+              created TEXT DEFAULT CURRENT_TIMESTAMP, updated TEXT DEFAULT CURRENT_TIMESTAMP);
+            CREATE INDEX IF NOT EXISTS meeting_notes_meeting_time
+              ON meeting_notes(meeting_id,captured_at,created);
             ''')
             columns={row['name'] for row in db.execute('PRAGMA table_info(jobs)')}
             if 'kind' not in columns:
@@ -65,7 +75,7 @@ class Store:
                     version=excluded.version,builtin=excluded.builtin,definition=excluded.definition,
                     updated=CURRENT_TIMESTAMP''',
                     (template.id,template.name,template.description,template.category,template.version,1,definition))
-            db.execute('PRAGMA user_version=6')
+            db.execute('PRAGMA user_version=7')
         os.chmod(self.path,0o600)
     @contextmanager
     def connect(self):

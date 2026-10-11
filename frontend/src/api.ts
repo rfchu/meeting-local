@@ -5,6 +5,7 @@ import type {
   LLMConfigInput,
   Meeting,
   MeetingMinutes,
+  MeetingNoteInput,
   MinutesTemplate,
   MeetingSummary,
   Revision,
@@ -61,6 +62,20 @@ export const api = {
     ),
   revision: (id: string, revision: number) =>
     request<Revision>(`/meetings/${id}/revisions/${revision}`),
+  createNotes: (id: string, notes: MeetingNoteInput[]) =>
+    request<{ ids: string[]; count: number }>(
+      `/meetings/${id}/notes/batch`,
+      json("POST", { notes }),
+    ),
+  createNote: (id: string, note: MeetingNoteInput) =>
+    request(`/meetings/${id}/notes`, json("POST", note)),
+  updateNote: (
+    id: string,
+    noteId: string,
+    note: Pick<MeetingNoteInput, "note_type" | "raw_text">,
+  ) => request(`/meetings/${id}/notes/${noteId}`, json("PUT", note)),
+  deleteNote: (id: string, noteId: string) =>
+    request(`/meetings/${id}/notes/${noteId}`, { method: "DELETE" }),
   analyze: (id: string, body: { profile_id?: string; model?: string }) =>
     request<{ id: string }>(
       `/meetings/${id}/analysis-jobs`,
