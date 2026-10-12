@@ -15,6 +15,7 @@ from .analysis import LMStudioProvider,OpenAICompatibleProvider,MeetingAnalysis,
 from .minutes import MeetingMinutes,build_minutes,build_ai_minutes,apply_polished_minutes,validate_minutes_citations,minutes_markdown,minutes_docx,minutes_pdf,MINUTES_VERSION
 from .minutes_templates import MinutesTemplate
 from .speaker_review import generate_review
+from .recordings import RecordingStore
 
 BASE=Path(__file__).resolve().parents[1]
 
@@ -62,6 +63,13 @@ class MeetingNotesBatchInput(BaseModel):
 class MeetingNoteUpdate(BaseModel):
     note_type: Literal['note','highlight','question','decision','action']
     raw_text: str=Field(min_length=1,max_length=5000)
+class RecordingInput(BaseModel):
+    mime_type: Literal['audio/webm;codecs=opus','audio/webm','audio/mp4','audio/mp4;codecs=mp4a.40.2']='audio/webm'
+class RecordingMetadata(MeetingNotesBatchInput):
+    duration: float=Field(default=0,ge=0,allow_inf_nan=False)
+    chunk_count: int=Field(default=0,ge=0,le=100000)
+class RecordingFinish(BaseModel):
+    chunk_count: int=Field(ge=1,le=100000)
 class MinutesGenerateInput(BaseModel):
     style: Literal['formal','brief','internal']='formal'
     template_id: str=Field(default='general-meeting',max_length=100)
@@ -86,6 +94,7 @@ def create_app(data_dir=None, start_worker=True):
         worker.close()
     app=FastAPI(title='听记 · Local Meeting',lifespan=lifespan)
     app.state.store=store; app.state.worker=worker
+    recordings=RecordingStore(store)
     live_asr_lock=threading.Lock()
 
     @app.middleware('http')
@@ -270,6 +279,31 @@ def create_app(data_dir=None, start_worker=True):
         rows=store.all('SELECT id,title,filename,created,duration,revision FROM meetings ORDER BY created DESC,rowid DESC')
         for row in rows: row['job']=store.one('SELECT * FROM jobs WHERE meeting_id=? ORDER BY created DESC,rowid DESC LIMIT 1',(row['id'],))
         return rows
+    @app.get('/api/recordings')
+    def list_recordings():return recordings.list()
+    @app.post('/api/recordings',status_code=201)
+    def create_recording(body:RecordingInput):return recordings.create(body.mime_type)
+    @app.put('/api/recordings/{rid}/metadata')
+    def save_recording_metadata(rid:str,body:RecordingMetadata):
+        try:return recordings.metadata(rid,[note.model_dump() for note in body.notes],body.duration,body.chunk_count)
+        except FileNotFoundError as error:raise HTTPException(404,str(error))
+        except ValueError as error:raise HTTPException(409,str(error))
+    @app.put('/api/recordings/{rid}/chunks/{index}')
+    def save_recording_chunk(rid:str,index:int,file:UploadFile=File(...)):
+        try:
+            if not 0<=index<100000:raise HTTPException(422,'分段编号无效')
+            payload=file.file.read(64*1024*1024+1)
+            if not payload:raise HTTPException(400,'录音分段为空')
+            if len(payload)>64*1024*1024:raise HTTPException(413,'单个录音分段最大支持 64MB')
+            return recordings.chunk(rid,index,payload)
+        except FileNotFoundError as error:raise HTTPException(404,str(error))
+        except ValueError as error:raise HTTPException(409,str(error))
+        finally:file.file.close()
+    @app.post('/api/recordings/{rid}/finish')
+    def finish_recording(rid:str,body:RecordingFinish):
+        try:return decorated(meeting(recordings.finish(rid,body.chunk_count)))
+        except FileNotFoundError as error:raise HTTPException(404,str(error))
+        except ValueError as error:raise HTTPException(409,str(error))
     @app.post('/api/meetings',status_code=201)
     async def upload(file:UploadFile=File(...)):
         filename=Path(file.filename or '录音.wav').name

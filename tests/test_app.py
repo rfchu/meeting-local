@@ -60,6 +60,41 @@ def test_meeting_can_be_renamed(client):
     assert response.status_code==200
     assert client.get(f'/api/meetings/{mid}').json()['title']=='新的会议名称'
 
+def test_recording_chunks_retry_and_finish_are_idempotent(client):
+    created=client.post('/api/recordings',json={'mime_type':'audio/webm'})
+    assert created.status_code==201
+    rid=created.json()['id'];payload=wav_bytes();parts=[payload[:1000],payload[1000:]]
+    for index in [1,0]:
+        assert client.put(f'/api/recordings/{rid}/chunks/{index}',files={'file':('chunk',parts[index])}).status_code==200
+    assert client.put(f'/api/recordings/{rid}/chunks/0',files={'file':('chunk',parts[0])}).status_code==200
+    assert client.put(f'/api/recordings/{rid}/chunks/0',files={'file':('chunk',b'conflict')}).status_code==409
+    assert client.post(f'/api/recordings/{rid}/finish',json={'chunk_count':1}).status_code==409
+    notes=[{'captured_at':.5,'note_type':'action','raw_text':'确认交付日期'}]
+    assert client.put(f'/api/recordings/{rid}/metadata',json={'notes':notes,'duration':1,'chunk_count':2}).status_code==200
+    first=client.post(f'/api/recordings/{rid}/finish',json={'chunk_count':2})
+    second=client.post(f'/api/recordings/{rid}/finish',json={'chunk_count':2})
+    assert first.status_code==second.status_code==200
+    assert first.json()['id']==second.json()['id']==rid
+    assert len(second.json()['notes'])==1 and second.json()['notes'][0]['raw_text']==notes[0]['raw_text']
+    assert len(client.get('/api/meetings').json())==1
+    assert (client.app.state.store.directory(rid)/'original').read_bytes()==payload
+    assert client.get('/api/recordings').json()==[]
+
+def test_interrupted_recording_survives_restart_and_missing_chunks(client):
+    rid=client.post('/api/recordings',json={'mime_type':'audio/webm'}).json()['id']
+    payload=wav_bytes()
+    assert client.put(f'/api/recordings/{rid}/chunks/0',files={'file':('chunk',payload[:1000])}).status_code==200
+    assert client.put(f'/api/recordings/{rid}/chunks/2',files={'file':('chunk',payload[2000:])}).status_code==200
+    root=client.app.state.store.root
+    with TestClient(create_app(root,start_worker=False)) as restarted:
+        pending=restarted.get('/api/recordings').json()[0]
+        assert pending['chunk_count']==3 and pending['saved_chunks']==2
+        assert restarted.post(f'/api/recordings/{rid}/finish',json={'chunk_count':3}).status_code==409
+        assert restarted.get('/api/meetings').json()==[]
+        assert restarted.put(f'/api/recordings/{rid}/chunks/1',files={'file':('chunk',payload[1000:2000])}).status_code==200
+        assert restarted.post(f'/api/recordings/{rid}/finish',json={'chunk_count':3}).status_code==200
+        assert (restarted.app.state.store.directory(rid)/'original').read_bytes()==payload
+
 def test_timestamped_meeting_notes_lifecycle(client):
     mid=upload(client)
     result=client.post(f'/api/meetings/{mid}/notes/batch',json={'notes':[

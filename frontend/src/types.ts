@@ -52,6 +52,17 @@ export interface LiveDraftSegment {
   end: number;
   text: string;
 }
+export interface RecordingSession {
+  id: string;
+  mime_type: string;
+  created: number;
+  updated: number;
+  duration: number;
+  notes: MeetingNoteInput[];
+  chunk_count: number;
+  saved_chunks?: number;
+  state: string;
+}
 export interface AnalysisItem {
   content: string;
   source_segment_ids: string[];

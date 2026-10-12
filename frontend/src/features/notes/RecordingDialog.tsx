@@ -4,10 +4,18 @@ import type {
   LiveDraftSegment,
   MeetingNoteInput,
   MeetingNoteType,
+  RecordingSession,
 } from "../../types";
 import { clock } from "../../utils";
 import Modal from "../../components/Modal";
 import { encodeLiveWav } from "./liveAudio";
+import {
+  bufferRecording,
+  flushRecording,
+  forgetRecording,
+  recoverableRecordings,
+  syncRecording,
+} from "./recordingBuffer";
 
 const noteLabels: Record<MeetingNoteType, string> = {
   note: "简记",
@@ -30,24 +38,30 @@ export default function RecordingDialog({
 }: {
   engineLabel: string;
   onClose: () => void;
-  onComplete: (file: File, notes: MeetingNoteInput[]) => Promise<void>;
+  onComplete: (meetingId: string) => Promise<void>;
   toast: (text: string) => void;
 }) {
   const [state, setState] = useState<
-      "idle" | "requesting" | "recording" | "paused" | "saving"
+      "idle" | "requesting" | "recording" | "paused" | "saving" | "failed"
     >("idle"),
     [elapsed, setElapsed] = useState(0),
     [noteText, setNoteText] = useState(""),
     [noteType, setNoteType] = useState<MeetingNoteType>("note"),
     [notes, setNotes] = useState<MeetingNoteInput[]>([]),
     [drafts, setDrafts] = useState<LiveDraftSegment[]>([]),
-    [draftStatus, setDraftStatus] = useState("开始录音后自动生成");
+    [draftStatus, setDraftStatus] = useState("开始录音后自动生成"),
+    [saveStatus, setSaveStatus] = useState("录音分段会自动保存到本机"),
+    [recoveries, setRecoveries] = useState<RecordingSession[]>([]);
   const recorderRef = useRef<MediaRecorder | null>(null),
     streamRef = useRef<MediaStream | null>(null),
-    chunksRef = useRef<Blob[]>([]),
+    sessionRef = useRef<RecordingSession | null>(null),
+    bufferQueueRef = useRef<Promise<void>>(Promise.resolve()),
+    failedChunksRef = useRef<{ index: number; blob: Blob }[]>([]),
+    localSaveFailedRef = useRef(false),
     activeSinceRef = useRef(0),
     accruedRef = useRef(0),
     notesRef = useRef(notes),
+    noteDraftRef = useRef({ text: noteText, type: noteType }),
     stateRef = useRef(state),
     audioContextRef = useRef<AudioContext | null>(null),
     audioSourceRef = useRef<MediaStreamAudioSourceNode | null>(null),
@@ -60,12 +74,128 @@ export default function RecordingDialog({
     draftPendingRef = useRef(0),
     draftEnabledRef = useRef(true);
   notesRef.current = notes;
+  noteDraftRef.current = { text: noteText, type: noteType };
 
   const currentSeconds = () =>
     accruedRef.current +
-    (state === "recording"
+    (stateRef.current === "recording"
       ? (performance.now() - activeSinceRef.current) / 1000
       : 0);
+
+  useEffect(() => {
+    void recoverableRecordings()
+      .then(setRecoveries)
+      .catch((error) => toast(error.message));
+  }, []);
+  useEffect(() => {
+    const guard = (event: BeforeUnloadEvent) => {
+      if (
+        ["recording", "paused", "saving", "failed"].includes(stateRef.current)
+      )
+        event.preventDefault();
+    };
+    window.addEventListener("beforeunload", guard);
+    return () => window.removeEventListener("beforeunload", guard);
+  }, []);
+  const metadata = () => {
+    const session = sessionRef.current;
+    if (!session) return null;
+    session.duration = currentSeconds();
+    session.updated = Date.now() / 1000;
+    session.notes = [...notesRef.current];
+    return structuredClone(session);
+  };
+  const persist = (session: RecordingSession, index?: number, blob?: Blob) => {
+    const task = bufferQueueRef.current
+      .catch(() => {})
+      .then(() => bufferRecording(session, index, blob))
+      .catch((error) => {
+        localSaveFailedRef.current = true;
+        if (blob && index !== undefined)
+          failedChunksRef.current.push({ index, blob });
+        if (recorderRef.current?.state === "recording") {
+          accruedRef.current = currentSeconds();
+          recorderRef.current.pause();
+          stateRef.current = "paused";
+          setState("paused");
+        }
+        setSaveStatus(`暂存失败，录音已暂停：${error.message}。请重试保存`);
+        throw error;
+      });
+    bufferQueueRef.current = task;
+    void task
+      .then(async () => {
+        setSaveStatus("浏览器已暂存，正在同步到本机…");
+        try {
+          await syncRecording(session.id);
+          setSaveStatus("最近一批分段已同步到本机");
+        } catch (error) {
+          setSaveStatus(
+            `待重试 · ${(error as Error).message}；浏览器暂存已保留`,
+          );
+        }
+      })
+      .catch(() => {});
+    return task;
+  };
+  useEffect(() => {
+    if (!["recording", "paused"].includes(state)) return;
+    const save = () => {
+      const session = metadata();
+      if (session) void persist(session).catch(() => {});
+    };
+    const timer = window.setInterval(save, 5000);
+    save();
+    return () => window.clearInterval(timer);
+  }, [state, notes]);
+  const retrySync = async () => {
+    const session = metadata();
+    if (!session) return;
+    try {
+      await bufferQueueRef.current.catch(() => {});
+      for (const chunk of failedChunksRef.current)
+        await bufferRecording(session, chunk.index, chunk.blob);
+      failedChunksRef.current = [];
+      await bufferRecording(session);
+      localSaveFailedRef.current = false;
+      await flushRecording(session.id);
+      setSaveStatus("分段已同步到本机");
+    } catch (error) {
+      setSaveStatus(`保存未完成：${(error as Error).message}`);
+      throw error;
+    }
+  };
+  const finish = async (session: RecordingSession) => {
+    setState("saving");
+    stateRef.current = "saving";
+    sessionRef.current = session;
+    try {
+      await retrySync();
+      const meeting = await api.finishRecording(
+        session.id,
+        session.chunk_count,
+      );
+      await forgetRecording(session.id);
+      await onComplete(meeting.id);
+    } catch (error) {
+      setState("failed");
+      stateRef.current = "failed";
+      toast(`录音已保留，请重试完成保存：${(error as Error).message}`);
+    }
+  };
+  const recover = async (session: RecordingSession) => {
+    if (
+      !confirm(
+        "请确认这段录音已停止。恢复会把已保存的分段整理为会议，缺失的最后一段无法补回。",
+      )
+    )
+      return;
+    setNotes(session.notes);
+    notesRef.current = session.notes;
+    accruedRef.current = session.duration;
+    setElapsed(session.duration);
+    await finish(session);
+  };
 
   useEffect(() => {
     if (state !== "recording") return;
@@ -189,15 +319,37 @@ export default function RecordingDialog({
           autoGainControl: true,
         },
       });
+      streamRef.current = stream;
       const mimeType = supportedMime();
       const recorder = new MediaRecorder(stream, {
         ...(mimeType ? { mimeType } : {}),
         audioBitsPerSecond: 128000,
       });
-      chunksRef.current = [];
+      const session = await api.createRecording(
+        recorder.mimeType || mimeType || "audio/webm",
+      );
+      await bufferRecording(session);
+      sessionRef.current = session;
       recorder.ondataavailable = (event) => {
-        if (event.data.size) chunksRef.current.push(event.data);
+        if (!event.data.size || !sessionRef.current) return;
+        const index = sessionRef.current.chunk_count++;
+        const session = metadata();
+        if (session) void persist(session, index, event.data).catch(() => {});
       };
+      recorder.onerror = () => {
+        accruedRef.current = currentSeconds();
+        stateRef.current = "failed";
+        setState("failed");
+        draftEnabledRef.current = false;
+        stream.getTracks().forEach((track) => track.stop());
+        void closeDraftCapture();
+        toast("录音输入中断，已有分段已保留，请重试完成保存");
+      };
+      stream.getAudioTracks().forEach((track) => {
+        track.onended = () => {
+          if (["recording", "paused"].includes(stateRef.current)) void stop();
+        };
+      });
       recorderRef.current = recorder;
       streamRef.current = stream;
       pcmFramesRef.current = [];
@@ -215,7 +367,7 @@ export default function RecordingDialog({
         setDraftStatus(`实时草稿不可用 · ${(error as Error).message}`);
         await closeDraftCapture();
       }
-      recorder.start(1000);
+      recorder.start(5000);
       setState("recording");
     } catch (error) {
       stateRef.current = "idle";
@@ -242,6 +394,8 @@ export default function RecordingDialog({
   const resume = () => {
     const recorder = recorderRef.current;
     if (!recorder || state !== "paused") return;
+    if (failedChunksRef.current.length)
+      return toast("请先重试保存，再继续录音");
     activeSinceRef.current = performance.now();
     recorder.resume();
     stateRef.current = "recording";
@@ -259,8 +413,9 @@ export default function RecordingDialog({
   };
   const stop = async () => {
     const recorder = recorderRef.current;
-    if (!recorder || !["recording", "paused"].includes(state)) return;
-    if (state === "recording") accruedRef.current = currentSeconds();
+    if (!recorder || !["recording", "paused"].includes(stateRef.current))
+      return;
+    if (stateRef.current === "recording") accruedRef.current = currentSeconds();
     setElapsed(accruedRef.current);
     stateRef.current = "saving";
     setState("saving");
@@ -273,24 +428,18 @@ export default function RecordingDialog({
     draftEnabledRef.current = false;
     await closeDraftCapture();
     streamRef.current?.getTracks().forEach((track) => track.stop());
-    const mimeType = recorder.mimeType || "audio/webm";
-    const extension = mimeType.includes("mp4") ? "m4a" : "webm";
-    const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
-    const file = new File(chunksRef.current, `会议录音-${stamp}.${extension}`, {
-      type: mimeType,
-    });
     const savedNotes = [...notesRef.current];
-    if (noteText.trim())
+    if (noteDraftRef.current.text.trim())
       savedNotes.push({
         captured_at: accruedRef.current,
-        note_type: noteType,
-        raw_text: noteText.trim(),
+        note_type: noteDraftRef.current.type,
+        raw_text: noteDraftRef.current.text.trim(),
       });
-    try {
-      await onComplete(file, savedNotes);
-    } catch {
-      setState("idle");
-    }
+    notesRef.current = savedNotes;
+    setNotes(savedNotes);
+    setNoteText("");
+    const session = metadata();
+    if (session) await finish(session);
   };
 
   const recording = state === "recording" || state === "paused";
@@ -299,7 +448,10 @@ export default function RecordingDialog({
       id="recordingDialog"
       className="recording-dialog"
       onClose={() => {
-        if (!recording && state !== "saving") onClose();
+        if (failedChunksRef.current.length || localSaveFailedRef.current)
+          return toast("还有尚未落盘的录音分段，请先重试保存");
+        if (!recording && state !== "saving" && state !== "requesting")
+          onClose();
       }}
     >
       <div className="recording-header">
@@ -312,9 +464,37 @@ export default function RecordingDialog({
         </div>
       </div>
       <p className="recording-intro">
-        Whisper 在录音中生成增量临时草稿；停止后将保存原音，并使用 {engineLabel}
+        原音每约 5 秒分段保存，浏览器暂存保护待同步内容。Whisper
+        生成实时草稿；停止后使用 {engineLabel}
         重新生成高质量文字稿。
       </p>
+      <div className="recording-save-status" role="status">
+        {saveStatus}
+        {recording && (
+          <button
+            onClick={() =>
+              void retrySync().catch((error) => toast(error.message))
+            }
+          >
+            重试同步
+          </button>
+        )}
+      </div>
+      {state === "idle" && recoveries.length > 0 && (
+        <section className="recording-recovery">
+          <h3>发现未完成的录音</h3>
+          <p>刷新或中断后，可恢复已保存的音频和简记为会议。</p>
+          {recoveries.map((session) => (
+            <div key={session.id}>
+              <span>
+                {new Date(session.created * 1000).toLocaleString()} ·{" "}
+                {clock(session.duration)} · {session.chunk_count} 段
+              </span>
+              <button onClick={() => void recover(session)}>恢复为会议</button>
+            </div>
+          ))}
+        </section>
+      )}
       <div className="recording-controls">
         {state === "idle" && (
           <button className="primary" onClick={() => void start()}>
@@ -330,8 +510,27 @@ export default function RecordingDialog({
           </button>
         )}
         {state === "saving" && <button disabled>正在保存并创建会议…</button>}
-        {!recording && state !== "saving" && (
-          <button onClick={onClose}>取消</button>
+        {state === "failed" && (
+          <button
+            className="primary"
+            onClick={() => {
+              const session = metadata();
+              if (session) void finish(session);
+            }}
+          >
+            重试完成保存
+          </button>
+        )}
+        {!recording && state !== "saving" && state !== "requesting" && (
+          <button
+            onClick={() => {
+              if (failedChunksRef.current.length || localSaveFailedRef.current)
+                return toast("还有未落盘的分段，请先重试保存");
+              onClose();
+            }}
+          >
+            {state === "failed" ? "稍后恢复" : "取消"}
+          </button>
         )}
       </div>
       <div className="recording-workspace">

@@ -11,6 +11,7 @@ import type {
   MeetingSummary,
   Revision,
   SpeakerReviewResult,
+  RecordingSession,
 } from "./types";
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -42,6 +43,34 @@ const json = (method: string, body?: unknown): RequestInit => ({
 export const api = {
   environment: () => request<Environment>("/status"),
   meetings: () => request<MeetingSummary[]>("/meetings"),
+  recordings: () => request<RecordingSession[]>("/recordings"),
+  createRecording: (mimeType: string) =>
+    request<RecordingSession>(
+      "/recordings",
+      json("POST", { mime_type: mimeType }),
+    ),
+  recordingMetadata: (session: RecordingSession) =>
+    request<RecordingSession>(
+      `/recordings/${session.id}/metadata`,
+      json("PUT", {
+        duration: session.duration,
+        notes: session.notes,
+        chunk_count: session.chunk_count,
+      }),
+    ),
+  recordingChunk: (id: string, index: number, blob: Blob) => {
+    const data = new FormData();
+    data.append("file", blob, "chunk.part");
+    return request(`/recordings/${id}/chunks/${index}`, {
+      method: "PUT",
+      body: data,
+    });
+  },
+  finishRecording: (id: string, count: number) =>
+    request<Meeting>(
+      `/recordings/${id}/finish`,
+      json("POST", { chunk_count: count }),
+    ),
   meeting: (id: string) => request<Meeting>(`/meetings/${id}`),
   upload: (file: File) => {
     const data = new FormData();

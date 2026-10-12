@@ -6,7 +6,6 @@ import type {
   MeetingMinutes,
   MinutesTemplate,
   MinutesStyle,
-  MeetingNoteInput,
   Segment,
   Workspace,
 } from "./types";
@@ -253,20 +252,12 @@ export default function App() {
       setUploading(false);
     }
   };
-  const completeRecording = async (file: File, notes: MeetingNoteInput[]) => {
+  const completeRecording = async (meetingId: string) => {
     setUploading(true);
     let created: Meeting | null = null;
     const followUpErrors: string[] = [];
     try {
-      toast("正在保存录音和会议简记…");
-      created = await api.upload(file);
-      if (notes.length) {
-        try {
-          await api.createNotes(created.id, notes);
-        } catch (error) {
-          followUpErrors.push(`简记保存失败：${(error as Error).message}`);
-        }
-      }
+      created = await api.meeting(meetingId);
       try {
         await api.transcribe(created.id, {
           engine,
@@ -283,7 +274,7 @@ export default function App() {
       toast(
         followUpErrors.length
           ? `录音已保存；${followUpErrors.join("；")}`
-          : `录音和 ${notes.length} 条简记已保存，文字稿正在本机生成`,
+          : `录音和 ${created.notes.length} 条简记已保存，文字稿正在本机生成`,
       );
     } catch (error) {
       toast((error as Error).message);

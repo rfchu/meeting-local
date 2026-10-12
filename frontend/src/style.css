@@ -566,6 +566,44 @@ dialog code {
   width: min(820px, 96vw);
   max-width: 820px;
 }
+.recording-save-status {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  background: #eef8f3;
+  border: 1px solid #d0e8db;
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-size: 12px;
+  margin-bottom: 12px;
+}
+.recording-save-status button {
+  font-size: 11px;
+  white-space: nowrap;
+}
+.recording-recovery {
+  background: #fff6df;
+  border: 1px solid #f1dfad;
+  border-radius: 8px;
+  padding: 14px;
+  margin: 12px 0;
+}
+.recording-recovery h3 {
+  font-size: 13px;
+  margin: 0;
+}
+.recording-recovery p {
+  font-size: 12px;
+}
+.recording-recovery > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 0;
+  font-size: 12px;
+}
 #speakerReviewDialog {
   width: min(880px, 96vw);
   max-width: 880px;
