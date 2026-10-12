@@ -9,7 +9,7 @@ HELPER=Path(os.getenv('TINGJI_CAPTURE_APP',str(Path.home()/'Library/Caches/cn.se
 class NativeCapture:
     def __init__(self,store,recordings):
         self.store=store;self.recordings=recordings;self.processes={};self.last_seen={}
-        self.lock=threading.RLock();self.closed=threading.Event();self.monitor=None
+        self.stop_reasons={};self.lock=threading.RLock();self.closed=threading.Event();self.monitor=None
 
     def available(self):return platform.system()=='Darwin' and HELPER.is_file()
 
@@ -26,12 +26,24 @@ class NativeCapture:
     def start_monitor(self):
         def loop():
             while not self.closed.wait(5):
-                for rid in list(self.processes):
-                    # Background browser tabs may throttle their heartbeat to a minute.
-                    if time.monotonic()-self.last_seen.get(rid,0)>300:
-                        try:self.command(rid,'stop')
-                        except (ValueError,RuntimeError):pass
+                self.stop_abandoned()
         self.monitor=threading.Thread(target=loop,daemon=True);self.monitor.start()
+
+    def stop_abandoned(self):
+        # Background browser tabs may throttle their heartbeat to a minute.
+        with self.lock:
+            for rid in list(self.processes):
+                if time.monotonic()-self.last_seen.get(rid,0)>300:
+                    try:
+                        self.record_stop_reason(rid,'页面失联超过 5 分钟，已自动停止采集；可以恢复已保存的录音')
+                        self.command(rid,'stop')
+                    except (ValueError,RuntimeError):pass
+
+    def record_stop_reason(self,rid,reason):
+        self.stop_reasons[rid]=reason
+        with self.recordings.lock:
+            session=self.recordings.read(rid);session['stop_reason']=reason
+            RecordingStore.write(self.recordings.folder(rid)/'session.json',session)
 
     def start(self,microphone=True):
         with self.lock:
@@ -55,7 +67,30 @@ class NativeCapture:
         process=self.processes.get(rid)
         if (not process or process.poll() is not None) and status['state'] in ('starting','recording','paused'):
             status.update(state='interrupted',error='采集进程已退出，已保存的音轨可恢复')
+        reason=session.get('stop_reason') or self.stop_reasons.get(rid)
+        if reason:status['error']=status.get('error') or reason
+        # Disk heartbeat is independent of browser polling. Do not mistake silence for a crash.
+        status['health']=self.health(session,status,path)
         return status
+
+    @staticmethod
+    def health(session,status,path):
+        state=status['state'];duration=status.get('duration',0)
+        stalled=state=='recording' and path.exists() and time.time()-path.stat().st_mtime>10
+        tracks=[]
+        for name in ('system','microphone') if session.get('include_microphone') else ('system',):
+            frames=status.get(name+'_frames',0)
+            age=status.get('buffer_age',{}).get(name)
+            silence=status.get('silence_seconds',{}).get(name)
+            if state=='paused':signal='paused'
+            elif state!='recording':signal='inactive'
+            elif stalled:signal='stalled'
+            elif duration>=10 and (not frames or (age is not None and age>=10)):signal='no_data'
+            elif silence is not None and silence>=10:signal='quiet'
+            elif frames:signal='receiving'
+            else:signal='waiting'
+            tracks.append({'name':name,'state':signal,'saved_seconds':round(frames/16000,1)})
+        return {'stalled':stalled,'tracks':tracks}
 
     def command(self,rid,command):
         with self.lock:
@@ -73,6 +108,8 @@ class NativeCapture:
                     try:process.wait(timeout=3)
                     except subprocess.TimeoutExpired:process.kill();process.wait()
                 process.stdin.close()
+                if self.status(rid)['state'] in ('starting','recording','paused','interrupted'):
+                    if rid not in self.stop_reasons:self.record_stop_reason(rid,'采集进程未正常确认停止，已保存的音轨可恢复')
                 self.processes.pop(rid,None);self.last_seen.pop(rid,None)
             else:
                 wanted='paused' if command=='pause' else 'recording'
@@ -89,6 +126,8 @@ class NativeCapture:
         with self.lock:
             if self.store.one('SELECT id FROM meetings WHERE id=?',(rid,)):return rid
             status=self.command(rid,'stop');folder=self.recordings.folder(rid)
+            session=self.recordings.read(rid)
+            if session['state']=='completed':raise ValueError('此录音已完成并被删除，不能重新恢复')
             sources=[folder/f'{name}.pcm' for name in ('system','microphone')]
             sources=[path for path in sources if path.is_file() and path.stat().st_size>0]
             if not sources:raise ValueError(status.get('error') or '尚未采集到音频，请授权并开始播放会议声音')
@@ -128,6 +167,8 @@ class NativeCapture:
     def close(self):
         self.closed.set()
         for rid in list(self.processes):
-            try:self.command(rid,'stop')
+            try:
+                self.record_stop_reason(rid,'服务退出，已停止采集；可以恢复已保存的录音')
+                self.command(rid,'stop')
             except (ValueError,RuntimeError):pass
         if self.monitor:self.monitor.join(timeout=6)

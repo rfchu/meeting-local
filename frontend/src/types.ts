@@ -77,6 +77,21 @@ export interface NativeCaptureStatus {
   state: string;
   duration: number;
   error: string;
+  health?: {
+    stalled: boolean;
+    tracks: {
+      name: "system" | "microphone";
+      state:
+        | "paused"
+        | "inactive"
+        | "stalled"
+        | "no_data"
+        | "quiet"
+        | "receiving"
+        | "waiting";
+      saved_seconds: number;
+    }[];
+  };
   system_frames?: number;
   microphone_frames?: number;
   system_levels?: number[];

@@ -23,6 +23,8 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
     var frames: [String: Int64] = [:]
     var levels: [String: [Double]] = [:]
     var lastLevelAt: [String: Double] = [:]
+    var lastSignalAt: [String: Double] = [:]
+    var signalGraceAt = hostSeconds()
     var timer: DispatchSourceTimer?
     var state = "starting"
     var errorMessage = ""
@@ -39,7 +41,9 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
         let report: [String: Any] = ["state": state, "duration": elapsed, "error": errorMessage,
             "system_frames": frames["system"] ?? 0, "microphone_frames": frames["microphone"] ?? 0,
             "system_levels": levels["system"] ?? [], "microphone_levels": levels["microphone"] ?? [],
-            "sample_rate": 16000, "updated": Date().timeIntervalSince1970]
+            "sample_rate": 16000, "updated": Date().timeIntervalSince1970,
+            "buffer_age": Dictionary(uniqueKeysWithValues: files.keys.map { ($0, max(0, hostSeconds() - (lastLevelAt[$0] ?? signalGraceAt))) }),
+            "silence_seconds": Dictionary(uniqueKeysWithValues: files.keys.map { ($0, max(0, hostSeconds() - (lastSignalAt[$0] ?? signalGraceAt))) })]
         do {
             let data = try JSONSerialization.data(withJSONObject: report)
             try data.write(to: folder.appendingPathComponent("capture.json"), options: .atomic)
@@ -82,7 +86,7 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
             FileManager.default.createFile(atPath: url.path, contents: nil)
             files[name] = try FileHandle(forWritingTo: url)
         }
-        stream = capture; origin = hostSeconds()
+        stream = capture; origin = hostSeconds(); signalGraceAt = origin
         queue.sync { state = "recording"; report() }
         try await capture.startCapture()
         queue.sync {
@@ -143,7 +147,9 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
                 var sum: Double = 0
                 for index in 0..<Int(output.frameLength) { let value = Double(samples[index]) / 32768; sum += value * value }
                 var history = levels[name] ?? []
-                history.append(sqrt(sum / Double(output.frameLength)))
+                let rms = sqrt(sum / Double(output.frameLength))
+                history.append(rms)
+                if rms >= 0.002 { lastSignalAt[name] = now }
                 if history.count > 72 { history.removeFirst(history.count - 72) }
                 levels[name] = history; lastLevelAt[name] = now
             }
@@ -157,7 +163,9 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
     } }
     func resume() { queue.sync {
         guard state == "paused", let pausedAt else { return }
-        pausedTotal += hostSeconds() - pausedAt; self.pausedAt = nil; state = "recording"; report()
+        pausedTotal += hostSeconds() - pausedAt; self.pausedAt = nil
+        signalGraceAt = hostSeconds(); lastSignalAt.removeAll(); lastLevelAt.removeAll()
+        state = "recording"; report()
     } }
     func finish(state finalState: String = "stopped") async {
         try? await stream?.stopCapture()

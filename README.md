@@ -141,3 +141,23 @@ cd frontend && npm ci && npm run build
 - [sherpa-onnx 标点模型文档](https://k2-fsa.github.io/sherpa/onnx/punctuation/pretrained_models.html)。
 
 下载的组件保留其原始许可证。对外分发应用及模型前，需要分别核对代码、模型权重和测试音频的使用条款。
+
+### 录音诊断与发言人评估
+
+录音弹窗可重新检查采集器和 macOS 权限；原生录音分别显示每条音轨的接收状态。连续 10 秒低音量或没有音频数据时提供提醒，不自动中止录音。状态文件超过 10 秒不更新也会提醒；网页失联超过 5 分钟自动停止并保留停止原因和原始音轨供恢复。暂停和恢复会重置静音观察期，避免把暂停误判为静音故障。
+
+真实录音验收仍需首次授权后进行：分别测试仅电脑声音、电脑+麦克风、佩戴耳机、暂停/继续、刷新页面/服务重启恢复，以及长录音。编译和合成测试不能替代真实采集验收。
+
+发言人质量评估工具只读入本地 JSON，不联网、不调用模型、不修改会议。先用含 `segments` 的文字稿 JSON 创建人工标注模板：
+
+```bash
+.venv/bin/python scripts/evaluate_speakers.py --input transcript.json --template --output speaker-labels.json
+```
+
+人工回听填写 `reference_labels`（片段 ID → 已有发言人名称；未确定的保留 `null`）。建议在查看 AI 校对建议之前完成标注，再把同一文字稿版本的校对结果 `suggestions` 复制到模板中，生成报告：
+
+```bash
+.venv/bin/python scripts/evaluate_speakers.py --input speaker-labels.json --output speaker-report.json
+```
+
+报告提供片段正确率、按片段时长加权的正确率、纠正数、误改数、仍错误数、人工标注覆盖率，以及各类建议的结果。它模拟采用全部建议，尚不衡量用户实际节省的操作时间；这不是 DER，不评价漏检、重叠语音或边界误差。没有独立人工标注时不会输出虚构的准确率。输出文件已存在时拒绝覆盖。

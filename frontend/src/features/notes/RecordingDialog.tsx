@@ -6,6 +6,7 @@ import type {
   MeetingNoteType,
   RecordingSession,
   NativeCapability,
+  NativeCaptureStatus,
 } from "../../types";
 import { clock } from "../../utils";
 import Modal from "../../components/Modal";
@@ -60,6 +61,9 @@ export default function RecordingDialog({
     [nativeCapability, setNativeCapability] = useState<NativeCapability | null>(
       null,
     ),
+    [checkingCapture, setCheckingCapture] = useState(false),
+    [captureHealth, setCaptureHealth] =
+      useState<NativeCaptureStatus["health"]>(),
     [nativeSessionId, setNativeSessionId] = useState(""),
     [microphoneLevels, setMicrophoneLevels] = useState<number[]>([]),
     [systemLevels, setSystemLevels] = useState<number[]>([]);
@@ -93,11 +97,19 @@ export default function RecordingDialog({
       ? (performance.now() - activeSinceRef.current) / 1000
       : 0);
 
+  const checkCapture = async () => {
+    setCheckingCapture(true);
+    try {
+      setNativeCapability(await api.nativeCapability());
+    } catch (error) {
+      toast((error as Error).message);
+    } finally {
+      setCheckingCapture(false);
+    }
+  };
+
   useEffect(() => {
-    void api
-      .nativeCapability()
-      .then(setNativeCapability)
-      .catch(() => {});
+    void checkCapture();
     void recoverableRecordings()
       .then(setRecoveries)
       .catch((error) => toast(error.message));
@@ -121,6 +133,7 @@ export default function RecordingDialog({
         accruedRef.current = status.duration;
         activeSinceRef.current = performance.now();
         setElapsed(status.duration);
+        setCaptureHealth(status.health);
         setSystemLevels(status.system_levels || []);
         setMicrophoneLevels(status.microphone_levels || []);
         if (status.state === "recording" && stateRef.current === "requesting") {
@@ -643,6 +656,26 @@ export default function RecordingDialog({
           macOS“屏幕与系统音频录制”权限，联合采集还需麦克风权限。仅保存音频，不保存屏幕画面。建议戴耳机，避免麦克风重复收录扬声器声音。原生模式停止后生成文字稿。
         </p>
       )}
+      {state === "idle" && (
+        <div className="capture-preflight">
+          <span>
+            原生采集器：{nativeCapability?.available ? "已就绪" : "未就绪"} ·
+            系统音频权限：
+            {nativeCapability?.screen_permission ? "已授权" : "待授权"} ·
+            麦克风权限：
+            {nativeCapability?.microphone_permission ? "已授权" : "待授权"}
+          </span>
+          <button
+            disabled={checkingCapture}
+            onClick={() => void checkCapture()}
+          >
+            {checkingCapture ? "检查中…" : "重新检查"}
+          </button>
+          <small>
+            在系统设置中授权后重新检查；开始原生录音时会请求所需权限。
+          </small>
+        </div>
+      )}
       {!nativeCapability?.available && (
         <p className="native-capture-hint">
           系统音频采集器尚未就绪，可运行 bash scripts/build_capture.sh 构建。
@@ -674,6 +707,38 @@ export default function RecordingDialog({
             : undefined
         }
       />
+      {captureSource !== "browser" && captureHealth && (
+        <div className="capture-health" role="status" aria-live="polite">
+          {captureHealth.tracks.map((track) => (
+            <p
+              key={track.name}
+              className={
+                ["no_data", "quiet", "stalled"].includes(track.state)
+                  ? "capture-warning"
+                  : ""
+              }
+            >
+              <strong>{track.name === "system" ? "电脑声音" : "麦克风"}</strong>{" "}
+              ·{" "}
+              {
+                {
+                  receiving: "正在接收音频",
+                  waiting: "等待音频",
+                  paused: "已暂停",
+                  inactive: "已停止",
+                  stalled: "采集状态超过 10 秒未更新，已有音轨保留",
+                  no_data: "超过 10 秒未收到音频数据，请检查声音来源和权限",
+                  quiet: "连续 10 秒声音很弱，请确认会议正在播放或麦克风正常",
+                }[track.state]
+              }{" "}
+              · 已保存 {track.saved_seconds.toFixed(1)}s
+            </p>
+          ))}
+          <small>
+            静音提醒不会停止录音。保存时长包含时间线中的静音间隔，不能代表有效发言时长。
+          </small>
+        </div>
+      )}
       {state === "idle" && recoveries.length > 0 && (
         <section className="recording-recovery">
           <h3>发现未完成的录音</h3>

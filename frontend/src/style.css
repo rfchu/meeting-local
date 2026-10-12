@@ -1537,3 +1537,28 @@ dialog code {
     height: 220px;
   }
 }
+
+.capture-preflight,
+.capture-health {
+  padding: 12px 16px;
+  margin: 12px 0;
+  border: 1px solid #dce3ed;
+  border-radius: 12px;
+  font-size: 13px;
+  color: #526078;
+}
+.capture-preflight {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+.capture-preflight small {
+  flex-basis: 100%;
+}
+.capture-health p {
+  margin: 0 0 6px;
+}
+.capture-health .capture-warning {
+  color: #946000;
+}
