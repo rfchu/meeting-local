@@ -46,6 +46,12 @@ class RecordingStore:
                     parts=list(path.parent.glob('*.part'))
                     value['saved_chunks']=len(parts)
                     value['chunk_count']=max(value['chunk_count'],max((int(p.stem)+1 for p in parts),default=0))
+                    if value.get('source')=='macos':
+                        try:
+                            capture=json.loads((path.parent/'capture.json').read_text())
+                            value['duration']=capture.get('duration',value['duration'])
+                        except (FileNotFoundError,ValueError):pass
+                        value['native_audio_saved']=any(p.stat().st_size>0 for p in path.parent.glob('*.pcm'))
                     rows.append(value)
             return sorted(rows,key=lambda row:row['created'],reverse=True)
 

@@ -816,6 +816,7 @@ export default function App() {
               meetingId={meeting.id}
               segments={meeting.segments}
               seekRef={seekRef}
+              audioTracks={meeting.audio_tracks}
             />
           </section>
         )}

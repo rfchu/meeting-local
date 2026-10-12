@@ -12,6 +12,8 @@ import type {
   Revision,
   SpeakerReviewResult,
   RecordingSession,
+  NativeCapability,
+  NativeCaptureStatus,
 } from "./types";
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -44,6 +46,18 @@ export const api = {
   environment: () => request<Environment>("/status"),
   meetings: () => request<MeetingSummary[]>("/meetings"),
   recordings: () => request<RecordingSession[]>("/recordings"),
+  nativeCapability: () => request<NativeCapability>("/native-capture"),
+  nativeStart: (microphone: boolean) =>
+    request<RecordingSession>("/native-capture", json("POST", { microphone })),
+  nativeStatus: (id: string) =>
+    request<NativeCaptureStatus>(`/native-capture/${id}`),
+  nativeCommand: (id: string, command: "pause" | "resume" | "stop") =>
+    request<NativeCaptureStatus>(
+      `/native-capture/${id}/command`,
+      json("POST", { command }),
+    ),
+  nativeFinish: (id: string) =>
+    request<Meeting>(`/native-capture/${id}/finish`, { method: "POST" }),
   createRecording: (mimeType: string) =>
     request<RecordingSession>(
       "/recordings",

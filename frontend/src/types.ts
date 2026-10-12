@@ -62,6 +62,25 @@ export interface RecordingSession {
   chunk_count: number;
   saved_chunks?: number;
   state: string;
+  source?: "macos";
+  native_audio_saved?: boolean;
+}
+export interface NativeCapability {
+  available: boolean;
+  supported: boolean;
+  screen_permission: boolean;
+  microphone_permission: boolean;
+  build_command: string;
+  error?: string;
+}
+export interface NativeCaptureStatus {
+  state: string;
+  duration: number;
+  error: string;
+  system_frames?: number;
+  microphone_frames?: number;
+  system_levels?: number[];
+  microphone_levels?: number[];
 }
 export interface AnalysisItem {
   content: string;
@@ -163,6 +182,7 @@ export interface Meeting extends MeetingSummary {
   revisions: Revision[];
   artifacts: Artifact[];
   notes: MeetingNote[];
+  audio_tracks?: string[];
 }
 
 export interface EngineInfo {

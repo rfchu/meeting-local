@@ -6,12 +6,19 @@ interface Props {
   meetingId: string;
   segments: Segment[];
   seekRef: React.MutableRefObject<((time: number) => void) | null>;
+  audioTracks?: string[];
 }
-export default function Player({ meetingId, segments, seekRef }: Props) {
+export default function Player({
+  meetingId,
+  segments,
+  seekRef,
+  audioTracks = [],
+}: Props) {
   const audio = useRef<HTMLAudioElement>(null);
   const [playing, setPlaying] = useState(false),
     [time, setTime] = useState(0),
-    [duration, setDuration] = useState(0);
+    [duration, setDuration] = useState(0),
+    [track, setTrack] = useState("");
   useEffect(() => {
     seekRef.current = (value) => {
       if (!audio.current) return;
@@ -26,6 +33,7 @@ export default function Player({ meetingId, segments, seekRef }: Props) {
     setTime(0);
     setDuration(0);
     setPlaying(false);
+    setTrack("");
   }, [meetingId]);
   useEffect(() => {
     const active = segments.find(
@@ -68,6 +76,20 @@ export default function Player({ meetingId, segments, seekRef }: Props) {
         }}
       />
       <span>{clock(duration)}</span>
+      {!!audioTracks.length && (
+        <select
+          aria-label="回听音轨"
+          value={track}
+          onChange={(e) => setTrack(e.target.value)}
+        >
+          <option value="">混合录音</option>
+          {audioTracks.map((name) => (
+            <option value={name} key={name}>
+              {name === "system" ? "电脑声音" : "麦克风"}
+            </option>
+          ))}
+        </select>
+      )}
       <select
         aria-label="播放速度"
         defaultValue="1"
@@ -83,7 +105,11 @@ export default function Player({ meetingId, segments, seekRef }: Props) {
       </select>
       <audio
         ref={audio}
-        src={`/api/meetings/${meetingId}/audio`}
+        src={
+          track
+            ? `/api/meetings/${meetingId}/audio-tracks/${track}`
+            : `/api/meetings/${meetingId}/audio`
+        }
         preload="metadata"
         onPlay={() => setPlaying(true)}
         onPause={() => setPlaying(false)}

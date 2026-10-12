@@ -16,6 +16,7 @@ from .minutes import MeetingMinutes,build_minutes,build_ai_minutes,apply_polishe
 from .minutes_templates import MinutesTemplate
 from .speaker_review import generate_review
 from .recordings import RecordingStore
+from .native_capture import NativeCapture
 
 BASE=Path(__file__).resolve().parents[1]
 
@@ -70,6 +71,10 @@ class RecordingMetadata(MeetingNotesBatchInput):
     chunk_count: int=Field(default=0,ge=0,le=100000)
 class RecordingFinish(BaseModel):
     chunk_count: int=Field(ge=1,le=100000)
+class NativeRecordingInput(BaseModel):
+    microphone: bool=True
+class NativeCommandInput(BaseModel):
+    command: Literal['pause','resume','stop']
 class MinutesGenerateInput(BaseModel):
     style: Literal['formal','brief','internal']='formal'
     template_id: str=Field(default='general-meeting',max_length=100)
@@ -90,11 +95,14 @@ def create_app(data_dir=None, start_worker=True):
     @asynccontextmanager
     async def lifespan(app):
         if start_worker: worker.start()
+        native_capture.start_monitor()
         yield
+        native_capture.close()
         worker.close()
     app=FastAPI(title='听记 · Local Meeting',lifespan=lifespan)
     app.state.store=store; app.state.worker=worker
     recordings=RecordingStore(store)
+    native_capture=NativeCapture(store,recordings)
     live_asr_lock=threading.Lock()
 
     @app.middleware('http')
@@ -131,6 +139,7 @@ def create_app(data_dir=None, start_worker=True):
         notes=store.all('SELECT * FROM meeting_notes WHERE meeting_id=? ORDER BY captured_at,created,rowid',(row['id'],))
         for note in notes:note['source_segment_ids']=json.loads(note['source_segment_ids'] or '[]')
         row['notes']=notes
+        row['audio_tracks']=[name for name in ('system','microphone') if (store.directory(row['id'])/(name+'.wav')).is_file()]
         return row
 
     @app.get('/api/status')
@@ -281,6 +290,27 @@ def create_app(data_dir=None, start_worker=True):
         return rows
     @app.get('/api/recordings')
     def list_recordings():return recordings.list()
+    @app.get('/api/native-capture')
+    def native_capability():return native_capture.capability()
+    @app.post('/api/native-capture',status_code=201)
+    def native_start(body:NativeRecordingInput):
+        try:return native_capture.start(body.microphone)
+        except (ValueError,OSError) as error:raise HTTPException(409,str(error))
+    @app.get('/api/native-capture/{rid}')
+    def native_status(rid:str):
+        try:return native_capture.status(rid)
+        except FileNotFoundError as error:raise HTTPException(404,str(error))
+        except ValueError as error:raise HTTPException(409,str(error))
+    @app.post('/api/native-capture/{rid}/command')
+    def native_command(rid:str,body:NativeCommandInput):
+        try:return native_capture.command(rid,body.command)
+        except FileNotFoundError as error:raise HTTPException(404,str(error))
+        except (ValueError,RuntimeError) as error:raise HTTPException(409,str(error))
+    @app.post('/api/native-capture/{rid}/finish')
+    def native_finish(rid:str):
+        try:return decorated(meeting(native_capture.finish(rid)))
+        except FileNotFoundError as error:raise HTTPException(404,str(error))
+        except (ValueError,RuntimeError,subprocess.SubprocessError) as error:raise HTTPException(409,str(error))
     @app.post('/api/recordings',status_code=201)
     def create_recording(body:RecordingInput):return recordings.create(body.mime_type)
     @app.put('/api/recordings/{rid}/metadata')
@@ -425,6 +455,11 @@ def create_app(data_dir=None, start_worker=True):
         paths=sorted(store.directory(mid).glob('*/audio.wav'),key=lambda p:p.stat().st_mtime,reverse=True)
         if paths: return FileResponse(paths[0],media_type='audio/wav')
         return FileResponse(store.directory(mid)/'original',filename=row['filename'],media_type='application/octet-stream',content_disposition_type='inline')
+    @app.get('/api/meetings/{mid}/audio-tracks/{track}')
+    def audio_track(mid:str,track:Literal['system','microphone']):
+        meeting(mid);path=store.directory(mid)/(track+'.wav')
+        if not path.is_file():raise HTTPException(404,'这场会议没有该独立音轨')
+        return FileResponse(path,media_type='audio/wav',filename=track+'.wav',content_disposition_type='inline')
     @app.post('/api/meetings/{mid}/jobs',status_code=201)
     def enqueue(mid:str,body:JobInput):
         row=meeting(mid)

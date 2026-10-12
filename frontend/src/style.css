@@ -565,22 +565,83 @@ dialog code {
 .recording-dialog {
   width: min(820px, 96vw);
   max-width: 820px;
+  max-height: 92vh;
+  overflow: auto;
 }
-.recording-save-status {
+.recording-waveform {
+  border: 1px solid var(--line);
+  background: #fafbfc;
+  border-radius: 12px;
+  padding: 14px 16px 10px;
+  margin-bottom: 16px;
+}
+.recording-waveform header {
+  height: auto;
+  min-height: 0;
+  padding: 0;
+  margin: 0;
+  border: 0;
+  background: transparent;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  font-size: 12px;
+  color: var(--ink);
+}
+.recording-waveform header > span {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.recording-waveform header i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #9ba7b8;
+}
+.recording-waveform header i.live {
+  background: #3968e8;
+  box-shadow: 0 0 0 4px #3968e810;
+}
+.recording-waveform header small {
+  color: var(--muted);
+  font-size: 10px;
+}
+.waveform-track {
+  position: relative;
+  margin-top: 9px;
+}
+.waveform-track > span {
+  color: var(--muted);
+  font-size: 10px;
+}
+.waveform-track svg {
+  display: block;
+  width: 100%;
+  height: 74px;
+  color: #263752;
+}
+.recording-waveform footer {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
-  background: #eef8f3;
-  border: 1px solid #d0e8db;
-  border-radius: 8px;
-  padding: 10px 12px;
-  font-size: 12px;
-  margin-bottom: 12px;
-}
-.recording-save-status button {
+  gap: 12px;
+  border-top: 1px solid #e9edf3;
+  padding-top: 9px;
+  color: var(--muted);
   font-size: 11px;
-  white-space: nowrap;
+}
+.recording-waveform footer > span {
+  overflow-wrap: anywhere;
+}
+.recording-waveform footer button {
+  flex-shrink: 0;
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  font-size: 11px;
+  padding: 5px 7px;
 }
 .recording-recovery {
   background: #fff6df;
@@ -712,6 +773,22 @@ dialog code {
 }
 .recording-intro {
   margin: 18px 0;
+}
+.capture-source {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 12px;
+  margin-bottom: 12px;
+}
+.capture-source select {
+  flex: 1;
+}
+.native-capture-hint {
+  font-size: 12px;
+  background: #f4f6fb;
+  border-radius: 8px;
+  padding: 10px 12px;
 }
 .recording-controls {
   padding-bottom: 18px;

@@ -115,12 +115,15 @@ export async function recoverableRecordings() {
           ? existing
           : session),
         chunk_count: Math.max(existing?.chunk_count || 0, session.chunk_count),
+        native_audio_saved:
+          existing?.native_audio_saved || session.native_audio_saved,
+        duration: Math.max(existing?.duration || 0, session.duration),
       });
     }
     return [...rows.values()]
-      .filter((s) => s.chunk_count > 0)
+      .filter((s) => s.chunk_count > 0 || s.native_audio_saved)
       .sort((a, b) => b.created - a.created);
   } catch {
-    return local.filter((s) => s.chunk_count > 0);
+    return local.filter((s) => s.chunk_count > 0 || s.source === "macos");
   }
 }

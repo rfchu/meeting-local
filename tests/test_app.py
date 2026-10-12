@@ -95,6 +95,42 @@ def test_interrupted_recording_survives_restart_and_missing_chunks(client):
         assert restarted.post(f'/api/recordings/{rid}/finish',json={'chunk_count':3}).status_code==200
         assert (restarted.app.state.store.directory(rid)/'original').read_bytes()==payload
 
+def test_native_recording_recovery_retains_separate_aligned_tracks(client):
+    import struct
+    from app.recordings import RecordingStore
+    store=client.app.state.store;recordings=RecordingStore(store)
+    session=recordings.create('audio/wav');session['source']='macos'
+    folder=recordings.folder(session['id']);RecordingStore.write(folder/'session.json',session)
+    system=struct.pack('<h',1000)*16000
+    microphone=b'\0\0'*8000+struct.pack('<h',2000)*8000
+    (folder/'system.pcm').write_bytes(system);(folder/'microphone.pcm').write_bytes(microphone)
+    RecordingStore.write(folder/'capture.json',{'state':'stopped','duration':1,'error':''})
+    pending=client.get('/api/recordings').json()[0]
+    assert pending['source']=='macos' and pending['native_audio_saved'] and pending['duration']==1
+    notes=[{'captured_at':.5,'note_type':'highlight','raw_text':'两条原轨分别保留'}]
+    client.put(f"/api/recordings/{session['id']}/metadata",json={'notes':notes,'duration':1,'chunk_count':0})
+    response=client.post(f"/api/native-capture/{session['id']}/finish")
+    assert response.status_code==200,response.text
+    meeting=response.json();assert meeting['audio_tracks']==['system','microphone'] and len(meeting['notes'])==1
+    for name,payload in [('system',system),('microphone',microphone)]:
+        result=client.get(f"/api/meetings/{session['id']}/audio-tracks/{name}")
+        assert result.status_code==200
+        with wave.open(io.BytesIO(result.content),'rb') as wav:
+            assert wav.getframerate()==16000 and wav.getnchannels()==1
+            assert wav.readframes(wav.getnframes())==payload
+    assert client.post(f"/api/native-capture/{session['id']}/finish").json()['id']==session['id']
+    assert client.get('/api/recordings').json()==[]
+
+def test_native_capture_unavailable_does_not_start_recording(client,monkeypatch):
+    monkeypatch.setattr('app.native_capture.NativeCapture.available',lambda _:False)
+    assert client.post('/api/native-capture',json={'microphone':True}).status_code==409
+    assert client.get('/api/recordings').json()==[]
+
+def test_native_capture_rejects_empty_audio_and_foreign_session(client):
+    rid=client.post('/api/recordings',json={'mime_type':'audio/webm'}).json()['id']
+    assert client.get(f'/api/native-capture/{rid}').status_code==409
+    assert client.post(f'/api/native-capture/{rid}/finish').status_code==409
+
 def test_timestamped_meeting_notes_lifecycle(client):
     mid=upload(client)
     result=client.post(f'/api/meetings/{mid}/notes/batch',json={'notes':[

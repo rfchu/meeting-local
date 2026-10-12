@@ -9,3 +9,4 @@ vendor/
 .venv-qwen/
 frontend/node_modules/
 frontend/*.tsbuildinfo
+native/build/

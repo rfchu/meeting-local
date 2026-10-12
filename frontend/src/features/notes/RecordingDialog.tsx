@@ -5,10 +5,12 @@ import type {
   MeetingNoteInput,
   MeetingNoteType,
   RecordingSession,
+  NativeCapability,
 } from "../../types";
 import { clock } from "../../utils";
 import Modal from "../../components/Modal";
 import { encodeLiveWav } from "./liveAudio";
+import RecordingWaveform from "./RecordingWaveform";
 import {
   bufferRecording,
   flushRecording,
@@ -51,7 +53,16 @@ export default function RecordingDialog({
     [drafts, setDrafts] = useState<LiveDraftSegment[]>([]),
     [draftStatus, setDraftStatus] = useState("开始录音后自动生成"),
     [saveStatus, setSaveStatus] = useState("录音分段会自动保存到本机"),
-    [recoveries, setRecoveries] = useState<RecordingSession[]>([]);
+    [recoveries, setRecoveries] = useState<RecordingSession[]>([]),
+    [captureSource, setCaptureSource] = useState<
+      "browser" | "macos-system" | "macos-both"
+    >("browser"),
+    [nativeCapability, setNativeCapability] = useState<NativeCapability | null>(
+      null,
+    ),
+    [nativeSessionId, setNativeSessionId] = useState(""),
+    [microphoneLevels, setMicrophoneLevels] = useState<number[]>([]),
+    [systemLevels, setSystemLevels] = useState<number[]>([]);
   const recorderRef = useRef<MediaRecorder | null>(null),
     streamRef = useRef<MediaStream | null>(null),
     sessionRef = useRef<RecordingSession | null>(null),
@@ -83,10 +94,67 @@ export default function RecordingDialog({
       : 0);
 
   useEffect(() => {
+    void api
+      .nativeCapability()
+      .then(setNativeCapability)
+      .catch(() => {});
     void recoverableRecordings()
       .then(setRecoveries)
       .catch((error) => toast(error.message));
   }, []);
+  useEffect(() => {
+    if (
+      !sessionRef.current ||
+      sessionRef.current.source !== "macos" ||
+      state === "idle" ||
+      state === "failed"
+    )
+      return;
+    let active = true,
+      polling = false;
+    const poll = async () => {
+      if (polling) return;
+      polling = true;
+      try {
+        const status = await api.nativeStatus(sessionRef.current!.id);
+        if (!active) return;
+        accruedRef.current = status.duration;
+        activeSinceRef.current = performance.now();
+        setElapsed(status.duration);
+        setSystemLevels(status.system_levels || []);
+        setMicrophoneLevels(status.microphone_levels || []);
+        if (status.state === "recording" && stateRef.current === "requesting") {
+          stateRef.current = "recording";
+          setState("recording");
+        }
+        setSaveStatus(
+          status.state === "starting"
+            ? "等待 macOS 采集权限…"
+            : status.error ||
+                `原生音轨保存中 · 电脑 ${((status.system_frames || 0) / 16000).toFixed(1)}s · 麦克风 ${((status.microphone_frames || 0) / 16000).toFixed(1)}s`,
+        );
+        if (
+          ["failed", "interrupted", "stopped"].includes(status.state) &&
+          stateRef.current !== "saving"
+        ) {
+          stateRef.current = "failed";
+          setState("failed");
+          toast(status.error || "采集已停止，可以恢复已有录音");
+        }
+      } catch (error) {
+        if (active)
+          setSaveStatus(`采集状态暂时不可用：${(error as Error).message}`);
+      } finally {
+        polling = false;
+      }
+    };
+    void poll();
+    const timer = window.setInterval(() => void poll(), 1000);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [state, captureSource, nativeSessionId]);
   useEffect(() => {
     const guard = (event: BeforeUnloadEvent) => {
       if (
@@ -171,10 +239,10 @@ export default function RecordingDialog({
     sessionRef.current = session;
     try {
       await retrySync();
-      const meeting = await api.finishRecording(
-        session.id,
-        session.chunk_count,
-      );
+      const meeting =
+        session.source === "macos"
+          ? await api.nativeFinish(session.id)
+          : await api.finishRecording(session.id, session.chunk_count);
       await forgetRecording(session.id);
       await onComplete(meeting.id);
     } catch (error) {
@@ -267,6 +335,10 @@ export default function RecordingDialog({
     processor.onaudioprocess = (event) => {
       if (stateRef.current !== "recording") return;
       const frame = new Float32Array(event.inputBuffer.getChannelData(0));
+      let power = 0;
+      for (const sample of frame) power += sample * sample;
+      const rms = Math.sqrt(power / frame.length);
+      setMicrophoneLevels((old) => [...old.slice(-71), rms]);
       pcmFramesRef.current.push(frame);
       pcmSamplesRef.current += frame.length;
       // Bound backlog while inference is slower than capture. Final audio is retained.
@@ -305,6 +377,31 @@ export default function RecordingDialog({
   };
 
   const start = async () => {
+    setMicrophoneLevels([]);
+    setSystemLevels([]);
+    if (captureSource !== "browser") {
+      stateRef.current = "requesting";
+      setState("requesting");
+      try {
+        const session = await api.nativeStart(captureSource === "macos-both");
+        sessionRef.current = session;
+        setNativeSessionId(session.id);
+        await bufferRecording(session);
+        accruedRef.current = 0;
+        activeSinceRef.current = performance.now();
+        setDraftStatus("原生模式停止后生成正式文字稿");
+        setState("requesting");
+      } catch (error) {
+        if (sessionRef.current?.source === "macos")
+          await api
+            .nativeCommand(sessionRef.current.id, "stop")
+            .catch(() => {});
+        stateRef.current = "idle";
+        setState("idle");
+        toast((error as Error).message);
+      }
+      return;
+    }
     if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) {
       toast("当前浏览器不支持麦克风录音");
       return;
@@ -383,8 +480,20 @@ export default function RecordingDialog({
   };
 
   const pause = () => {
+    if (sessionRef.current?.source === "macos") {
+      void api
+        .nativeCommand(sessionRef.current.id, "pause")
+        .then((status) => {
+          accruedRef.current = status.duration;
+          stateRef.current = "paused";
+          setState("paused");
+        })
+        .catch((error) => toast(error.message));
+      return;
+    }
     const recorder = recorderRef.current;
     if (!recorder || state !== "recording") return;
+    setMicrophoneLevels([]);
     accruedRef.current = currentSeconds();
     recorder.pause();
     setElapsed(accruedRef.current);
@@ -392,6 +501,18 @@ export default function RecordingDialog({
     setState("paused");
   };
   const resume = () => {
+    if (sessionRef.current?.source === "macos") {
+      void api
+        .nativeCommand(sessionRef.current.id, "resume")
+        .then((status) => {
+          accruedRef.current = status.duration;
+          activeSinceRef.current = performance.now();
+          stateRef.current = "recording";
+          setState("recording");
+        })
+        .catch((error) => toast(error.message));
+      return;
+    }
     const recorder = recorderRef.current;
     if (!recorder || state !== "paused") return;
     if (failedChunksRef.current.length)
@@ -412,6 +533,34 @@ export default function RecordingDialog({
     setNoteText("");
   };
   const stop = async () => {
+    if (sessionRef.current?.source === "macos") {
+      accruedRef.current = currentSeconds();
+      stateRef.current = "saving";
+      setState("saving");
+      if (noteDraftRef.current.text.trim()) {
+        notesRef.current = [
+          ...notesRef.current,
+          {
+            captured_at: accruedRef.current,
+            note_type: noteDraftRef.current.type,
+            raw_text: noteDraftRef.current.text.trim(),
+          },
+        ];
+        setNotes(notesRef.current);
+        setNoteText("");
+      }
+      try {
+        const status = await api.nativeCommand(sessionRef.current.id, "stop");
+        accruedRef.current = status.duration;
+        const session = metadata();
+        if (session) await finish(session);
+      } catch (error) {
+        stateRef.current = "failed";
+        setState("failed");
+        toast((error as Error).message);
+      }
+      return;
+    }
     const recorder = recorderRef.current;
     if (!recorder || !["recording", "paused"].includes(stateRef.current))
       return;
@@ -464,22 +613,67 @@ export default function RecordingDialog({
         </div>
       </div>
       <p className="recording-intro">
-        原音每约 5 秒分段保存，浏览器暂存保护待同步内容。Whisper
-        生成实时草稿；停止后使用 {engineLabel}
-        重新生成高质量文字稿。
+        {captureSource === "browser"
+          ? "原音每约 5 秒分段保存，浏览器暂存保护待同步内容。Whisper 生成实时草稿；"
+          : "电脑声音由原生采集器保存，联合模式还会保留独立麦克风音轨；"}
+        停止后使用 {engineLabel} 生成高质量文字稿。
       </p>
-      <div className="recording-save-status" role="status">
-        {saveStatus}
-        {recording && (
-          <button
-            onClick={() =>
-              void retrySync().catch((error) => toast(error.message))
-            }
-          >
-            重试同步
-          </button>
-        )}
-      </div>
+      <label className="capture-source">
+        录音来源
+        <select
+          aria-label="录音来源"
+          value={captureSource}
+          disabled={state !== "idle"}
+          onChange={(e) =>
+            setCaptureSource(e.target.value as typeof captureSource)
+          }
+        >
+          <option value="browser">浏览器麦克风（支持实时草稿）</option>
+          <option value="macos-both" disabled={!nativeCapability?.available}>
+            macOS 电脑声音 + 麦克风
+          </option>
+          <option value="macos-system" disabled={!nativeCapability?.available}>
+            macOS 仅电脑声音
+          </option>
+        </select>
+      </label>
+      {captureSource !== "browser" && (
+        <p className="native-capture-hint">
+          首次使用需允许
+          macOS“屏幕与系统音频录制”权限，联合采集还需麦克风权限。仅保存音频，不保存屏幕画面。建议戴耳机，避免麦克风重复收录扬声器声音。原生模式停止后生成文字稿。
+        </p>
+      )}
+      {!nativeCapability?.available && (
+        <p className="native-capture-hint">
+          系统音频采集器尚未就绪，可运行 bash scripts/build_capture.sh 构建。
+        </p>
+      )}
+      <RecordingWaveform
+        tracks={
+          captureSource === "browser"
+            ? [{ label: "麦克风", levels: microphoneLevels, color: "#263752" }]
+            : [
+                { label: "电脑声音", levels: systemLevels, color: "#3968e8" },
+                ...(captureSource === "macos-both"
+                  ? [
+                      {
+                        label: "麦克风",
+                        levels: microphoneLevels,
+                        color: "#263752",
+                      },
+                    ]
+                  : []),
+              ]
+        }
+        active={recording}
+        paused={state === "paused"}
+        status={saveStatus}
+        onRetry={
+          recording
+            ? () => void retrySync().catch((error) => toast(error.message))
+            : undefined
+        }
+      />
       {state === "idle" && recoveries.length > 0 && (
         <section className="recording-recovery">
           <h3>发现未完成的录音</h3>
@@ -488,7 +682,10 @@ export default function RecordingDialog({
             <div key={session.id}>
               <span>
                 {new Date(session.created * 1000).toLocaleString()} ·{" "}
-                {clock(session.duration)} · {session.chunk_count} 段
+                {clock(session.duration)} ·{" "}
+                {session.source === "macos"
+                  ? "原生音轨"
+                  : `${session.chunk_count} 段`}
               </span>
               <button onClick={() => void recover(session)}>恢复为会议</button>
             </div>
@@ -501,7 +698,13 @@ export default function RecordingDialog({
             ● 开始录音
           </button>
         )}
-        {state === "requesting" && <button disabled>正在请求麦克风…</button>}
+        {state === "requesting" && (
+          <button disabled>
+            {captureSource === "browser"
+              ? "正在请求麦克风…"
+              : "等待 macOS 采集权限…"}
+          </button>
+        )}
         {state === "recording" && <button onClick={pause}>暂停</button>}
         {state === "paused" && <button onClick={resume}>继续录音</button>}
         {recording && (
