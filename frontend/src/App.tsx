@@ -706,6 +706,14 @@ export default function App() {
                     onChange={updateSegments}
                     onSeek={(time) => seekRef.current?.(time)}
                     onSave={saveTranscript}
+                    onRefresh={async () => {
+                      const fresh = await api.meeting(meeting.id);
+                      setMeeting(fresh);
+                      setTranscriptDirty(false);
+                      await client.invalidateQueries({
+                        queryKey: ["meetings"],
+                      });
+                    }}
                     toast={toast}
                   />
                 )}

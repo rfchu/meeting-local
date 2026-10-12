@@ -14,6 +14,7 @@ from .providers import WhisperCpp, get_asr_provider, engine_catalog, LocalDiariz
 from .analysis import LMStudioProvider,OpenAICompatibleProvider,MeetingAnalysis,validate_llm_endpoint,public_llm_config,analysis_chunk_chars,TEMPLATE_VERSION,SECTION_NAMES
 from .minutes import MeetingMinutes,build_minutes,build_ai_minutes,apply_polished_minutes,validate_minutes_citations,minutes_markdown,minutes_docx,minutes_pdf,MINUTES_VERSION
 from .minutes_templates import MinutesTemplate
+from .speaker_review import generate_review
 
 BASE=Path(__file__).resolve().parents[1]
 
@@ -24,6 +25,7 @@ class Segment(BaseModel):
     text: str=Field(max_length=20000)
     speaker: str=Field(default='未分配',max_length=100)
     boundary_review: bool=False
+    speaker_locked: bool=False
 class RevisionInput(BaseModel):
     revision: int
     segments: list[Segment]=Field(max_length=50000)
@@ -34,6 +36,9 @@ class JobInput(BaseModel):
 class AnalysisJobInput(BaseModel):
     profile_id: str | None=Field(default=None,max_length=100)
     model: str | None=Field(default=None,max_length=500)
+class SpeakerReviewApplyInput(BaseModel):
+    revision: int
+    segment_ids: list[str]=Field(min_length=1,max_length=500)
 class LLMConfigInput(BaseModel):
     config_id: str | None=Field(default=None,max_length=100)
     name: str=Field(min_length=1,max_length=100)
@@ -290,6 +295,48 @@ def create_app(data_dir=None, start_worker=True):
     @app.patch('/api/meetings/{mid}')
     def rename(mid:str,body:RenameInput):
         meeting(mid); store.execute('UPDATE meetings SET title=? WHERE id=?',(body.title,mid)); return {'ok':True}
+    @app.post('/api/meetings/{mid}/speaker-reviews',status_code=201)
+    def create_speaker_review(mid:str,body:AnalysisJobInput):
+        row=meeting(mid);segments=json.loads(row['segments'])
+        if not segments:raise HTTPException(409,'请先完成文字稿')
+        speakers={s['speaker'] for s in segments if s.get('speaker') and s['speaker']!='未分配'}
+        if len(speakers)<2:raise HTTPException(409,'请先完成声学发言人区分或手动标注至少两位发言人')
+        profile=llm_config(body.profile_id) if body.profile_id else store.one('SELECT * FROM llm_configs ORDER BY is_default DESC,created,rowid LIMIT 1')
+        try:
+            provider=OpenAICompatibleProvider(profile) if profile else LMStudioProvider()
+            model=provider.resolve_model(body.model);aid=uid()
+            max_chars=analysis_chunk_chars(profile['context_window'],profile['analysis_chunk_mode'],profile['analysis_chunk_chars']) if profile else 8000
+            payload=generate_review(provider,model,segments,store.directory(mid)/('speaker-review-'+aid),max_chars)
+        except (RuntimeError,ValueError,subprocess.TimeoutExpired) as error:raise HTTPException(409,str(error))
+        provenance={'model':model,'provider':profile['name'] if profile else 'LM Studio','provider_type':profile['provider_type'] if profile else 'local','version':'speaker-review-v1'}
+        store.execute('INSERT INTO artifacts(id,meeting_id,revision,kind,payload,provenance) VALUES(?,?,?,?,?,?)',
+            (aid,mid,row['revision'],'speaker_review',encode(payload),encode(provenance)))
+        return public_artifact(store.one('SELECT * FROM artifacts WHERE id=?',(aid,)))
+
+    @app.post('/api/meetings/{mid}/speaker-reviews/{aid}/apply')
+    def apply_speaker_review(mid:str,aid:str,body:SpeakerReviewApplyInput):
+        with store.connect() as db:
+            db.execute('BEGIN IMMEDIATE')
+            row=db.execute('SELECT * FROM meetings WHERE id=?',(mid,)).fetchone()
+            if not row:raise HTTPException(404,'会议不存在')
+            artifact=db.execute("SELECT * FROM artifacts WHERE id=? AND meeting_id=? AND kind='speaker_review'",(aid,mid)).fetchone()
+            if not artifact:raise HTTPException(404,'校对建议不存在')
+            if row['revision']!=body.revision or artifact['revision']!=body.revision:raise HTTPException(409,'文字稿已变更，请重新生成校对建议')
+            suggestions={s['segment_id']:s for s in json.loads(artifact['payload'])['suggestions']}
+            selected=set(body.segment_ids)
+            if not selected.issubset(suggestions):raise HTTPException(400,'包含不存在的校对建议')
+            segments=json.loads(row['segments']);found=set()
+            for segment in segments:
+                if segment['id'] in selected:
+                    suggestion=suggestions[segment['id']]
+                    if segment.get('speaker_locked') or segment['speaker']!=suggestion['original_speaker']:raise HTTPException(409,'发言人已确认或修改，请重新生成建议')
+                    segment['speaker']=suggestion['proposed_speaker'];segment['speaker_locked']=True;found.add(segment['id'])
+            if found!=selected:raise HTTPException(409,'原文片段已变更')
+            revision=body.revision+1;payload=encode(segments)
+            source=encode({'kind':'speaker_review','review_id':aid,'accepted_segment_ids':sorted(selected)})
+            db.execute('INSERT INTO revisions(meeting_id,revision,segments,source) VALUES(?,?,?,?)',(mid,revision,payload,source))
+            db.execute('UPDATE meetings SET revision=?,segments=? WHERE id=?',(revision,payload,mid))
+        return {'revision':revision}
     @app.post('/api/meetings/{mid}/notes',status_code=201)
     def create_note(mid:str,body:MeetingNoteInput):
         meeting(mid);nid=uid();text=body.raw_text.strip()

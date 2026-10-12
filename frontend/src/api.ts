@@ -10,6 +10,7 @@ import type {
   MinutesTemplate,
   MeetingSummary,
   Revision,
+  SpeakerReviewResult,
 } from "./types";
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -59,6 +60,21 @@ export const api = {
   },
   rename: (id: string, title: string) =>
     request(`/meetings/${id}`, json("PATCH", { title })),
+  speakerReview: (id: string, profileId?: string) =>
+    request<Artifact<SpeakerReviewResult>>(
+      `/meetings/${id}/speaker-reviews`,
+      json("POST", { profile_id: profileId }),
+    ),
+  applySpeakerReview: (
+    id: string,
+    reviewId: string,
+    revision: number,
+    segmentIds: string[],
+  ) =>
+    request<{ revision: number }>(
+      `/meetings/${id}/speaker-reviews/${reviewId}/apply`,
+      json("POST", { revision, segment_ids: segmentIds }),
+    ),
   remove: (id: string) => request(`/meetings/${id}`, { method: "DELETE" }),
   transcribe: (
     id: string,

@@ -10,6 +10,7 @@ export interface Segment {
   text: string;
   speaker: string;
   boundary_review: boolean;
+  speaker_locked?: boolean;
 }
 
 export interface Job {
@@ -113,11 +114,26 @@ export interface Artifact<T = unknown> {
   id: string;
   meeting_id: string;
   revision: number;
-  kind: "transcript_candidate" | "meeting_analysis" | "meeting_minutes";
+  kind:
+    | "transcript_candidate"
+    | "meeting_analysis"
+    | "meeting_minutes"
+    | "speaker_review";
   payload: T;
   provenance: Record<string, unknown>;
   created: string;
   stale: boolean;
+}
+export interface SpeakerReviewResult {
+  suggestions: {
+    segment_id: string;
+    original_speaker: string;
+    proposed_speaker: string;
+    reason: string;
+    evidence_ids: string[];
+    strength: "supported" | "review" | "conflict";
+  }[];
+  chunks: number;
 }
 
 export interface MeetingSummary {

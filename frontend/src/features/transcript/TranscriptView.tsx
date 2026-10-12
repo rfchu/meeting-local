@@ -3,12 +3,14 @@ import { api } from "../../api";
 import Modal from "../../components/Modal";
 import type { Meeting, Revision, Segment } from "../../types";
 import { clock, revisionLabel } from "../../utils";
+import SpeakerReviewDialog from "./SpeakerReviewDialog";
 
 interface Props {
   meeting: Meeting;
   onChange: (segments: Segment[]) => void;
   onSeek: (time: number) => void;
   onSave: () => Promise<void>;
+  onRefresh: () => Promise<void>;
   toast: (text: string) => void;
 }
 
@@ -42,6 +44,16 @@ const Row = memo(function Row({
           value={segment.speaker}
           onChange={(e) => onUpdate({ ...segment, speaker: e.target.value })}
         />
+        <label className="speaker-confirmed">
+          <input
+            type="checkbox"
+            checked={!!segment.speaker_locked}
+            onChange={(e) =>
+              onUpdate({ ...segment, speaker_locked: e.target.checked })
+            }
+          />
+          已确认
+        </label>
         <textarea
           aria-label={`转写文字 ${clock(segment.start)}`}
           rows={Math.max(1, Math.ceil(segment.text.length / 42))}
@@ -141,12 +153,14 @@ export default function TranscriptView({
   onChange,
   onSeek,
   onSave,
+  onRefresh,
   toast,
 }: Props) {
   const [search, setSearch] = useState(""),
     [speakerOpen, setSpeakerOpen] = useState(false),
     [compareOpen, setCompareOpen] = useState(false),
     [replaceOpen, setReplaceOpen] = useState(false);
+  const [reviewOpen, setReviewOpen] = useState(false);
   const [speakerFrom, setSpeakerFrom] = useState(""),
     [speakerTo, setSpeakerTo] = useState(""),
     [find, setFind] = useState(""),
@@ -184,6 +198,8 @@ export default function TranscriptView({
           (previous.text.trim().length <= 18 || item.text.trim().length <= 18);
       if (
         previous &&
+        !previous.speaker_locked &&
+        !item.speaker_locked &&
         previous.speaker === item.speaker &&
         gap <= 1.5 &&
         short &&
@@ -239,6 +255,12 @@ export default function TranscriptView({
           管理发言人
         </button>
         <button onClick={mergeShort}>合并连续短句</button>
+        <button
+          disabled={!meeting.segments.length}
+          onClick={() => setReviewOpen(true)}
+        >
+          AI 校对发言人
+        </button>
         <button
           onClick={() =>
             meeting.revisions.length < 2
@@ -350,6 +372,15 @@ export default function TranscriptView({
             </div>
           </form>
         </Modal>
+      )}
+      {reviewOpen && (
+        <SpeakerReviewDialog
+          meeting={meeting}
+          onClose={() => setReviewOpen(false)}
+          onSave={onSave}
+          onRefresh={onRefresh}
+          toast={toast}
+        />
       )}
       {replaceOpen && (
         <Modal className="small-dialog" onClose={() => setReplaceOpen(false)}>

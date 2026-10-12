@@ -21,7 +21,38 @@ def upload(c):
     assert r.status_code==201
     return r.json()['id']
 
-def sample():return [{'id':'seg1','start':0,'end':.5,'text':'确定周五交付。','speaker':'发言人 1','boundary_review':False}]
+def sample():return [{'id':'seg1','start':0,'end':.5,'text':'确定周五交付。','speaker':'发言人 1','boundary_review':False,'speaker_locked':False}]
+
+def test_speaker_review_apply_is_versioned_and_preserves_original(client,monkeypatch):
+    mid=upload(client);store=client.app.state.store
+    segments=sample()+[dict(sample()[0],id='seg2',start=1,end=2,speaker='发言人 2',speaker_locked=True,text='好的，我来汇报。')]
+    store.save_revision(mid,segments,'manual',expected=0)
+    monkeypatch.setattr('app.main.LMStudioProvider.resolve_model',lambda *_:'test-model')
+    monkeypatch.setattr('app.main.generate_review',lambda *_:{'suggestions':[{
+        'segment_id':'seg1','original_speaker':'发言人 1','proposed_speaker':'发言人 2',
+        'reason':'连续回应','evidence_ids':['seg2'],'strength':'review'}],'chunks':1})
+    result=client.post(f'/api/meetings/{mid}/speaker-reviews',json={})
+    assert result.status_code==201
+    review=result.json();assert review['revision']==1
+    assert client.get(f'/api/meetings/{mid}').json()['segments']==segments
+    route=f"/api/meetings/{mid}/speaker-reviews/{review['id']}/apply"
+    assert client.post(route,json={'revision':1,'segment_ids':['missing']}).status_code==400
+    applied=client.post(route,json={'revision':1,'segment_ids':['seg1']})
+    assert applied.status_code==200 and applied.json()['revision']==2
+    fresh=client.get(f'/api/meetings/{mid}').json()
+    assert fresh['segments'][0]['speaker']=='发言人 2' and fresh['segments'][0]['speaker_locked']
+    assert fresh['segments'][0]['text']==segments[0]['text']
+    assert client.get(f'/api/meetings/{mid}/revisions/1').json()['segments']==segments
+    assert client.post(route,json={'revision':2,'segment_ids':['seg1']}).status_code==409
+    assert fresh['artifacts'][0]['stale']
+
+def test_speaker_review_blocks_locked_samples_and_unknown_evidence():
+    from app.speaker_review import SpeakerReview,validate_review
+    segments=sample()+[dict(sample()[0],id='seg2',speaker='发言人 2',speaker_locked=True)]
+    suggestion={'segment_id':'seg1','proposed_speaker':'发言人 2','reason':'上下文','evidence_ids':['seg2'],'strength':'supported'}
+    assert len(validate_review(SpeakerReview(suggestions=[suggestion]),segments,{'seg1'}))==1
+    for changes in ({'evidence_ids':['missing']},{'proposed_speaker':'不存在的人'},{'segment_id':'seg2','proposed_speaker':'发言人 1'}):
+        with pytest.raises(ValueError):validate_review(SpeakerReview(suggestions=[suggestion|changes]),segments,{'seg1','seg2'})
 
 def test_meeting_can_be_renamed(client):
     mid=upload(client)

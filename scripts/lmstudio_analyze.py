@@ -37,6 +37,10 @@ def extract_json(payload):
     raise json.JSONDecodeError('模型返回内容为空','',0)
 
 def validate_shape(result,schema_name='meeting_analysis'):
+    if schema_name=='speaker_review':
+        if not isinstance(result,dict) or not isinstance(result.get('suggestions'),list):
+            raise ValueError('缺少发言人建议列表')
+        return result
     if schema_name=='ai_meeting_minutes':
         if not isinstance(result,dict) or not isinstance(result.get('basic_info'),dict):
             raise ValueError('缺少会议基本信息')

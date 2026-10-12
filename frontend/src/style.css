@@ -566,6 +566,67 @@ dialog code {
   width: min(820px, 96vw);
   max-width: 820px;
 }
+#speakerReviewDialog {
+  width: min(880px, 96vw);
+  max-width: 880px;
+}
+.speaker-confirmed {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--muted);
+  margin-left: 10px;
+}
+.speaker-confirmed input {
+  width: auto;
+}
+.speaker-review-list {
+  max-height: 55vh;
+  overflow: auto;
+  margin-top: 16px;
+}
+.speaker-review-list article {
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  padding: 16px;
+  margin-bottom: 12px;
+}
+.speaker-review-list article > small {
+  display: block;
+  color: var(--accent);
+  margin-top: 8px;
+}
+.speaker-review-list article > label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+.speaker-review-list article > button {
+  margin: 10px 8px 0 0;
+}
+.speaker-review-hint {
+  font-size: 11px;
+}
+.speaker-review-audio {
+  width: 100%;
+  margin: 12px 0;
+}
+.speaker-evidence {
+  background: var(--soft);
+  border-radius: 6px;
+  padding: 10px;
+  font-size: 12px;
+}
+.speaker-evidence div {
+  margin: 6px 0;
+}
+.speaker-evidence button {
+  font-size: 11px;
+  padding: 4px 7px;
+  margin-right: 8px;
+}
 .recording-header,
 .recording-controls,
 .note-meta {

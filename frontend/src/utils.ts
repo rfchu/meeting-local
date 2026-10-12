@@ -28,7 +28,9 @@ export const revisionLabel = (source?: string) => {
     const value = JSON.parse(source) as {
       engine_label?: string;
       engine?: string;
+      kind?: string;
     };
+    if (value.kind === "speaker_review") return "AI 发言人校对（已确认）";
     return value.engine_label || engineLabel(value.engine);
   } catch {
     return "模型识别";
