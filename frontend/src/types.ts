@@ -21,7 +21,7 @@ export interface Job {
   progress: number;
   error: string;
   config: string;
-  kind?: "transcription" | "analysis";
+  kind?: "transcription" | "analysis" | "note_expansion";
 }
 
 export interface Revision {
@@ -40,12 +40,25 @@ export interface MeetingNoteInput {
 export interface MeetingNote extends MeetingNoteInput {
   id: string;
   meeting_id: string;
+  expansion_revision: number;
+  expansion_stale: boolean;
+  expansion?: Artifact<NoteExpansion> | null;
   expanded_text: string;
   accepted_text: string;
   status: "raw" | "expanded" | "accepted" | "ignored";
   source_segment_ids: string[];
   created: string;
   updated: string;
+}
+export interface NoteExpansion {
+  note_id: string;
+  raw_text: string;
+  note_type: MeetingNoteType;
+  captured_at: number;
+  status: "supported" | "insufficient";
+  text: string;
+  reason: string;
+  evidence: { segment_id: string; quote: string }[];
 }
 export interface LiveDraftSegment {
   start: number;
@@ -164,7 +177,8 @@ export interface Artifact<T = unknown> {
     | "transcript_candidate"
     | "meeting_analysis"
     | "meeting_minutes"
-    | "speaker_review";
+    | "speaker_review"
+    | "note_expansion";
   payload: T;
   provenance: Record<string, unknown>;
   created: string;

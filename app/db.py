@@ -67,6 +67,8 @@ class Store:
             columns={row['name'] for row in db.execute('PRAGMA table_info(jobs)')}
             if 'kind' not in columns:
                 db.execute("ALTER TABLE jobs ADD COLUMN kind TEXT NOT NULL DEFAULT 'transcription'")
+            note_columns={row['name'] for row in db.execute('PRAGMA table_info(meeting_notes)')}
+            if 'expansion_revision' not in note_columns:db.execute('ALTER TABLE meeting_notes ADD COLUMN expansion_revision INTEGER NOT NULL DEFAULT 0')
             config_columns={row['name'] for row in db.execute('PRAGMA table_info(llm_configs)')}
             if 'context_window' not in config_columns:
                 db.execute('ALTER TABLE llm_configs ADD COLUMN context_window INTEGER NOT NULL DEFAULT 32768')
@@ -82,7 +84,7 @@ class Store:
                     version=excluded.version,builtin=excluded.builtin,definition=excluded.definition,
                     updated=CURRENT_TIMESTAMP''',
                     (template.id,template.name,template.description,template.category,template.version,1,definition))
-            db.execute('PRAGMA user_version=8')
+            db.execute('PRAGMA user_version=9')
         os.chmod(self.path,0o600)
     @contextmanager
     def connect(self):

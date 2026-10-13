@@ -50,6 +50,10 @@ def validate_shape(result,schema_name='meeting_analysis'):
                 if not isinstance(item,dict) or not isinstance(item.get('content'),str) or not item['content'].strip():raise ValueError('纪要条目缺少 content')
                 if not isinstance(item.get('source_segment_ids'),list) or not item['source_segment_ids']:raise ValueError('纪要条目缺少原文引用')
         return result
+    if schema_name=='note_expansion':
+        if not isinstance(result,dict) or result.get('status') not in ('supported','insufficient') or not isinstance(result.get('text'),str) or not isinstance(result.get('reason'),str) or not isinstance(result.get('evidence'),list):
+            raise ValueError('简记扩写结构不完整')
+        return result
     sections=('summary','key_points','decisions','action_items','open_questions')
     if not isinstance(result,dict) or any(not isinstance(result.get(name),list) for name in sections):
         raise ValueError('缺少必需的分析栏目')

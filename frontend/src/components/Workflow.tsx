@@ -30,10 +30,7 @@ export default function Workflow({
   const transcript = !!meeting.revision;
   const analysis = currentAnalysis(meeting);
   const minutes = currentMinutes(meeting);
-  const busy = [
-    latestJob(meeting, "transcription"),
-    latestJob(meeting, "analysis"),
-  ].find(isRunning);
+  const busy = meeting.jobs.find(isRunning);
   const steps: [string, string][] = [
     ["录音已导入", "done"],
     ["文字稿", transcript ? "done" : "active"],

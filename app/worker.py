@@ -58,7 +58,7 @@ class Worker:
             self.busy_jid=job['id']
             try:
                 self.process(job)
-                stage='分析完成' if job.get('kind')=='analysis' else '转写完成'
+                stage={'analysis':'分析完成','note_expansion':'简记扩写完成'}.get(job.get('kind'),'转写完成')
                 self.store.execute("UPDATE jobs SET state='completed',stage=?,progress=1 WHERE id=? AND state='running'",(stage,job['id']))
             except Cancelled: pass
             except Exception as e:
@@ -71,10 +71,26 @@ class Worker:
                 while not self.asr_lock.acquire(timeout=.2):self.check(job['id'])
                 acquired=True;self.check(job['id'])
             if self.release_model:self.release_model()
+            if job.get('kind')=='note_expansion':return self.process_note_expansion(job)
             if job.get('kind')=='analysis':return self.process_analysis(job)
             return self.process_transcription(job)
         finally:
             if acquired:self.asr_lock.release()
+
+    def process_note_expansion(self,job):
+        from .note_expansion import generate_expansion,publish,Expansion
+        config=json.loads(job['config']);jid=job['id'];mid=job['meeting_id']
+        profile=self.store.one('SELECT * FROM llm_configs WHERE id=?',(config.get('profile_id'),)) if config.get('profile_id') else None
+        if config.get('profile_id') and not profile:raise RuntimeError('模型配置已删除')
+        if profile:
+            snapshot=config.get('provider',{})
+            profile.update({key:snapshot[key] for key in ('provider_type','base_url') if key in snapshot})
+        provider=OpenAICompatibleProvider(profile) if profile else LMStudioProvider()
+        work=self.store.directory(mid)/jid;work.mkdir(exist_ok=True)
+        segments=config['segments'];self.update(jid,'整理简记与原文依据',.1)
+        if not segments:result=Expansion(status='insufficient',text='',reason='简记附近没有可用文字稿，请完成转写或调整简记时间。',evidence=[])
+        else:result=generate_expansion(provider,config['model'],{key:config[key] for key in ('raw_text','note_type','captured_at')},segments,work/'expansion',lambda args,extra=None:self.run(jid,args,work/'worker.log',extra))
+        self.check(jid);self.update(jid,'核验引用',.95);publish(self.store,job,result,segments)
 
     def process_analysis(self,job):
         mid=job['meeting_id'];jid=job['id'];config=json.loads(job['config'])

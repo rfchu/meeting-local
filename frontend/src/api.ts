@@ -249,6 +249,16 @@ export const api = {
     noteId: string,
     note: Pick<MeetingNoteInput, "note_type" | "raw_text">,
   ) => request(`/meetings/${id}/notes/${noteId}`, json("PUT", note)),
+  expandNote: (id: string, noteId: string, profileId?: string) =>
+    request<{ id: string }>(
+      `/meetings/${id}/notes/${noteId}/expand`,
+      json("POST", { profile_id: profileId || null }),
+    ),
+  acceptNoteExpansion: (id: string, noteId: string, artifactId: string) =>
+    request(
+      `/meetings/${id}/notes/${noteId}/accept-expansion`,
+      json("POST", { artifact_id: artifactId }),
+    ),
   deleteNote: (id: string, noteId: string) =>
     request(`/meetings/${id}/notes/${noteId}`, { method: "DELETE" }),
   analyze: (id: string, body: { profile_id?: string; model?: string }) =>

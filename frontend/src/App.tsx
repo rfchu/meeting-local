@@ -225,6 +225,7 @@ export default function App() {
           }
           return {
             ...old,
+            notes: fresh.notes,
             jobs: fresh.jobs,
             artifacts: fresh.artifacts,
             revisions: fresh.revisions,

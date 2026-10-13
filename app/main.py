@@ -65,6 +65,9 @@ class MeetingNoteInput(BaseModel):
     raw_text: str=Field(min_length=1,max_length=5000)
 class MeetingNotesBatchInput(BaseModel):
     notes: list[MeetingNoteInput]=Field(max_length=1000)
+class NoteAcceptInput(BaseModel):
+    artifact_id: str=Field(min_length=1,max_length=100)
+
 class MeetingNoteUpdate(BaseModel):
     note_type: Literal['note','highlight','question','decision','action']
     raw_text: str=Field(min_length=1,max_length=5000)
@@ -154,7 +157,13 @@ def create_app(data_dir=None, start_worker=True):
             a['payload']=json.loads(a['payload']);a['provenance']=json.loads(a['provenance'] or '{}');a['stale']=a['revision'] != row['revision']
         row['artifacts']=artifacts
         notes=store.all('SELECT * FROM meeting_notes WHERE meeting_id=? ORDER BY captured_at,created,rowid',(row['id'],))
-        for note in notes:note['source_segment_ids']=json.loads(note['source_segment_ids'] or '[]')
+        for note in notes:
+            note['source_segment_ids']=json.loads(note['source_segment_ids'] or '[]')
+            note['expansion_stale']=bool(note['expansion_revision'] and note['expansion_revision']!=row['revision'])
+            suggestion=next((a for a in artifacts if a['kind']=='note_expansion' and a['payload'].get('note_id')==note['id']),None)
+            if suggestion:
+                suggestion['stale']=suggestion['stale'] or any(suggestion['payload'].get(key)!=note[key] for key in ('raw_text','note_type','captured_at'))
+            note['expansion']=suggestion
         row['notes']=notes
         row['audio_tracks']=[name for name in ('system','microphone') if (store.directory(row['id'])/(name+'.wav')).is_file()]
         return row
@@ -518,8 +527,60 @@ def create_app(data_dir=None, start_worker=True):
         if not store.one('SELECT id FROM meeting_notes WHERE id=? AND meeting_id=?',(nid,mid)):raise HTTPException(404,'简记不存在')
         text=body.raw_text.strip()
         if not text:raise HTTPException(422,'简记内容不能为空')
-        store.execute('UPDATE meeting_notes SET raw_text=?,note_type=?,updated=CURRENT_TIMESTAMP WHERE id=? AND meeting_id=?',
-            (text,body.note_type,nid,mid));return {'ok':True}
+        store.execute("UPDATE meeting_notes SET raw_text=?,note_type=?,expanded_text='',accepted_text='',source_segment_ids='[]',status='raw',expansion_revision=0,updated=CURRENT_TIMESTAMP WHERE id=? AND meeting_id=? AND (raw_text!=? OR note_type!=?)",
+            (text,body.note_type,nid,mid,text,body.note_type));return {'ok':True}
+    @app.post('/api/meetings/{mid}/notes/{nid}/expand',status_code=201)
+    def expand_note(mid:str,nid:str,body:AnalysisJobInput):
+        from .note_expansion import nearby_segments
+        row=meeting(mid)
+        note=store.one('SELECT * FROM meeting_notes WHERE id=? AND meeting_id=?',(nid,mid))
+        if not note:raise HTTPException(404,'简记不存在')
+        if not row['revision']:raise HTTPException(409,'请先完成文字稿，再关联依据扩写')
+        profile=None
+        if body.profile_id:profile=llm_config(body.profile_id)
+        elif store.one('SELECT id FROM llm_configs LIMIT 1'):
+            profile=store.one('SELECT * FROM llm_configs ORDER BY is_default DESC,created,rowid LIMIT 1')
+        try:
+            if profile:
+                provider=OpenAICompatibleProvider(profile);model=provider.resolve_model(body.model)
+                provider_snapshot={'id':profile['id'],'name':profile['name'],'provider_type':profile['provider_type'],'base_url':profile['base_url'],
+                    'context_window':profile['context_window'],'analysis_chunk_mode':profile['analysis_chunk_mode']}
+            else:
+                provider=LMStudioProvider();model=provider.resolve_model(body.model);provider_snapshot={'name':'LM Studio','provider_type':'local','base_url':getattr(provider,'base_url','http://127.0.0.1:1234/v1')}
+        except (RuntimeError,ValueError) as error:raise HTTPException(409,str(error))
+        jid=uid()
+        with store.connect() as db:
+            db.execute('BEGIN IMMEDIATE')
+            current=db.execute('SELECT * FROM meetings WHERE id=?',(mid,)).fetchone()
+            note=db.execute('SELECT * FROM meeting_notes WHERE id=? AND meeting_id=?',(nid,mid)).fetchone()
+            if not note:raise HTTPException(404,'简记不存在')
+            if db.execute("SELECT 1 FROM jobs WHERE meeting_id=? AND state IN ('running','queued')",(mid,)).fetchone():raise HTTPException(409,'已有任务正在处理')
+            budget=min(8000,int(((int(profile['context_window']) if profile else 32768)-2048-1200)*.6)-len(note['raw_text']))
+            if budget<256:raise HTTPException(409,'当前模型上下文不足以容纳简记和依据，请缩短简记或选择更大上下文模型')
+            config={'note_id':nid,'revision':current['revision'],'profile_id':profile['id'] if profile else None,'provider':provider_snapshot,'model':model,
+                **{key:note[key] for key in ('raw_text','note_type','captured_at')},'segments':nearby_segments(json.loads(current['segments']),note['captured_at'],budget)}
+            db.execute('INSERT INTO jobs(id,meeting_id,state,stage,config,kind) VALUES(?,?,?,?,?,?)',(jid,mid,'queued','等待简记扩写',encode(config),'note_expansion'))
+        return {'id':jid,'model':model,'revision':current['revision']}
+
+    @app.post('/api/meetings/{mid}/notes/{nid}/accept-expansion')
+    def accept_expansion(mid:str,nid:str,body:NoteAcceptInput):
+        from .note_expansion import Expansion,validate_expansion
+        with store.connect() as db:
+            db.execute('BEGIN IMMEDIATE')
+            row=db.execute('SELECT * FROM meetings WHERE id=?',(mid,)).fetchone()
+            note=db.execute('SELECT * FROM meeting_notes WHERE id=? AND meeting_id=?',(nid,mid)).fetchone()
+            artifact=db.execute("SELECT * FROM artifacts WHERE id=? AND meeting_id=? AND kind='note_expansion'",(body.artifact_id,mid)).fetchone()
+            if not row or not note or not artifact:raise HTTPException(404,'简记或扩写建议不存在')
+            payload=json.loads(artifact['payload'])
+            if payload.get('note_id')!=nid:raise HTTPException(400,'扩写建议不属于这条简记')
+            if artifact['revision']!=row['revision'] or any(payload.get(key)!=note[key] for key in ('raw_text','note_type','captured_at')):raise HTTPException(409,'文字稿或简记已变化，请重新扩写')
+            if payload['status']!='supported':raise HTTPException(409,'依据不足，无法接受扩写')
+            try:result=validate_expansion(Expansion.model_validate(payload),json.loads(row['segments']))
+            except ValueError as error:raise HTTPException(409,str(error))
+            db.execute("UPDATE meeting_notes SET expanded_text=?,accepted_text=?,source_segment_ids=?,status='accepted',expansion_revision=?,updated=CURRENT_TIMESTAMP WHERE id=?",
+                (result.text,result.text,encode(list(dict.fromkeys(e.segment_id for e in result.evidence))),row['revision'],nid))
+        return {'ok':True}
+
     @app.delete('/api/meetings/{mid}/notes/{nid}')
     def delete_note(mid:str,nid:str):
         meeting(mid)
