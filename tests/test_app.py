@@ -297,3 +297,54 @@ def test_overlap_preserves_new_suffix_and_uncertain_text():
     assert result[1]['text']=='交付计划'
     uncertain=merge_overlapping_chunks([first,[{'start':4,'end':6,'text':'另外一个声音'}]])
     assert uncertain[1]['boundary_review']
+
+def test_native_draft_uses_shared_transcriber_and_absolute_timeline(client,monkeypatch):
+    monkeypatch.setattr('app.main.WhisperCpp.ready',lambda _:True)
+    monkeypatch.setattr('app.main.WhisperCpp.transcribe',lambda *args:[{'start':.25,'end':1,'text':'原生草稿'}])
+    monkeypatch.setattr('app.main.NativeCapture.draft_window',lambda *args:{
+        'ready':True,'payload':wav_bytes(15),'silent':False,'offset':45,'next_offset':60,'skipped_seconds':45})
+    response=client.post('/api/native-capture/test/draft',json={'offset':0})
+    assert response.status_code==200,response.text
+    result=response.json()
+    assert result['segments']==[{'start':45.25,'end':46,'text':'原生草稿'}]
+    assert result['next_offset']==60 and result['skipped_seconds']==45
+    assert 'payload' not in result and client.get('/api/meetings').json()==[]
+
+def test_native_draft_waiting_and_silence_do_not_invoke_model(client,monkeypatch):
+    def unexpected(*args):raise AssertionError('不应调用模型')
+    monkeypatch.setattr('app.main.WhisperCpp.transcribe',unexpected)
+    monkeypatch.setattr('app.main.NativeCapture.draft_window',lambda *args:{'ready':False,'next_offset':0,'skipped_seconds':0})
+    assert client.post('/api/native-capture/test/draft',json={}).json()['ready'] is False
+    monkeypatch.setattr('app.main.NativeCapture.draft_window',lambda *args:{
+        'ready':True,'payload':wav_bytes(15),'silent':True,'offset':0,'next_offset':15,'skipped_seconds':0})
+    result=client.post('/api/native-capture/test/draft',json={}).json()
+    assert result['segments']==[] and result['next_offset']==15
+    assert 'payload' not in result
+
+def test_native_draft_rejects_unknown_foreign_and_invalid_offsets(client):
+    rid=client.post('/api/recordings',json={'mime_type':'audio/webm'}).json()['id']
+    assert client.post(f'/api/native-capture/{rid}/draft',json={}).status_code==409
+    unknown=uid()
+    assert client.post(f'/api/native-capture/{unknown}/draft',json={}).status_code==404
+    assert client.post(f'/api/native-capture/{rid}/draft',json={'offset':-1}).status_code==422
+
+def test_native_draft_does_not_block_capture_stop(client,monkeypatch):
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+    entered=threading.Event();release=threading.Event()
+    monkeypatch.setattr('app.main.WhisperCpp.ready',lambda _:True)
+    monkeypatch.setattr('app.main.NativeCapture.draft_window',lambda *args:{
+        'ready':True,'payload':wav_bytes(15),'silent':False,'offset':0,'next_offset':15,'skipped_seconds':0})
+    def transcribe(*args):
+        entered.set();assert release.wait(5);return []
+    monkeypatch.setattr('app.main.WhisperCpp.transcribe',transcribe)
+    monkeypatch.setattr('app.main.NativeCapture.command',lambda *args:{'state':'stopped','duration':15,'error':''})
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        task=pool.submit(client.post,'/api/native-capture/test/draft',json={})
+        try:
+            assert entered.wait(2)
+            stop=pool.submit(client.post,'/api/native-capture/test/command',json={'command':'stop'})
+            assert stop.result(timeout=2).json()['state']=='stopped'
+            assert client.post('/api/native-capture/test/draft',json={}).status_code==409
+        finally:release.set()
+        assert task.result(timeout=3).status_code==200

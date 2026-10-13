@@ -1,5 +1,6 @@
 """Control a local ScreenCaptureKit helper; preserve independent PCM tracks."""
-import json, os, platform, subprocess, threading, time, wave
+import io, json, math, os, platform, subprocess, threading, time, wave
+from array import array
 from pathlib import Path
 from .recordings import RecordingStore
 
@@ -91,6 +92,38 @@ class NativeCapture:
             else:signal='waiting'
             tracks.append({'name':name,'state':signal,'saved_seconds':round(frames/16000,1)})
         return {'stalled':stalled,'tracks':tracks}
+
+    def draft_window(self,rid,offset):
+        """Read a bounded snapshot from original PCM; never advance shared cursors."""
+        if not math.isfinite(offset) or offset<0 or offset>86400:raise ValueError('草稿时间无效')
+        with self.lock:
+            session=self.recordings.read(rid)
+            if session.get('source')!='macos':raise ValueError('不是原生录音会话')
+            if session['state']=='completed':raise ValueError('录音已完成，请查看正式文字稿')
+            status=self.status(rid)
+            if status['state'] not in ('recording','paused'):raise ValueError('采集尚未就绪或已经停止')
+            # Reported frame positions are the audio timeline, not a wall clock estimate.
+            horizon=min(status.get('duration',0),max(status.get('system_frames',0),status.get('microphone_frames',0))/16000)
+            begin=round(offset*16000);end=int(horizon*16000);skipped=0
+            if end-begin>30*16000:
+                latest=max(begin,end-15*16000);skipped=(latest-begin)/16000;begin=latest
+            count=min(15*16000,max(0,end-begin))
+            minimum=8000 if status['state']=='paused' else 15*16000
+            if count<minimum:return {'ready':False,'next_offset':offset,'skipped_seconds':0}
+            folder=self.recordings.folder(rid);tracks=[]
+            for name in ('system','microphone') if session.get('include_microphone') else ('system',):
+                path=folder/(name+'.pcm')
+                samples=array('h')
+                if path.exists():
+                    with path.open('rb') as stream:
+                        stream.seek(begin*2);raw=stream.read(count*2);samples.frombytes(raw[:len(raw)//2*2])
+                samples.extend([0]*(count-len(samples)));tracks.append(samples)
+            mixed=tracks[0] if len(tracks)==1 else array('h',(max(-32768,min(32767,a+b)) for a,b in zip(*tracks)))
+            output=io.BytesIO()
+            with wave.open(output,'wb') as wav:
+                wav.setnchannels(1);wav.setsampwidth(2);wav.setframerate(16000);wav.writeframes(mixed.tobytes())
+            return {'ready':True,'offset':begin/16000,'next_offset':(begin+count)/16000,
+                    'skipped_seconds':skipped,'silent':not any(mixed),'payload':output.getvalue()}
 
     def command(self,rid,command):
         with self.lock:

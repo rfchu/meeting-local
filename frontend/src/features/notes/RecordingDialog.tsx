@@ -85,6 +85,8 @@ export default function RecordingDialog({
     pcmFramesRef = useRef<Float32Array[]>([]),
     pcmSamplesRef = useRef(0),
     draftOffsetRef = useRef(0),
+    nativeDraftOffsetRef = useRef(0),
+    nativeDraftBusyRef = useRef(false),
     draftQueueRef = useRef<Promise<void>>(Promise.resolve()),
     draftPendingRef = useRef(0),
     draftEnabledRef = useRef(true);
@@ -168,6 +170,51 @@ export default function RecordingDialog({
       window.clearInterval(timer);
     };
   }, [state, captureSource, nativeSessionId]);
+  useEffect(() => {
+    if (
+      !nativeSessionId ||
+      captureSource === "browser" ||
+      !["recording", "paused"].includes(state)
+    )
+      return;
+    let active = true;
+    const pollDraft = async () => {
+      if (nativeDraftBusyRef.current) return;
+      nativeDraftBusyRef.current = true;
+      try {
+        const result = await api.nativeDraft(
+          nativeSessionId,
+          nativeDraftOffsetRef.current,
+        );
+        if (!active || !draftEnabledRef.current) return;
+        if (result.ready) {
+          nativeDraftOffsetRef.current = result.next_offset;
+          if (result.segments.length)
+            setDrafts((old) => [...old, ...result.segments]);
+          setDraftStatus(
+            result.skipped_seconds > 0
+              ? `识别积压，跳过 ${Math.round(result.skipped_seconds)} 秒草稿以跟随最近语音；完整录音保留`
+              : result.segments.length
+                ? `已更新 · ${(result.processing_ms / 1000).toFixed(1)}s`
+                : "这一段没有识别到语音",
+          );
+        }
+      } catch (error) {
+        if (active)
+          setDraftStatus(
+            `暂时不可用 · ${(error as Error).message}；正式转写不受影响`,
+          );
+      } finally {
+        nativeDraftBusyRef.current = false;
+      }
+    };
+    void pollDraft();
+    const timer = window.setInterval(() => void pollDraft(), 2000);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [nativeSessionId, captureSource, state]);
   useEffect(() => {
     const guard = (event: BeforeUnloadEvent) => {
       if (
@@ -402,7 +449,9 @@ export default function RecordingDialog({
         await bufferRecording(session);
         accruedRef.current = 0;
         activeSinceRef.current = performance.now();
-        setDraftStatus("原生模式停止后生成正式文字稿");
+        draftEnabledRef.current = true;
+        nativeDraftOffsetRef.current = 0;
+        setDraftStatus("Whisper 每约 15 秒识别原生音轨，仅作会议跟随参考");
         setState("requesting");
       } catch (error) {
         if (sessionRef.current?.source === "macos")
@@ -548,6 +597,7 @@ export default function RecordingDialog({
   const stop = async () => {
     if (sessionRef.current?.source === "macos") {
       accruedRef.current = currentSeconds();
+      draftEnabledRef.current = false;
       stateRef.current = "saving";
       setState("saving");
       if (noteDraftRef.current.text.trim()) {
@@ -653,7 +703,8 @@ export default function RecordingDialog({
       {captureSource !== "browser" && (
         <p className="native-capture-hint">
           首次使用需允许
-          macOS“屏幕与系统音频录制”权限，联合采集还需麦克风权限。仅保存音频，不保存屏幕画面。建议戴耳机，避免麦克风重复收录扬声器声音。原生模式停止后生成文字稿。
+          macOS“屏幕与系统音频录制”权限，联合采集还需麦克风权限。仅保存音频，不保存屏幕画面。建议戴耳机，避免麦克风重复收录扬声器声音。Whisper
+          生成实时草稿，停止后生成正式文字稿。
         </p>
       )}
       {state === "idle" && (

@@ -51,6 +51,14 @@ export const api = {
     request<RecordingSession>("/native-capture", json("POST", { microphone })),
   nativeStatus: (id: string) =>
     request<NativeCaptureStatus>(`/native-capture/${id}`),
+  nativeDraft: (id: string, offset: number) =>
+    request<{
+      ready: boolean;
+      next_offset: number;
+      skipped_seconds: number;
+      segments: LiveDraftSegment[];
+      processing_ms: number;
+    }>(`/native-capture/${id}/draft`, json("POST", { offset })),
   nativeCommand: (id: string, command: "pause" | "resume" | "stop") =>
     request<NativeCaptureStatus>(
       `/native-capture/${id}/command`,

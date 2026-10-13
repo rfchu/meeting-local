@@ -92,3 +92,55 @@ def test_pause_resume_and_service_shutdown_preserve_raw_tracks(capture):
     capture.close()
     assert process.commands==['pause','resume','stop']
     assert (folder/'system.pcm').read_bytes()==audio
+
+def running_window(capture,duration=15,microphone=True,state='recording'):
+    value,folder=session(capture,duration=duration,system_frames=round(duration*16000),
+                         microphone_frames=round(duration*16000) if microphone else 0,state=state)
+    value['include_microphone']=microphone;RecordingStore.write(folder/'session.json',value)
+    process=Process(folder);capture.processes[value['id']]=process
+    capture.last_seen[value['id']]=time.monotonic()
+    return value['id'],folder
+
+def test_draft_snapshot_mixes_aligned_tracks_without_mutating_originals(capture):
+    import struct,wave,io
+    rid,folder=running_window(capture)
+    system=struct.pack('<h',20000)*240000
+    microphone=b'\0\0'*80000+struct.pack('<h',20000)*160000
+    (folder/'system.pcm').write_bytes(system);(folder/'microphone.pcm').write_bytes(microphone)
+    result=capture.draft_window(rid,0)
+    assert result['ready'] and result['offset']==0 and result['next_offset']==15 and not result['silent']
+    with wave.open(io.BytesIO(result['payload']),'rb') as source:
+        assert source.getframerate()==16000 and source.getnframes()==240000
+        output=source.readframes(240000)
+    assert output[:160000]==system[:160000]
+    assert output[160000:]==struct.pack('<h',32767)*160000
+    assert (folder/'system.pcm').read_bytes()==system
+    assert (folder/'microphone.pcm').read_bytes()==microphone
+    retry=capture.draft_window(rid,0)
+    assert retry['payload']==result['payload'] and retry['next_offset']==15
+
+def test_draft_backlog_skips_only_draft_not_recording(capture):
+    rid,folder=running_window(capture,60,microphone=False)
+    (folder/'system.pcm').write_bytes(b'\x01\0'*960000)
+    result=capture.draft_window(rid,0)
+    assert result['skipped_seconds']==45 and result['offset']==45 and result['next_offset']==60
+    assert (folder/'system.pcm').stat().st_size==1920000
+
+def test_draft_waits_for_complete_window_and_flushes_paused_tail(capture):
+    rid,folder=running_window(capture,2,microphone=False)
+    (folder/'system.pcm').write_bytes(b'\0\0'*32000)
+    assert capture.draft_window(rid,0)=={'ready':False,'next_offset':0,'skipped_seconds':0}
+    RecordingStore.write(folder/'capture.json',{'state':'paused','duration':2,'system_frames':32000,'error':''})
+    result=capture.draft_window(rid,.5)
+    assert result['ready'] and result['silent'] and result['next_offset']==2
+    assert not capture.draft_window(rid,2)['ready']
+
+def test_draft_horizon_uses_reported_frames_not_elapsed_clock(capture):
+    rid,folder=running_window(capture,30,microphone=False)
+    (folder/'system.pcm').write_bytes(b'\1\0'*16000)
+    RecordingStore.write(folder/'capture.json',{'state':'recording','duration':30,'system_frames':16000,'error':''})
+    assert not capture.draft_window(rid,0)['ready']
+    for offset in (-1,float('inf'),float('nan')):
+        with pytest.raises(ValueError):capture.draft_window(rid,offset)
+    RecordingStore.write(folder/'capture.json',{'state':'stopped','duration':30,'error':''})
+    with pytest.raises(ValueError,match='已经停止'):capture.draft_window(rid,0)

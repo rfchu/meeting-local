@@ -1,4 +1,4 @@
-import hashlib, json, os, shutil, subprocess, tempfile, threading, time, wave
+import io, hashlib, json, os, shutil, subprocess, tempfile, threading, time, wave
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Literal
@@ -71,6 +71,8 @@ class RecordingMetadata(MeetingNotesBatchInput):
     chunk_count: int=Field(default=0,ge=0,le=100000)
 class RecordingFinish(BaseModel):
     chunk_count: int=Field(ge=1,le=100000)
+class NativeDraftInput(BaseModel):
+    offset: float=Field(default=0,ge=0,le=86400,allow_inf_nan=False)
 class NativeRecordingInput(BaseModel):
     microphone: bool=True
 class NativeCommandInput(BaseModel):
@@ -301,6 +303,19 @@ def create_app(data_dir=None, start_worker=True):
         try:return native_capture.status(rid)
         except FileNotFoundError as error:raise HTTPException(404,str(error))
         except ValueError as error:raise HTTPException(409,str(error))
+    @app.post('/api/native-capture/{rid}/draft')
+    async def native_draft(rid:str,body:NativeDraftInput):
+        try:window=await run_in_threadpool(native_capture.draft_window,rid,body.offset)
+        except FileNotFoundError as error:raise HTTPException(404,str(error))
+        except ValueError as error:raise HTTPException(409,str(error))
+        if not window['ready']:
+            return window|{'segments':[],'duration':0,'processing_ms':0}
+        payload=window.pop('payload')
+        if window.pop('silent'):
+            return window|{'segments':[],'duration':window['next_offset']-window['offset'],'processing_ms':0}
+        result=await live_transcribe(UploadFile(file=io.BytesIO(payload),filename='native-draft.wav'),window['offset'])
+        return window|result
+
     @app.post('/api/native-capture/{rid}/command')
     def native_command(rid:str,body:NativeCommandInput):
         try:return native_capture.command(rid,body.command)
