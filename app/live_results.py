@@ -41,6 +41,8 @@ class LiveResults:
         return aid,None
     def complete(self,aid,segments):
         self.store.execute("UPDATE live_asr_ranges SET state='completed',segments=?,error='',updated=CURRENT_TIMESTAMP WHERE id=?",(encode(segments),aid))
+    def preview(self,aid):
+        self.store.execute("UPDATE live_asr_ranges SET state='preview',error='',updated=CURRENT_TIMESTAMP WHERE id=?",(aid,))
     def fail(self,aid,error):
         self.store.execute("UPDATE live_asr_ranges SET state='failed',error=?,updated=CURRENT_TIMESTAMP WHERE id=? AND state='running'",(str(error)[:1000],aid))
     def snapshot(self,rid,engine):

@@ -51,6 +51,22 @@ export const api = {
   environment: () => request<Environment>("/status"),
   meetings: () => request<MeetingSummary[]>("/meetings"),
   recordings: () => request<RecordingSession[]>("/recordings"),
+  liveModelStatus: () =>
+    request<{
+      loaded: boolean;
+      loading: boolean;
+      busy: boolean;
+      model: string;
+      load_count: number;
+      requests: number;
+      idle_seconds: number;
+      idle_timeout_seconds: number;
+      peak_memory_gb: number;
+      load_ms: number;
+      formal_job_running: boolean;
+    }>("/live-model"),
+  liveModelControl: (action: "warm" | "release") =>
+    request("/live-model/" + action, { method: "POST" }),
   nativeCapability: () => request<NativeCapability>("/native-capture"),
   nativeStart: (microphone: boolean) =>
     request<RecordingSession>("/native-capture", json("POST", { microphone })),
@@ -67,12 +83,14 @@ export const api = {
       skipped_seconds: number;
       segments: LiveDraftSegment[];
       processing_ms: number;
-    }>(`/native-capture/${id}/draft`, json("POST", { offset })),
+    }>(`/native-capture/${id}/draft`, json("POST", { offset, engine })),
   nativeDraftStream: (
     id: string,
     offset: number,
     onPartial: (partial: LivePartial) => void,
     signal: AbortSignal,
+    responsive = false,
+    windowSeconds: 5 | 10 | 15 = 15,
   ) =>
     readLiveStream<
       LiveStreamResult & {
@@ -82,7 +100,15 @@ export const api = {
       }
     >(
       `/native-capture/${id}/draft/stream`,
-      { ...json("POST", { offset, engine: "qwen" }), signal },
+      {
+        ...json("POST", {
+          offset,
+          engine: "qwen",
+          responsive,
+          window_seconds: windowSeconds,
+        }),
+        signal,
+      },
       onPartial,
     ),
   nativeCommand: (id: string, command: "pause" | "resume" | "stop") =>
@@ -145,10 +171,12 @@ export const api = {
     recordingId: string | undefined,
     onPartial: (partial: LivePartial) => void,
     signal: AbortSignal,
+    confirmed = true,
   ) => {
     const data = new FormData();
     data.append("file", file);
     data.append("offset", String(offset));
+    data.append("confirmed", String(confirmed));
     if (recordingId) data.append("recording_id", recordingId);
     return readLiveStream<LiveStreamResult>(
       "/live-transcribe/stream",

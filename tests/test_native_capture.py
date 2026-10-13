@@ -144,3 +144,32 @@ def test_draft_horizon_uses_reported_frames_not_elapsed_clock(capture):
         with pytest.raises(ValueError):capture.draft_window(rid,offset)
     RecordingStore.write(folder/'capture.json',{'state':'stopped','duration':30,'error':''})
     with pytest.raises(ValueError,match='已经停止'):capture.draft_window(rid,0)
+
+def test_native_responsive_previews_extend_same_unconfirmed_range(capture):
+    rid,folder=running_window(capture,10,microphone=False)
+    (folder/'system.pcm').write_bytes(b'\1\0'*160000)
+    first=capture.draft_window(rid,0,5,True)
+    second=capture.draft_window(rid,0,10,True)
+    assert first['offset']==second['offset']==0
+    assert first['next_offset']==5 and second['next_offset']==10
+    assert not first['confirmed'] and not second['confirmed']
+    RecordingStore.write(folder/'capture.json',{'state':'recording','duration':10,'system_frames':160000,'silence_seconds':{'system':1},'error':''})
+    final=capture.draft_window(rid,0,15,True)
+    assert final['confirmed'] and final['next_offset']==10
+    RecordingStore.write(folder/'capture.json',{'state':'paused','duration':10,'system_frames':160000,'error':''})
+    assert capture.draft_window(rid,0,15,True)['confirmed']
+
+def test_native_short_utterance_uses_real_clock_silence_and_keeps_recording_tail(capture):
+    import io,wave
+    rid,folder=running_window(capture,5,microphone=False)
+    prefix=b'\1\0'*16000;(folder/'system.pcm').write_bytes(prefix)
+    RecordingStore.write(folder/'capture.json',{'state':'recording','duration':5,'system_frames':16000,'silence_seconds':{'system':4},'error':''})
+    result=capture.draft_window(rid,0,5,True)
+    assert result['confirmed'] and result['next_offset']==5
+    with wave.open(io.BytesIO(result['payload']),'rb') as wav:
+        assert wav.getnframes()==80000 and wav.readframes(80000)==prefix+b'\0\0'*64000
+    capture.processes.pop(rid)
+    RecordingStore.write(folder/'capture.json',{'state':'stopped','duration':5,'system_frames':16000,'error':''})
+    capture.finish(rid)
+    with wave.open(str(capture.store.directory(rid)/'system.wav'),'rb') as wav:
+        assert wav.getnframes()==80000 and wav.readframes(80000)==prefix+b'\0\0'*64000

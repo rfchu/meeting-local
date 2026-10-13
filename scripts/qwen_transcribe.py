@@ -44,20 +44,21 @@ def transcribe_adaptive(model,samples,rate,max_tokens=MAX_TOKENS,depth=0):
     return '\n'.join(x for x in (left,right) if x),[attempt,*left_attempts,*right_attempts]
 
 
-def transcribe_streamed(model,samples,rate,max_tokens=MAX_TOKENS):
+def transcribe_streamed(model,samples,rate,max_tokens=MAX_TOKENS,emit=None):
     """Emit genuine cumulative token decodes; hold incomplete Unicode bytes."""
     from mlx_audio.lm.sample_utils import make_sampler
+    emit=emit or (lambda event:print(json.dumps(event,ensure_ascii=False),flush=True))
     tokens=[];last=''
     for token,_ in model.stream_generate(samples,language='Chinese',max_tokens=max_tokens,
                                          sampler=make_sampler(0.0),verbose=False):
         tokens.append(int(token))
         text=model._tokenizer.decode(tokens,skip_special_tokens=True).strip()
         if '\ufffd' not in text and text!=last:
-            print(json.dumps({'type':'qwen_partial','text':text},ensure_ascii=False),flush=True);last=text
+            emit({'type':'qwen_partial','text':text});last=text
     if len(tokens)>=max_tokens:raise RuntimeError('流式草稿达到输出上限，部分文字未保存为完整结果')
     text=model._tokenizer.decode(tokens,skip_special_tokens=True).strip()
     if '\ufffd' in text:raise RuntimeError('流式结果包含未完成的字符，不能作为完整结果保存')
-    if text!=last:print(json.dumps({'type':'qwen_partial','text':text},ensure_ascii=False),flush=True)
+    if text!=last:emit({'type':'qwen_partial','text':text})
     return text,[{'duration':len(samples)/rate,'generation_tokens':len(tokens),'capped':False,'streamed':True}]
 
 

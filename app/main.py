@@ -1,4 +1,4 @@
-import io, hashlib, json, os, shutil, subprocess, tempfile, threading, time, wave
+import asyncio, io, hashlib, json, os, shutil, subprocess, tempfile, threading, time, wave
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Literal
@@ -19,6 +19,7 @@ from .recordings import RecordingStore
 from .native_capture import NativeCapture
 from .live_results import LiveResults
 from .live_stream import inspect_audio, qwen_events
+from .qwen_resident import QwenResident
 
 BASE=Path(__file__).resolve().parents[1]
 
@@ -77,6 +78,8 @@ class RecordingFinish(BaseModel):
 class NativeDraftInput(BaseModel):
     engine: Literal["whisper","qwen"]="whisper"
     offset: float=Field(default=0,ge=0,le=86400,allow_inf_nan=False)
+    responsive: bool=False
+    window_seconds: Literal[5,10,15]=15
 class NativeRecordingInput(BaseModel):
     microphone: bool=True
 class NativeCommandInput(BaseModel):
@@ -100,18 +103,24 @@ def create_app(data_dir=None, start_worker=True):
     worker=Worker(store)
     @asynccontextmanager
     async def lifespan(app):
+        loop=asyncio.get_running_loop()
+        worker.asr_lock=live_asr_lock
+        worker.release_model=lambda:asyncio.run_coroutine_threadsafe(resident.close(),loop).result(timeout=10)
         if start_worker: worker.start()
+        resident.start_monitor()
         store.execute("UPDATE live_asr_ranges SET state='failed',error='服务重启，识别未完成；快速完成会补识别该范围' WHERE state='running'")
         native_capture.start_monitor()
         yield
-        native_capture.close()
-        worker.close()
+        await run_in_threadpool(native_capture.close)
+        await run_in_threadpool(worker.close)
+        await resident.shutdown()
     app=FastAPI(title='听记 · Local Meeting',lifespan=lifespan)
     app.state.store=store; app.state.worker=worker
     recordings=RecordingStore(store)
     native_capture=NativeCapture(store,recordings)
     live_results=LiveResults(store,recordings)
     live_asr_lock=threading.Lock()
+    resident=QwenResident(store.root)
 
     @app.middleware('http')
     async def local_only(request:Request,call_next):
@@ -228,7 +237,7 @@ def create_app(data_dir=None, start_worker=True):
 
     @app.post('/api/live-transcribe/stream')
     async def live_transcribe_stream(file:UploadFile=File(...),offset:float=Form(default=0,ge=0,le=86400,allow_inf_nan=False),
-                                    recording_id:str|None=Form(default=None)):
+                                    recording_id:str|None=Form(default=None),confirmed:bool=Form(default=True)):
         try:
             payload=await file.read(4*1024*1024+1)
             inspect_audio(payload)
@@ -236,7 +245,7 @@ def create_app(data_dir=None, start_worker=True):
         except FileNotFoundError as error:raise HTTPException(404,str(error))
         except ValueError as error:raise HTTPException(400,str(error))
         finally:await file.close()
-        return stream_response(qwen_events(get_asr_provider('qwen'),live_results,live_asr_lock,payload,offset,recording_id,'browser',store.root))
+        return stream_response(qwen_events(get_asr_provider('qwen'),live_results,live_asr_lock,payload,offset,recording_id,'browser',store.root,resident=resident,confirmed=confirmed))
 
     def llm_config(cid):
         row=store.one('SELECT * FROM llm_configs WHERE id=?',(cid,))
@@ -328,6 +337,19 @@ def create_app(data_dir=None, start_worker=True):
         return rows
     @app.get('/api/recordings')
     def list_recordings():return recordings.list()
+    @app.get('/api/live-model')
+    def live_model_status():return resident.status()|{'formal_job_running':bool(worker.busy_jid)}
+
+    @app.post('/api/live-model/{action}')
+    async def live_model_control(action:Literal['warm','release']):
+        if worker.busy_jid or not live_asr_lock.acquire(blocking=False):raise HTTPException(409,'正式处理或实时识别正在使用资源，请稍后重试')
+        try:
+            if action=='warm':await resident.warm(get_asr_provider('qwen'))
+            else:await resident.close()
+            return resident.status()
+        except (RuntimeError,TimeoutError) as error:raise HTTPException(409,str(error) or '模型加载超时')
+        finally:live_asr_lock.release()
+
     @app.get('/api/native-capture')
     def native_capability():return native_capture.capability()
     @app.post('/api/native-capture',status_code=201)
@@ -354,7 +376,7 @@ def create_app(data_dir=None, start_worker=True):
     @app.post('/api/native-capture/{rid}/draft/stream')
     async def native_draft_stream(rid:str,body:NativeDraftInput):
         if body.engine!='qwen':raise HTTPException(400,'逐字推送仅支持 Qwen，请使用 Whisper 整批接口')
-        try:window=await run_in_threadpool(native_capture.draft_window,rid,body.offset)
+        try:window=await run_in_threadpool(native_capture.draft_window,rid,body.offset,body.window_seconds,body.responsive)
         except FileNotFoundError as error:raise HTTPException(404,str(error))
         except ValueError as error:raise HTTPException(409,str(error))
         if not window['ready']:
@@ -363,7 +385,7 @@ def create_app(data_dir=None, start_worker=True):
                     'result':window|{'segments':[],'duration':0,'processing_ms':0}})+'\n'
             return stream_response(waiting())
         payload=window.pop('payload');window.pop('silent')
-        return stream_response(qwen_events(get_asr_provider('qwen'),live_results,live_asr_lock,payload,window['offset'],rid,'native',store.root,window))
+        return stream_response(qwen_events(get_asr_provider('qwen'),live_results,live_asr_lock,payload,window['offset'],rid,'native',store.root,window,resident=resident,confirmed=window.get('confirmed',True)))
 
     @app.post('/api/native-capture/{rid}/command')
     def native_command(rid:str,body:NativeCommandInput):

@@ -1,5 +1,7 @@
 import type { LiveDraftSegment } from "../../types";
 export interface LiveStreamResult {
+  confirmed?: boolean;
+  first_text_ms?: number | null;
   segments: LiveDraftSegment[];
   duration: number;
   processing_ms: number;

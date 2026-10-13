@@ -93,7 +93,7 @@ class NativeCapture:
             tracks.append({'name':name,'state':signal,'saved_seconds':round(frames/16000,1)})
         return {'stalled':stalled,'tracks':tracks}
 
-    def draft_window(self,rid,offset):
+    def draft_window(self,rid,offset,window_seconds=15,responsive=False):
         """Read a bounded snapshot from original PCM; never advance shared cursors."""
         if not math.isfinite(offset) or offset<0 or offset>86400:raise ValueError('草稿时间无效')
         with self.lock:
@@ -103,12 +103,19 @@ class NativeCapture:
             status=self.status(rid)
             if status['state'] not in ('recording','paused'):raise ValueError('采集尚未就绪或已经停止')
             # Reported frame positions are the audio timeline, not a wall clock estimate.
-            horizon=min(status.get('duration',0),max(status.get('system_frames',0),status.get('microphone_frames',0))/16000)
+            available_frames=max(status.get('system_frames',0),status.get('microphone_frames',0))
+            horizon=min(status.get('duration',0),available_frames/16000)
             begin=round(offset*16000);end=int(horizon*16000);skipped=0
             if end-begin>30*16000:
                 latest=max(begin,end-15*16000);skipped=(latest-begin)/16000;begin=latest
-            count=min(15*16000,max(0,end-begin))
-            minimum=8000 if status['state']=='paused' else 15*16000
+            names=('system','microphone') if session.get('include_microphone') else ('system',)
+            quiet=responsive and all(status.get('silence_seconds',{}).get(name,0)>=.8 for name in names)
+            if quiet and available_frames>0:
+                horizon=status.get('duration',horizon);end=round(horizon*16000)
+            confirmed=not responsive or status['state']=='paused' or quiet or end-begin>=15*16000
+            maximum=15 if confirmed else window_seconds
+            count=min(maximum*16000,max(0,end-begin))
+            minimum=8000 if status['state']=='paused' else (3 if quiet else maximum)*16000
             if count<minimum:return {'ready':False,'next_offset':offset,'skipped_seconds':0}
             folder=self.recordings.folder(rid);tracks=[]
             for name in ('system','microphone') if session.get('include_microphone') else ('system',):
@@ -123,7 +130,7 @@ class NativeCapture:
             with wave.open(output,'wb') as wav:
                 wav.setnchannels(1);wav.setsampwidth(2);wav.setframerate(16000);wav.writeframes(mixed.tobytes())
             return {'ready':True,'offset':begin/16000,'next_offset':(begin+count)/16000,
-                    'skipped_seconds':skipped,'silent':not any(mixed),'payload':output.getvalue()}
+                    'skipped_seconds':skipped,'silent':not any(mixed),'payload':output.getvalue(),'confirmed':confirmed}
 
     def command(self,rid,command):
         with self.lock:
@@ -164,6 +171,13 @@ class NativeCapture:
             sources=[folder/f'{name}.pcm' for name in ('system','microphone')]
             sources=[path for path in sources if path.is_file() and path.stat().st_size>0]
             if not sources:raise ValueError(status.get('error') or '尚未采集到音频，请授权并开始播放会议声音')
+            # ScreenCaptureKit may stop audio callbacks during silence; retain the clock tail.
+            timeline=max(0,float(status.get('duration',0)))
+            if not math.isfinite(timeline) or timeline>62500:raise ValueError('录音时间线无效，原始音轨已保留')
+            minimum_bytes=round(timeline*16000)*2
+            for source in sources:
+                if source.stat().st_size<minimum_bytes:
+                    with source.open('r+b') as stream:stream.truncate(minimum_bytes);stream.flush();os.fsync(stream.fileno())
             target=self.store.directory(rid);target.mkdir(exist_ok=True)
             args=['ffmpeg','-v','error','-y']
             for source in sources:args+=['-f','s16le','-ar','16000','-ac','1','-i',str(source)]

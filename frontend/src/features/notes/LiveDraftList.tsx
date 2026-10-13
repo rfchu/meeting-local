@@ -6,9 +6,11 @@ export default function LiveDraftList({
   drafts,
   onAddNote,
   partial,
+  emptyText,
 }: {
   drafts: LiveDraftSegment[];
   partial?: LiveDraftSegment | null;
+  emptyText?: string;
   onAddNote: (draft: LiveDraftSegment) => void;
 }) {
   const list = useRef<HTMLDivElement>(null),
@@ -73,7 +75,7 @@ export default function LiveDraftList({
         }}
       >
         {!drafts.length && !partial && (
-          <p>每约 15 秒更新一次，仅作会议跟随参考。</p>
+          <p>{emptyText || "每约 15 秒更新一次，仅作会议跟随参考。"}</p>
         )}
         {drafts.map((draft, index) => (
           <article
@@ -94,7 +96,7 @@ export default function LiveDraftList({
         {partial && (
           <article
             className="live-draft-latest live-draft-partial"
-            aria-label="正在生成的临时文字"
+            aria-label="未确认的临时文字"
           >
             <b>{clock(partial.start)}</b>
             <p>

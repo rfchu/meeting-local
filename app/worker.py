@@ -9,7 +9,7 @@ class Cancelled(Exception): pass
 
 class Worker:
     def __init__(self, store):
-        self.store=store; self.stop=threading.Event(); self.thread=None; self.busy_jid=None; self.lock_file=None
+        self.store=store; self.stop=threading.Event(); self.thread=None; self.busy_jid=None; self.lock_file=None;self.asr_lock=None;self.release_model=None
     def start(self):
         self.lock_file=(self.store.root/'worker.lock').open('a')
         try: fcntl.flock(self.lock_file,fcntl.LOCK_EX|fcntl.LOCK_NB)
@@ -65,8 +65,16 @@ class Worker:
                 self.store.execute("UPDATE jobs SET state='failed',error=?,stage='处理失败' WHERE id=? AND state='running'",(str(e),job['id']))
             finally: self.busy_jid=None
     def process(self,job):
-        if job.get('kind')=='analysis':return self.process_analysis(job)
-        return self.process_transcription(job)
+        acquired=False
+        try:
+            if self.asr_lock:
+                while not self.asr_lock.acquire(timeout=.2):self.check(job['id'])
+                acquired=True;self.check(job['id'])
+            if self.release_model:self.release_model()
+            if job.get('kind')=='analysis':return self.process_analysis(job)
+            return self.process_transcription(job)
+        finally:
+            if acquired:self.asr_lock.release()
 
     def process_analysis(self,job):
         mid=job['meeting_id'];jid=job['id'];config=json.loads(job['config'])

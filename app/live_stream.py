@@ -2,6 +2,7 @@
 import asyncio,io,json,tempfile,time,wave
 from pathlib import Path
 import anyio
+from contextlib import aclosing
 from .db import uid
 
 def inspect_audio(payload):
@@ -26,9 +27,27 @@ async def terminate(process):
         except ProcessLookupError:pass
         await process.wait()
 
-async def qwen_events(provider,cache,lock,payload,offset,rid,source,root,window=None):
-    duration,silent=inspect_audio(payload);started=time.monotonic();aid=None;locked=False;process=None
-    request_id=uid();sequence=0;last_text=None
+async def disposable_events(provider,audio,output):
+    process=None
+    try:
+        with (output.parent/'stderr.log').open('wb') as stderr:
+            with anyio.CancelScope(shield=True):
+                process=await asyncio.create_subprocess_exec(*provider.stream_command(audio,output),
+                    stdout=asyncio.subprocess.PIPE,stderr=stderr,limit=256*1024)
+            async with asyncio.timeout(90):
+                while line:=await process.stdout.readline():
+                    try:item=json.loads(line)
+                    except (ValueError,UnicodeDecodeError):continue
+                    if item.get('type')=='qwen_partial':yield item
+                await process.wait()
+            if process.returncode:raise RuntimeError('Qwen 流式识别失败：'+(output.parent/'stderr.log').read_text(errors='replace')[-800:])
+            yield {'type':'qwen_final',**json.loads(output.read_text())}
+    finally:
+        with anyio.CancelScope(shield=True):await terminate(process)
+
+async def qwen_events(provider,cache,lock,payload,offset,rid,source,root,window=None,resident=None,confirmed=True):
+    duration,silent=inspect_audio(payload);started=time.monotonic();aid=None;locked=False
+    request_id=uid();sequence=0;last_text=None;first_text_ms=None
     def event(kind,**data):
         nonlocal sequence
         item={'type':kind,'seq':sequence,'request_id':request_id,'recording_id':rid,'engine':'qwen',
@@ -37,42 +56,35 @@ async def qwen_events(provider,cache,lock,payload,offset,rid,source,root,window=
     try:
         cached=None
         if rid:aid,cached=cache.begin(rid,source,'qwen',offset,duration,payload,provider.identity())
-        yield event('start')
-        if cached is not None:segments=cached
+        yield event('start',confirmed=confirmed)
+        if cached is not None:segments=cached;confirmed=True
         elif silent:segments=[]
         else:
-            if not lock.acquire(blocking=False):raise RuntimeError('上一段实时草稿仍在识别，请稍后重试')
+            if not lock.acquire(blocking=False):raise RuntimeError('识别资源正在使用，请稍后重试；完整原音已保留')
             locked=True
             if not provider.ready():raise RuntimeError('Qwen 实时模型尚未就绪')
-            if not hasattr(provider,'stream_command'):raise RuntimeError('当前 Qwen 运行库不支持流式接口，请切换整批输出')
             with tempfile.TemporaryDirectory(prefix='meeting-stream-',dir=root) as folder_name:
                 folder=Path(folder_name);audio=folder/'chunk.wav';output=folder/'result.qwen.json';audio.write_bytes(payload)
-                try:
-                    with (folder/'stderr.log').open('wb') as stderr:
-                        with anyio.CancelScope(shield=True):
-                            process=await asyncio.create_subprocess_exec(*provider.stream_command(audio,output),
-                                stdout=asyncio.subprocess.PIPE,stderr=stderr,limit=256*1024)
-                        async with asyncio.timeout(90):
-                            while line:=await process.stdout.readline():
-                                try:item=json.loads(line)
-                                except (ValueError,UnicodeDecodeError):continue
-                                if item.get('type')=='qwen_partial':
-                                    text=item.get('text')
-                                    if not isinstance(text,str) or len(text)>20000:raise RuntimeError('流式文字超出有效范围')
-                                    last_text=text
-                                    yield event('partial',text=text)
-                            await process.wait()
-                        if process.returncode:raise RuntimeError('Qwen 流式识别失败：'+(folder/'stderr.log').read_text(errors='replace')[-800:])
-                        result=json.loads(output.read_text())
-                        if last_text is not None and ''.join(s['text'] for s in result['segments']).strip()!=last_text.strip():
-                            raise RuntimeError('流式文字与最终结果不一致，不能确认为完整覆盖')
-                        segments=[{'start':offset+max(0,min(duration,s['start'])),
-                                   'end':offset+max(0,min(duration,s['end'])),'text':s['text']} for s in result['segments'] if s['text'].strip()]
-                finally:
-                    with anyio.CancelScope(shield=True):await terminate(process)
-        if aid:cache.complete(aid,segments)
-        result={**(window or {}),'segments':segments,'duration':duration,'engine':'qwen',
-                'processing_ms':round((time.monotonic()-started)*1000),'cached':cached is not None,'persisted':bool(rid)}
+                result=None
+                iterator=resident.generate(provider,audio) if resident and hasattr(provider,'resident_command') else disposable_events(provider,audio,output)
+                async with aclosing(iterator):
+                    async for item in iterator:
+                        if item['type']=='qwen_partial':
+                            text=item.get('text')
+                            if not isinstance(text,str) or len(text)>20000:raise RuntimeError('流式文字超出有效范围')
+                            if text and first_text_ms is None:first_text_ms=round((time.monotonic()-started)*1000)
+                            last_text=text;yield event('partial',text=text)
+                        elif item['type']=='qwen_final':result=item
+                if result is None:raise RuntimeError('流式识别缺少最终结果')
+                if last_text is not None and ''.join(s['text'] for s in result['segments']).strip()!=last_text.strip():
+                    raise RuntimeError('流式文字与最终结果不一致，不能确认为完整覆盖')
+                segments=[{'start':offset+max(0,min(duration,s['start'])),
+                           'end':offset+max(0,min(duration,s['end'])),'text':s['text']} for s in result['segments'] if s['text'].strip()]
+        if aid:
+            if confirmed:cache.complete(aid,segments)
+            else:cache.preview(aid)
+        result={**(window or {}),'segments':segments,'duration':duration,'engine':'qwen','confirmed':confirmed,
+                'processing_ms':round((time.monotonic()-started)*1000),'first_text_ms':first_text_ms,'cached':cached is not None,'persisted':bool(rid) and confirmed}
         yield event('final',result=result)
     except asyncio.CancelledError:
         if aid:cache.fail(aid,'流式连接中断，部分文字未确认为完整覆盖')
@@ -82,8 +94,5 @@ async def qwen_events(provider,cache,lock,payload,offset,rid,source,root,window=
         if aid:cache.fail(aid,message)
         yield event('error',message=message)
     finally:
-        try:
-            with anyio.CancelScope(shield=True):await terminate(process)
-        finally:
-            if locked:lock.release()
-            if aid:cache.fail(aid,'流式请求未完成')
+        if locked:lock.release()
+        if aid:cache.fail(aid,'流式请求未完成')
