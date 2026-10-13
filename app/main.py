@@ -17,6 +17,7 @@ from .minutes_templates import MinutesTemplate
 from .speaker_review import generate_review
 from .recordings import RecordingStore
 from .native_capture import NativeCapture
+from .live_results import LiveResults
 
 BASE=Path(__file__).resolve().parents[1]
 
@@ -32,6 +33,7 @@ class RevisionInput(BaseModel):
     revision: int
     segments: list[Segment]=Field(max_length=50000)
 class JobInput(BaseModel):
+    completion_mode: Literal["full","quick"]="full"
     engine: Literal["whisper","qwen"]="whisper"
     diarization: bool=False
     num_speakers: int=Field(default=0,ge=0,le=30)
@@ -98,6 +100,7 @@ def create_app(data_dir=None, start_worker=True):
     @asynccontextmanager
     async def lifespan(app):
         if start_worker: worker.start()
+        store.execute("UPDATE live_asr_ranges SET state='failed',error='服务重启，识别未完成；快速完成会补识别该范围' WHERE state='running'")
         native_capture.start_monitor()
         yield
         native_capture.close()
@@ -106,6 +109,7 @@ def create_app(data_dir=None, start_worker=True):
     app.state.store=store; app.state.worker=worker
     recordings=RecordingStore(store)
     native_capture=NativeCapture(store,recordings)
+    live_results=LiveResults(store,recordings)
     live_asr_lock=threading.Lock()
 
     @app.middleware('http')
@@ -168,41 +172,55 @@ def create_app(data_dir=None, start_worker=True):
         return minutes_template(template_id).model_dump()
 
     @app.post('/api/live-transcribe')
-    async def live_transcribe(file:UploadFile=File(...),offset:float=Form(default=0,ge=0,allow_inf_nan=False),
-                              engine:Literal['whisper','qwen']=Form(default='whisper')):
-        """Decode one short 16 kHz PCM increment for a non-authoritative live draft."""
-        if not live_asr_lock.acquire(blocking=False):
-            await file.close();raise HTTPException(409,'上一段实时草稿仍在识别')
-        started=time.monotonic()
+    async def live_transcribe(file:UploadFile=File(...),offset:float=Form(default=0,ge=0,le=86400,allow_inf_nan=False),
+                              engine:Literal['whisper','qwen']=Form(default='whisper'),
+                              recording_id:str|None=Form(default=None),source:Literal['browser','native']=Form(default='browser')):
+        started=time.monotonic();aid=None;locked=False
         try:
             provider=get_asr_provider(engine)
-            if not provider.ready():raise HTTPException(409,f'{provider.label} 实时草稿模型尚未就绪')
             payload=await file.read(4*1024*1024+1)
             if len(payload)>4*1024*1024:raise HTTPException(413,'实时音频片段最大支持 4MB')
             if not payload:raise HTTPException(400,'实时音频片段为空')
-            with tempfile.TemporaryDirectory(prefix='meeting-live-',dir=store.root) as folder_name:
-                folder=Path(folder_name);audio=folder/'chunk.wav';audio.write_bytes(payload)
-                try:
-                    with wave.open(str(audio),'rb') as source:
-                        duration=source.getnframes()/source.getframerate()
-                        valid=source.getnchannels()==1 and source.getsampwidth()==2 and source.getframerate()==16000
-                except (wave.Error,EOFError):raise HTTPException(400,'实时音频必须是有效的 WAV 文件')
-                if not valid:raise HTTPException(400,'实时音频必须是 16 kHz 单声道 PCM')
-                if duration<.5 or duration>45:raise HTTPException(400,'实时音频片段时长应在 0.5–45 秒之间')
-                log=folder/(engine+'.log')
-                def run(args):
-                    with log.open('ab') as handle:
-                        try:result=subprocess.run(args,stdout=handle,stderr=handle,timeout=90,check=False)
-                        except subprocess.TimeoutExpired:raise RuntimeError('实时草稿识别超时')
-                    if result.returncode:
-                        tail=log.read_text(errors='replace')[-800:]
-                        raise RuntimeError(f'实时草稿识别失败：{tail}')
-                try:segments=await run_in_threadpool(getattr(provider,'transcribe_live',provider.transcribe),audio,folder/'result',run)
-                except RuntimeError as error:raise HTTPException(503,str(error))
-            return {'segments':[{'start':round(offset+s['start'],3),'end':round(offset+s['end'],3),'text':s['text']} for s in segments],
-                'duration':duration,'processing_ms':round((time.monotonic()-started)*1000),'engine':engine}
+            try:
+                with wave.open(io.BytesIO(payload),'rb') as wav:
+                    duration=wav.getnframes()/wav.getframerate()
+                    valid=wav.getnchannels()==1 and wav.getsampwidth()==2 and wav.getframerate()==16000
+                    samples=wav.readframes(wav.getnframes())
+                    if len(samples)!=wav.getnframes()*2:valid=False
+            except (wave.Error,EOFError):raise HTTPException(400,'实时音频必须是有效的 WAV 文件')
+            if not valid:raise HTTPException(400,'实时音频必须是 16 kHz 单声道 PCM')
+            if duration<.5 or duration>45:raise HTTPException(400,'实时音频片段时长应在 0.5–45 秒之间')
+            def response(segments,cached=False):return {'segments':segments,'duration':duration,'engine':engine,
+                'processing_ms':round((time.monotonic()-started)*1000),'cached':cached,'persisted':bool(recording_id)}
+            if recording_id:
+                try:aid,cached=live_results.begin(recording_id,source,engine,offset,duration,payload,provider.identity())
+                except FileNotFoundError as error:raise HTTPException(404,str(error))
+                except ValueError as error:raise HTTPException(409,str(error))
+                if cached is not None:return response(cached,True)
+            if not any(samples):segments=[]
+            else:
+                if not live_asr_lock.acquire(blocking=False):raise HTTPException(409,'上一段实时草稿仍在识别')
+                locked=True
+                if not provider.ready():raise HTTPException(409,f'{provider.label} 实时草稿模型尚未就绪')
+                with tempfile.TemporaryDirectory(prefix='meeting-live-',dir=store.root) as folder_name:
+                    folder=Path(folder_name);audio=folder/'chunk.wav';audio.write_bytes(payload);log=folder/(engine+'.log')
+                    def run(args):
+                        with log.open('ab') as handle:
+                            try:result=subprocess.run(args,stdout=handle,stderr=handle,timeout=90,check=False)
+                            except subprocess.TimeoutExpired:raise RuntimeError('实时草稿识别超时')
+                        if result.returncode:raise RuntimeError('实时草稿识别失败：'+log.read_text(errors='replace')[-800:])
+                    try:part=await run_in_threadpool(getattr(provider,'transcribe_live',provider.transcribe),audio,folder/'result',run)
+                    except RuntimeError as error:raise HTTPException(503,str(error))
+                    segments=[{'start':round(offset+max(0,min(duration,s['start'])),3),
+                        'end':round(offset+max(0,min(duration,s['end'])),3),'text':s['text']} for s in part if s['text'].strip()]
+            if aid:live_results.complete(aid,segments)
+            return response(segments)
+        except BaseException as error:
+            if aid:live_results.fail(aid,getattr(error,'detail',str(error)) or '识别请求中断')
+            raise
         finally:
-            await file.close();live_asr_lock.release()
+            await file.close()
+            if locked:live_asr_lock.release()
 
     def llm_config(cid):
         row=store.one('SELECT * FROM llm_configs WHERE id=?',(cid,))
@@ -313,9 +331,8 @@ def create_app(data_dir=None, start_worker=True):
         if not window['ready']:
             return window|{'segments':[],'duration':0,'processing_ms':0}
         payload=window.pop('payload')
-        if window.pop('silent'):
-            return window|{'segments':[],'duration':window['next_offset']-window['offset'],'processing_ms':0}
-        result=await live_transcribe(UploadFile(file=io.BytesIO(payload),filename='native-draft.wav'),window['offset'],body.engine)
+        window.pop('silent')
+        result=await live_transcribe(UploadFile(file=io.BytesIO(payload),filename='native-draft.wav'),window['offset'],body.engine,rid,'native')
         return window|result
 
     @app.post('/api/native-capture/{rid}/command')
@@ -328,6 +345,11 @@ def create_app(data_dir=None, start_worker=True):
         try:return decorated(meeting(native_capture.finish(rid)))
         except FileNotFoundError as error:raise HTTPException(404,str(error))
         except (ValueError,RuntimeError,subprocess.SubprocessError) as error:raise HTTPException(409,str(error))
+    @app.get('/api/recordings/{rid}/live-results')
+    def recording_live_results(rid:str,engine:Literal['whisper','qwen']='whisper'):
+        try:return live_results.overview(rid,engine)
+        except FileNotFoundError as error:raise HTTPException(404,str(error))
+        except ValueError as error:raise HTTPException(409,str(error))
     @app.post('/api/recordings',status_code=201)
     def create_recording(body:RecordingInput):return recordings.create(body.mime_type)
     @app.put('/api/recordings/{rid}/metadata')
@@ -460,6 +482,7 @@ def create_app(data_dir=None, start_worker=True):
             db.execute('BEGIN IMMEDIATE')
             if db.execute("SELECT 1 FROM jobs WHERE meeting_id=? AND state IN ('running','queued')",(mid,)).fetchone():
                 raise HTTPException(409,'请先取消任务，等待处理停止后删除')
+            db.execute('DELETE FROM live_asr_ranges WHERE recording_id=?',(mid,))
             for table in ['meeting_notes','artifacts','revisions','jobs','meetings']:
                 key='id' if table=='meetings' else 'meeting_id'
                 db.execute(f'DELETE FROM {table} WHERE {key}=?',(mid,))
@@ -481,13 +504,14 @@ def create_app(data_dir=None, start_worker=True):
     def enqueue(mid:str,body:JobInput):
         row=meeting(mid)
         provider=get_asr_provider(body.engine)
-        if not provider.ready(): raise HTTPException(409,f'{provider.label} 尚未就绪，请先安装对应模型')
-        if body.diarization and not LocalDiarization().ready(): raise HTTPException(409,'尚未配置本地发言人模型')
+        if body.completion_mode!='quick' and not provider.ready(): raise HTTPException(409,f'{provider.label} 尚未就绪，请先安装对应模型')
+        if body.completion_mode=='quick' and not (recordings.root/mid/'session.json').exists():raise HTTPException(409,'快速完成仅适用于本机实时录音')
+        if body.completion_mode!='quick' and body.diarization and not LocalDiarization().ready(): raise HTTPException(409,'尚未配置本地发言人模型')
         jid=uid()
         with store.connect() as db:
             db.execute('BEGIN IMMEDIATE')
             if db.execute("SELECT 1 FROM jobs WHERE meeting_id=? AND state IN ('running','queued')",(mid,)).fetchone(): raise HTTPException(409,'已有任务正在处理')
-            db.execute('INSERT INTO jobs(id,meeting_id,state,stage,config) VALUES(?,?,?,?,?)',(jid,mid,'queued','等待处理',encode({'engine':body.engine,'chunk_seconds':provider.chunk_seconds,'punctuation':provider.needs_punctuation,'diarization':body.diarization,'num_speakers':body.num_speakers,'base_revision':row['revision'],'engine_identity':provider.identity(),'pipeline_version':2})))
+            db.execute('INSERT INTO jobs(id,meeting_id,state,stage,config) VALUES(?,?,?,?,?)',(jid,mid,'queued','等待处理',encode({'engine':body.engine,'chunk_seconds':provider.chunk_seconds,'punctuation':provider.needs_punctuation,'diarization':body.diarization,'num_speakers':body.num_speakers,'base_revision':row['revision'],'engine_identity':provider.identity(),'pipeline_version':2,'completion_mode':body.completion_mode,'live_snapshot':live_results.snapshot(mid,body.engine) if body.completion_mode=='quick' else []})))
         return {'id':jid}
     @app.post('/api/meetings/{mid}/analysis-jobs',status_code=201)
     def enqueue_analysis(mid:str,body:AnalysisJobInput):

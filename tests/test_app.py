@@ -6,10 +6,10 @@ from app.db import uid,encode
 from app.providers import attach_speakers
 from app.worker import Cancelled
 
-def wav_bytes(seconds=1):
+def wav_bytes(seconds=1,silent=False):
     out=io.BytesIO()
     with wave.open(out,'wb') as wav:
-        wav.setnchannels(1);wav.setsampwidth(2);wav.setframerate(16000);wav.writeframes(b'\0\0'*int(16000*seconds))
+        wav.setnchannels(1);wav.setsampwidth(2);wav.setframerate(16000);wav.writeframes((b'\0\0' if silent else b'\1\0')*int(16000*seconds))
     return out.getvalue()
 
 @pytest.fixture
@@ -22,6 +22,13 @@ def upload(c):
     return r.json()['id']
 
 def sample():return [{'id':'seg1','start':0,'end':.5,'text':'确定周五交付。','speaker':'发言人 1','boundary_review':False,'speaker_locked':False}]
+
+def native_session(client):
+    from app.recordings import RecordingStore
+    recordings=RecordingStore(client.app.state.store)
+    session=recordings.create('audio/wav');session['source']='macos'
+    RecordingStore.write(recordings.folder(session['id'])/'session.json',session)
+    return session['id']
 
 def test_speaker_review_apply_is_versioned_and_preserves_original(client,monkeypatch):
     mid=upload(client);store=client.app.state.store
@@ -299,11 +306,12 @@ def test_overlap_preserves_new_suffix_and_uncertain_text():
     assert uncertain[1]['boundary_review']
 
 def test_native_draft_uses_shared_transcriber_and_absolute_timeline(client,monkeypatch):
+    rid=native_session(client)
     monkeypatch.setattr('app.main.WhisperCpp.ready',lambda _:True)
     monkeypatch.setattr('app.main.WhisperCpp.transcribe',lambda *args:[{'start':.25,'end':1,'text':'原生草稿'}])
     monkeypatch.setattr('app.main.NativeCapture.draft_window',lambda *args:{
         'ready':True,'payload':wav_bytes(15),'silent':False,'offset':45,'next_offset':60,'skipped_seconds':45})
-    response=client.post('/api/native-capture/test/draft',json={'offset':0})
+    response=client.post(f'/api/native-capture/{rid}/draft',json={'offset':0})
     assert response.status_code==200,response.text
     result=response.json()
     assert result['segments']==[{'start':45.25,'end':46,'text':'原生草稿'}]
@@ -311,13 +319,14 @@ def test_native_draft_uses_shared_transcriber_and_absolute_timeline(client,monke
     assert 'payload' not in result and client.get('/api/meetings').json()==[]
 
 def test_native_draft_waiting_and_silence_do_not_invoke_model(client,monkeypatch):
+    rid=native_session(client)
     def unexpected(*args):raise AssertionError('不应调用模型')
     monkeypatch.setattr('app.main.WhisperCpp.transcribe',unexpected)
     monkeypatch.setattr('app.main.NativeCapture.draft_window',lambda *args:{'ready':False,'next_offset':0,'skipped_seconds':0})
-    assert client.post('/api/native-capture/test/draft',json={}).json()['ready'] is False
+    assert client.post(f'/api/native-capture/{rid}/draft',json={}).json()['ready'] is False
     monkeypatch.setattr('app.main.NativeCapture.draft_window',lambda *args:{
-        'ready':True,'payload':wav_bytes(15),'silent':True,'offset':0,'next_offset':15,'skipped_seconds':0})
-    result=client.post('/api/native-capture/test/draft',json={}).json()
+        'ready':True,'payload':wav_bytes(15,silent=True),'silent':True,'offset':0,'next_offset':15,'skipped_seconds':0})
+    result=client.post(f'/api/native-capture/{rid}/draft',json={}).json()
     assert result['segments']==[] and result['next_offset']==15
     assert 'payload' not in result
 
@@ -329,6 +338,7 @@ def test_native_draft_rejects_unknown_foreign_and_invalid_offsets(client):
     assert client.post(f'/api/native-capture/{rid}/draft',json={'offset':-1}).status_code==422
 
 def test_native_draft_does_not_block_capture_stop(client,monkeypatch):
+    rid=native_session(client)
     import threading
     from concurrent.futures import ThreadPoolExecutor
     entered=threading.Event();release=threading.Event()
@@ -340,12 +350,12 @@ def test_native_draft_does_not_block_capture_stop(client,monkeypatch):
     monkeypatch.setattr('app.main.WhisperCpp.transcribe',transcribe)
     monkeypatch.setattr('app.main.NativeCapture.command',lambda *args:{'state':'stopped','duration':15,'error':''})
     with ThreadPoolExecutor(max_workers=2) as pool:
-        task=pool.submit(client.post,'/api/native-capture/test/draft',json={})
+        task=pool.submit(client.post,f'/api/native-capture/{rid}/draft',json={})
         try:
             assert entered.wait(2)
-            stop=pool.submit(client.post,'/api/native-capture/test/command',json={'command':'stop'})
+            stop=pool.submit(client.post,f'/api/native-capture/{rid}/command',json={'command':'stop'})
             assert stop.result(timeout=2).json()['state']=='stopped'
-            assert client.post('/api/native-capture/test/draft',json={}).status_code==409
+            assert client.post(f'/api/native-capture/{rid}/draft',json={}).status_code==409
         finally:release.set()
         assert task.result(timeout=3).status_code==200
 
@@ -363,12 +373,13 @@ def test_live_qwen_routes_to_draft_without_whisper_fallback(client,monkeypatch):
     assert response.status_code==409 and '千问' in response.json()['detail']
 
 def test_native_live_qwen_respects_selected_engine(client,monkeypatch):
+    rid=native_session(client)
     monkeypatch.setattr('app.providers.QwenMLX.ready',lambda _:True)
     monkeypatch.setattr('app.providers.QwenMLX.transcribe_live',lambda *args:[{'start':0,'end':15,'text':'联合采集草稿'}])
     monkeypatch.setattr('app.main.NativeCapture.draft_window',lambda *args:{
         'ready':True,'payload':wav_bytes(15),'silent':False,'offset':30,'next_offset':45,'skipped_seconds':0})
-    response=client.post('/api/native-capture/test/draft',json={'offset':30,'engine':'qwen'})
+    response=client.post(f'/api/native-capture/{rid}/draft',json={'offset':30,'engine':'qwen'})
     assert response.status_code==200,response.text
     assert response.json()['engine']=='qwen'
     assert response.json()['segments'][0]['start']==30
-    assert client.post('/api/native-capture/test/draft',json={'engine':'cloud'}).status_code==422
+    assert client.post(f'/api/native-capture/{rid}/draft',json={'engine':'cloud'}).status_code==422

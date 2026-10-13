@@ -70,6 +70,20 @@ export const api = {
     ),
   nativeFinish: (id: string) =>
     request<Meeting>(`/native-capture/${id}/finish`, { method: "POST" }),
+  liveCoverage: (id: string, engine: "whisper" | "qwen") =>
+    request<{
+      covered_seconds: number;
+      duration: number;
+      completed_ranges: number;
+      gaps: { start: number; end: number }[];
+      attempts: Record<string, number>;
+      recent_failures: {
+        start: number;
+        end: number;
+        state: string;
+        error: string;
+      }[];
+    }>(`/recordings/${id}/live-results?engine=${engine}`),
   createRecording: (mimeType: string) =>
     request<RecordingSession>(
       "/recordings",
@@ -107,11 +121,13 @@ export const api = {
     file: File,
     offset: number,
     engine: "whisper" | "qwen" = "whisper",
+    recordingId?: string,
   ) => {
     const data = new FormData();
     data.append("file", file);
     data.append("offset", String(offset));
     data.append("engine", engine);
+    if (recordingId) data.append("recording_id", recordingId);
     return request<{
       segments: LiveDraftSegment[];
       duration: number;
@@ -138,7 +154,12 @@ export const api = {
   remove: (id: string) => request(`/meetings/${id}`, { method: "DELETE" }),
   transcribe: (
     id: string,
-    body: { engine: string; diarization: boolean; num_speakers: number },
+    body: {
+      engine: string;
+      diarization: boolean;
+      num_speakers: number;
+      completion_mode?: "quick" | "full";
+    },
   ) => request<{ id: string }>(`/meetings/${id}/jobs`, json("POST", body)),
   jobAction: (id: string, action: "cancel" | "retry") =>
     request(`/jobs/${id}/${action}`, { method: "POST" }),

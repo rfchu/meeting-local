@@ -54,6 +54,13 @@ class Store:
               accepted_text TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'raw',
               source_segment_ids TEXT NOT NULL DEFAULT '[]',
               created TEXT DEFAULT CURRENT_TIMESTAMP, updated TEXT DEFAULT CURRENT_TIMESTAMP);
+            CREATE TABLE IF NOT EXISTS live_asr_ranges (
+              id TEXT PRIMARY KEY, recording_id TEXT NOT NULL, source TEXT NOT NULL,
+              engine TEXT NOT NULL, start_frame INTEGER NOT NULL, end_frame INTEGER NOT NULL,
+              audio_hash TEXT NOT NULL, identity TEXT NOT NULL, state TEXT NOT NULL,
+              segments TEXT NOT NULL DEFAULT '[]', error TEXT NOT NULL DEFAULT '',
+              created TEXT DEFAULT CURRENT_TIMESTAMP, updated TEXT DEFAULT CURRENT_TIMESTAMP);
+            CREATE INDEX IF NOT EXISTS live_asr_recording_range ON live_asr_ranges(recording_id,engine,start_frame);
             CREATE INDEX IF NOT EXISTS meeting_notes_meeting_time
               ON meeting_notes(meeting_id,captured_at,created);
             ''')
@@ -75,7 +82,7 @@ class Store:
                     version=excluded.version,builtin=excluded.builtin,definition=excluded.definition,
                     updated=CURRENT_TIMESTAMP''',
                     (template.id,template.name,template.description,template.category,template.version,1,definition))
-            db.execute('PRAGMA user_version=7')
+            db.execute('PRAGMA user_version=8')
         os.chmod(self.path,0o600)
     @contextmanager
     def connect(self):

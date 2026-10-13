@@ -64,6 +64,7 @@ export interface RecordingSession {
   state: string;
   source?: "macos";
   native_audio_saved?: boolean;
+  draft_engine?: "whisper" | "qwen";
 }
 export interface NativeCapability {
   available: boolean;

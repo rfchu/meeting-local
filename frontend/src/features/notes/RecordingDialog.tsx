@@ -45,7 +45,10 @@ export default function RecordingDialog({
   engineLabel: string;
   engines: EngineInfo[];
   onClose: () => void;
-  onComplete: (meetingId: string) => Promise<void>;
+  onComplete: (
+    meetingId: string,
+    options: { mode: "quick" | "full"; engine: "whisper" | "qwen" },
+  ) => Promise<void>;
   toast: (text: string) => void;
 }) {
   const [state, setState] = useState<
@@ -57,6 +60,17 @@ export default function RecordingDialog({
     [notes, setNotes] = useState<MeetingNoteInput[]>([]),
     [drafts, setDrafts] = useState<LiveDraftSegment[]>([]),
     [draftEngine, setDraftEngine] = useState<"whisper" | "qwen">("whisper"),
+    [completionMode, setCompletionMode] = useState<"quick" | "full">("quick"),
+    [coverageDetails, setCoverageDetails] = useState<{
+      gaps: { start: number; end: number }[];
+      recent_failures: {
+        start: number;
+        end: number;
+        state: string;
+        error: string;
+      }[];
+    } | null>(null),
+    [coverageStatus, setCoverageStatus] = useState("开始识别后保存覆盖情况"),
     [draftStatus, setDraftStatus] = useState("开始录音后自动生成"),
     [saveStatus, setSaveStatus] = useState("录音分段会自动保存到本机"),
     [recoveries, setRecoveries] = useState<RecordingSession[]>([]),
@@ -222,6 +236,32 @@ export default function RecordingDialog({
     };
   }, [nativeSessionId, captureSource, state, draftEngine]);
   useEffect(() => {
+    if (!sessionRef.current || state === "idle") return;
+    let active = true;
+    const poll = async () => {
+      try {
+        const coverage = await api.liveCoverage(
+          sessionRef.current!.id,
+          draftEngine,
+        );
+        if (active) setCoverageDetails(coverage);
+        if (active)
+          setCoverageStatus(
+            `已保存 ${coverage.completed_ranges} 段 · 覆盖 ${Math.round(coverage.covered_seconds)}s / ${Math.round(coverage.duration)}s · 未识别范围 ${coverage.gaps.length} 处 · 失败尝试 ${coverage.attempts.failed || 0} 次`,
+          );
+      } catch (error) {
+        if (active)
+          setCoverageStatus(`覆盖检查暂时不可用 · ${(error as Error).message}`);
+      }
+    };
+    void poll();
+    const timer = window.setInterval(() => void poll(), 5000);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [state, nativeSessionId, draftEngine]);
+  useEffect(() => {
     const guard = (event: BeforeUnloadEvent) => {
       if (
         ["recording", "paused", "saving", "failed"].includes(stateRef.current)
@@ -299,7 +339,10 @@ export default function RecordingDialog({
       throw error;
     }
   };
-  const finish = async (session: RecordingSession) => {
+  const finish = async (
+    session: RecordingSession,
+    reuseEngine = draftEngine,
+  ) => {
     setState("saving");
     stateRef.current = "saving";
     sessionRef.current = session;
@@ -310,7 +353,10 @@ export default function RecordingDialog({
           ? await api.nativeFinish(session.id)
           : await api.finishRecording(session.id, session.chunk_count);
       await forgetRecording(session.id);
-      await onComplete(meeting.id);
+      await onComplete(meeting.id, {
+        mode: completionMode,
+        engine: reuseEngine,
+      });
     } catch (error) {
       setState("failed");
       stateRef.current = "failed";
@@ -328,7 +374,7 @@ export default function RecordingDialog({
     notesRef.current = session.notes;
     accruedRef.current = session.duration;
     setElapsed(session.duration);
-    await finish(session);
+    await finish(session, session.draft_engine || draftEngine);
   };
 
   useEffect(() => {
@@ -370,7 +416,12 @@ export default function RecordingDialog({
         return;
       }
       try {
-        const result = await api.liveTranscribe(file, offset, draftEngine);
+        const result = await api.liveTranscribe(
+          file,
+          offset,
+          draftEngine,
+          sessionRef.current?.id,
+        );
         if (!draftEnabledRef.current) return;
         if (result.segments.length)
           setDrafts((old) => [...old, ...result.segments]);
@@ -687,7 +738,9 @@ export default function RecordingDialog({
         {captureSource === "browser"
           ? "原音每约 5 秒分段保存，浏览器暂存保护待同步内容。所选引擎生成实时草稿；"
           : "电脑声音由原生采集器保存，联合模式还会保留独立麦克风音轨；"}
-        停止后使用 {engineLabel} 生成高质量文字稿。
+        {completionMode === "quick"
+          ? `停止后复用 ${draftEngine === "qwen" ? "Qwen-ASR" : "Whisper"} 实时结果，仅补识别缺段与尾段。`
+          : `停止后使用 ${engineLabel} 重新转写完整录音。`}
       </p>
       <label className="capture-source">
         录音来源
@@ -845,6 +898,52 @@ export default function RecordingDialog({
           ))}
         </section>
       )}
+      <label className="capture-source">
+        停止后处理
+        <select
+          aria-label="停止后处理"
+          value={completionMode}
+          disabled={state === "saving"}
+          onChange={(event) =>
+            setCompletionMode(event.target.value as "quick" | "full")
+          }
+        >
+          <option value="quick">快速完成：复用草稿，补缺段与尾段</option>
+          <option value="full">
+            精细处理：完整重识别、对齐与所选发言人区分
+          </option>
+        </select>
+      </label>
+      <p className="native-capture-hint">
+        {coverageStatus}
+        <br />
+        {completionMode === "quick"
+          ? "快速完成使用实时草稿引擎，保留草稿时间精度，不执行发言人区分；文字稿生成后可再启动精细转写。未完成或失败的范围会从原音补识别。"
+          : `精细处理使用 ${engineLabel} 重新转写完整录音。`}
+      </p>
+      {coverageDetails &&
+        (coverageDetails.gaps.length > 0 ||
+          coverageDetails.recent_failures.length > 0) && (
+          <details className="capture-health">
+            <summary>查看未覆盖范围及失败记录</summary>
+            {coverageDetails.gaps.slice(0, 20).map((gap, index) => (
+              <p key={`gap-${index}`}>
+                {clock(gap.start)}–{clock(gap.end)} · 快速完成时补识别
+              </p>
+            ))}
+            {coverageDetails.recent_failures.map((attempt, index) => (
+              <p key={`attempt-${index}`}>
+                {clock(attempt.start)}–{clock(attempt.end)} ·{" "}
+                {attempt.state === "running" ? "识别中" : "失败"}{" "}
+                {attempt.error}
+              </p>
+            ))}
+            <small>
+              历史失败尝试会保留；已重试成功的范围不会再次补识别。最多显示 20
+              个缺段及最近 50 条失败/进行中记录。
+            </small>
+          </details>
+        )}
       <div className="recording-controls">
         {state === "idle" && (
           <button className="primary" onClick={() => void start()}>
@@ -862,7 +961,7 @@ export default function RecordingDialog({
         {state === "paused" && <button onClick={resume}>继续录音</button>}
         {recording && (
           <button className="recording-stop" onClick={() => void stop()}>
-            ■ 停止并转写
+            ■ 停止并生成文字稿
           </button>
         )}
         {state === "saving" && <button disabled>正在保存并创建会议…</button>}

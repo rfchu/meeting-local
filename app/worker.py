@@ -1,6 +1,7 @@
 import fcntl, hashlib, json, math, os, subprocess, threading, time
 from pathlib import Path
 from .db import uid, encode
+from .live_results import plan_ranges, RATE
 from .providers import WhisperCpp, get_asr_provider, LocalDiarization, LocalPunctuation, attach_speakers, merge_overlapping_chunks
 from .analysis import LMStudioProvider,OpenAICompatibleProvider,MeetingAnalysis,chunk_segments,save_meeting_analysis,validate_citations,TEMPLATE_VERSION
 
@@ -136,34 +137,38 @@ class Worker:
         with wave.open(str(audio)) as wav: duration=wav.getnframes()/wav.getframerate()
         if duration <= 0: raise RuntimeError('录音没有可用音频')
         self.store.execute('UPDATE meetings SET duration=? WHERE id=?',(duration,mid))
-        if not provider.ready(): raise RuntimeError(f'{provider.label} 尚未就绪，请检查运行环境')
-        # Fixed chunks with context overlap; merge using both timing and text.
-        chunk_seconds=config.get('chunk_seconds',provider.chunk_seconds); count=math.ceil(duration/chunk_seconds); chunks=[]
-        for i in range(count):
-            self.update(jid,f'识别与对齐片段 {i+1}/{count}' if provider.engine_id=='qwen' else f'转写片段 {i+1}/{count}',.08+.78*i/count)
-            checkpoint=work/f'chunk-{i}.checkpoint.json'
-            if checkpoint.exists(): part=json.loads(checkpoint.read_text())
-            else:
-                start=max(0,i*chunk_seconds-2); end=min(duration,(i+1)*chunk_seconds+2)
-                chunk=work/f'chunk-{i}.wav'
-                run(['ffmpeg','-v','error','-y','-ss',str(start),'-i',str(audio),'-t',str(end-start),'-c:a','pcm_s16le',str(chunk)])
-                part=provider.transcribe(chunk,work/f'chunk-{i}',run)
-                owned=[]
-                for s in part:
-                    s['start']+=start; s['end']=min(duration,s['end']+start)
-                    s['id']=uid(); owned.append(s)
-                part=owned
-                temp=checkpoint.with_suffix('.tmp'); temp.write_text(encode(part)); temp.replace(checkpoint)
-                chunk.unlink(missing_ok=True)
-            chunks.append(part)
-        segments=merge_overlapping_chunks(chunks)
-        segments.sort(key=lambda s:s['start'])
+        if config.get('completion_mode')!='quick' and not provider.ready(): raise RuntimeError(f'{provider.label} 尚未就绪，请检查运行环境')
+        reuse_meta={}
+        if config.get('completion_mode')=='quick':
+            segments,reuse_meta=self.fast_transcription(config,duration,audio,work,provider,run,jid)
+        else:
+            # Fixed chunks with context overlap; merge using both timing and text.
+            chunk_seconds=config.get('chunk_seconds',provider.chunk_seconds); count=math.ceil(duration/chunk_seconds); chunks=[]
+            for i in range(count):
+                self.update(jid,f'识别与对齐片段 {i+1}/{count}' if provider.engine_id=='qwen' else f'转写片段 {i+1}/{count}',.08+.78*i/count)
+                checkpoint=work/f'chunk-{i}.checkpoint.json'
+                if checkpoint.exists(): part=json.loads(checkpoint.read_text())
+                else:
+                    start=max(0,i*chunk_seconds-2); end=min(duration,(i+1)*chunk_seconds+2)
+                    chunk=work/f'chunk-{i}.wav'
+                    run(['ffmpeg','-v','error','-y','-ss',str(start),'-i',str(audio),'-t',str(end-start),'-c:a','pcm_s16le',str(chunk)])
+                    part=provider.transcribe(chunk,work/f'chunk-{i}',run)
+                    owned=[]
+                    for s in part:
+                        s['start']+=start; s['end']=min(duration,s['end']+start)
+                        s['id']=uid(); owned.append(s)
+                    part=owned
+                    temp=checkpoint.with_suffix('.tmp'); temp.write_text(encode(part)); temp.replace(checkpoint)
+                    chunk.unlink(missing_ok=True)
+                chunks.append(part)
+            segments=merge_overlapping_chunks(chunks)
+            segments.sort(key=lambda s:s['start'])
         punctuation=LocalPunctuation()
-        if config.get('punctuation',provider.needs_punctuation) and punctuation.ready() and segments:
+        if config.get('completion_mode')!='quick' and config.get('punctuation',provider.needs_punctuation) and punctuation.ready() and segments:
             self.update(jid,'恢复中文标点',.87)
             cached=work/'punctuated.json'
             segments=json.loads(cached.read_text()) if cached.exists() else punctuation.process(segments,work,run)
-        if config.get('diarization'):
+        if config.get('completion_mode')!='quick' and config.get('diarization'):
             self.update(jid,'分析发言人',.9)
             diar=work/'speakers.json'
             if not diar.exists(): LocalDiarization().diarize(audio,diar,run,config.get('num_speakers',0))
@@ -172,7 +177,7 @@ class Worker:
         # Save a candidate artifact if the user changed the transcript during inference.
         source_meta=encode({'engine':provider.engine_id,'engine_label':provider.label,'model':Path(provider.model).name,
                             'aligner':Path(provider.aligner).name if hasattr(provider,'aligner') else None,
-                            'language':'zh','job':jid})
+                            'language':'zh','job':jid,**reuse_meta})
         with self.store.connect() as db:
             db.execute('BEGIN IMMEDIATE')
             state=db.execute('SELECT state FROM jobs WHERE id=?',(jid,)).fetchone()
@@ -185,4 +190,37 @@ class Worker:
                 rev=current+1; payload=encode(segments)
                 db.execute('INSERT INTO revisions(meeting_id,revision,segments,source) VALUES(?,?,?,?)',(mid,rev,payload,source_meta))
                 db.execute('UPDATE meetings SET revision=?,segments=? WHERE id=?',(rev,payload,mid))
-                db.execute("UPDATE jobs SET state='completed',stage='转写完成',progress=1 WHERE id=?",(jid,))
+                db.execute("UPDATE jobs SET state='completed',stage=?,progress=1 WHERE id=?",('快速文字稿完成，可再精细处理' if config.get('completion_mode')=='quick' else '转写完成',jid))
+
+    def fast_transcription(self,config,duration,audio,work,provider,run,jid):
+        import wave
+        reused,gaps=plan_ranges(config.get('live_snapshot',[]),duration)
+        chunks=[]
+        for row in reused:
+            start=row['start_frame']/RATE;end=row['end_frame']/RATE
+            chunks.append([dict(s,id=uid(),speaker='未分配',start=max(start,s['start']),end=min(end,s['end']))
+                           for s in row['segments'] if s['start']<end and s['end']>start])
+        missing=[]
+        for start,end in gaps:
+            while start<end-1/RATE/2:
+                stop=min(end,start+15);missing.append((start,stop));start=stop
+        if missing and not provider.ready():raise RuntimeError(f'需要补识别缺段/尾段，但 {provider.label} 尚未就绪；请恢复模型后重试')
+        for index,(start,end) in enumerate(missing):
+            self.update(jid,f'复用 {len(reused)} 段草稿 · 补识别缺段/尾段 {index+1}/{len(missing)}',.08+.78*index/max(1,len(missing)))
+            checkpoint=work/f'fast-{index}.checkpoint.json'
+            if checkpoint.exists():part=json.loads(checkpoint.read_text())
+            else:
+                chunk=work/f'fast-{index}.wav'
+                run(['ffmpeg','-v','error','-y','-ss',str(start),'-i',str(audio),'-af','apad','-t',str(max(.5,end-start)),'-c:a','pcm_s16le',str(chunk)])
+                with wave.open(str(chunk),'rb') as wav:silent=not any(wav.readframes(wav.getnframes()))
+                raw=[] if silent else getattr(provider,'transcribe_live',provider.transcribe)(chunk,work/f'fast-{index}',run)
+                part=[dict(s,id=uid(),speaker='未分配',start=min(end,start+max(0,s['start'])),end=min(end,start+max(0,s['end'])))
+                      for s in raw if s['text'].strip() and s['start']<end-start]
+                temporary=checkpoint.with_suffix('.tmp');temporary.write_text(encode(part));temporary.replace(checkpoint)
+                chunk.unlink(missing_ok=True)
+            chunks.append(part)
+        segments=sorted((s for chunk in chunks for s in chunk),key=lambda s:s['start'])
+        return segments,{'kind':'live_reuse','completion_mode':'quick','reused_ranges':len(reused),
+            'reused_seconds':sum((r['end_frame']-r['start_frame'])/RATE for r in reused),
+            'patched_ranges':[{'start':a,'end':b} for a,b in missing],
+            'range_ids':[r['id'] for r in reused],'timestamp_precision':'draft','diarization':False}

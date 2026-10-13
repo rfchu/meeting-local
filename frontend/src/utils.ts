@@ -30,6 +30,8 @@ export const revisionLabel = (source?: string) => {
       engine?: string;
       kind?: string;
     };
+    if (value.kind === "live_reuse")
+      return `${value.engine_label || engineLabel(value.engine)} · 快速文字稿`;
     if (value.kind === "speaker_review") return "AI 发言人校对（已确认）";
     return value.engine_label || engineLabel(value.engine);
   } catch {

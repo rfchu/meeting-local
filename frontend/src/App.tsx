@@ -252,7 +252,10 @@ export default function App() {
       setUploading(false);
     }
   };
-  const completeRecording = async (meetingId: string) => {
+  const completeRecording = async (
+    meetingId: string,
+    options: { mode: "quick" | "full"; engine: "whisper" | "qwen" },
+  ) => {
     setUploading(true);
     let created: Meeting | null = null;
     const followUpErrors: string[] = [];
@@ -260,8 +263,9 @@ export default function App() {
       created = await api.meeting(meetingId);
       try {
         await api.transcribe(created.id, {
-          engine,
-          diarization,
+          engine: options.mode === "quick" ? options.engine : engine,
+          completion_mode: options.mode,
+          diarization: options.mode === "quick" ? false : diarization,
           num_speakers: numSpeakers,
         });
       } catch (error) {
