@@ -1562,3 +1562,26 @@ dialog code {
 .capture-health .capture-warning {
   color: #946000;
 }
+
+.live-draft-follow {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 8px;
+  color: var(--muted);
+  font-size: 11px;
+}
+.live-draft-follow button {
+  font-size: 11px;
+}
+.live-draft-list {
+  overflow-anchor: none;
+}
+.live-draft-list .live-draft-latest {
+  background: #f4f7ff;
+}
+.live-draft-list:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}

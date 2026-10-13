@@ -13,6 +13,7 @@ import { clock } from "../../utils";
 import Modal from "../../components/Modal";
 import { encodeLiveWav } from "./liveAudio";
 import RecordingWaveform from "./RecordingWaveform";
+import LiveDraftList from "./LiveDraftList";
 import {
   bufferRecording,
   flushRecording,
@@ -894,30 +895,19 @@ export default function RecordingDialog({
             <h3>实时草稿</h3>
             <span>{draftStatus}</span>
           </header>
-          <div className="live-draft-list">
-            {!drafts.length && <p>每约 15 秒更新一次，仅作会议跟随参考。</p>}
-            {drafts.map((draft, index) => (
-              <article key={`${draft.start}-${index}`}>
-                <b>{clock(draft.start)}</b>
-                <p>{draft.text}</p>
-                <button
-                  className="text-btn"
-                  onClick={() =>
-                    setNotes((old) => [
-                      ...old,
-                      {
-                        captured_at: draft.start,
-                        note_type: "note",
-                        raw_text: draft.text,
-                      },
-                    ])
-                  }
-                >
-                  转为简记
-                </button>
-              </article>
-            ))}
-          </div>
+          <LiveDraftList
+            drafts={drafts}
+            onAddNote={(draft) =>
+              setNotes((old) => [
+                ...old,
+                {
+                  captured_at: draft.start,
+                  note_type: "note",
+                  raw_text: draft.text,
+                },
+              ])
+            }
+          />
         </section>
         <section className="live-notes">
           <header>
