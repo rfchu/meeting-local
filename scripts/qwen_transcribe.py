@@ -47,6 +47,7 @@ def transcribe_adaptive(model,samples,rate,max_tokens=MAX_TOKENS,depth=0):
 def main():
     p=argparse.ArgumentParser()
     for name in ('model','aligner','audio','output'):p.add_argument('--'+name,required=True)
+    p.add_argument('--draft',action='store_true',help='实时草稿跳过强制对齐，时间戳仅表示音频块范围')
     args=p.parse_args()
     for directory in (args.model,args.aligner):
         if not Path(directory).is_dir():raise RuntimeError('只接受已下载的本地模型目录')
@@ -67,14 +68,15 @@ def main():
     output.with_suffix('.raw.json').write_text(json.dumps(raw,ensure_ascii=False,indent=2))
     del model;gc.collect();mx.clear_cache()
     items=[]
-    if text and any(c.isalnum() for c in text):
+    if not args.draft and text and any(c.isalnum() for c in text):
         aligner=load(str(Path(args.aligner).resolve()))
         alignment=aligner.generate(audio=samples,text=text,language='Chinese')
         items=[{'text':x.text,'start':x.start_time,'end':x.end_time} for x in alignment]
         del aligner,alignment;gc.collect();mx.clear_cache()
     raw['alignment']=items
     output.with_suffix('.raw.json').write_text(json.dumps(raw,ensure_ascii=False,indent=2))
-    segments=aligned_segments(text,items,duration)
+    segments=([{'start':0,'end':duration,'text':text,'speaker':'未分配'}] if text else []) if args.draft else aligned_segments(text,items,duration)
+    raw['timestamp_mode']='chunk' if args.draft else 'forced_alignment'
     payload={**raw,'segments':segments,'elapsed_seconds':time.monotonic()-started}
     temp=output.with_suffix('.tmp');temp.write_text(json.dumps(payload,ensure_ascii=False,indent=2));temp.replace(output)
     print(json.dumps({'engine':'qwen','segments':len(segments),'seconds':payload['elapsed_seconds'],'peak_memory_gb':mx.get_peak_memory()/1e9}),flush=True)

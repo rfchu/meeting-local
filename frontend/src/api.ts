@@ -51,7 +51,11 @@ export const api = {
     request<RecordingSession>("/native-capture", json("POST", { microphone })),
   nativeStatus: (id: string) =>
     request<NativeCaptureStatus>(`/native-capture/${id}`),
-  nativeDraft: (id: string, offset: number) =>
+  nativeDraft: (
+    id: string,
+    offset: number,
+    engine: "whisper" | "qwen" = "whisper",
+  ) =>
     request<{
       ready: boolean;
       next_offset: number;
@@ -99,10 +103,15 @@ export const api = {
     data.append("file", file);
     return request<Meeting>("/meetings", { method: "POST", body: data });
   },
-  liveTranscribe: (file: File, offset: number) => {
+  liveTranscribe: (
+    file: File,
+    offset: number,
+    engine: "whisper" | "qwen" = "whisper",
+  ) => {
     const data = new FormData();
     data.append("file", file);
     data.append("offset", String(offset));
+    data.append("engine", engine);
     return request<{
       segments: LiveDraftSegment[];
       duration: number;

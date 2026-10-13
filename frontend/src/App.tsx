@@ -865,6 +865,7 @@ export default function App() {
       {recordingOpen && (
         <RecordingDialog
           engineLabel={engineLabel(engine)}
+          engines={environment?.engines || []}
           onClose={() => setRecordingOpen(false)}
           onComplete={completeRecording}
           toast={toast}

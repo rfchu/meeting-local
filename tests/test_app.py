@@ -348,3 +348,27 @@ def test_native_draft_does_not_block_capture_stop(client,monkeypatch):
             assert client.post('/api/native-capture/test/draft',json={}).status_code==409
         finally:release.set()
         assert task.result(timeout=3).status_code==200
+
+def test_live_qwen_routes_to_draft_without_whisper_fallback(client,monkeypatch):
+    monkeypatch.setattr('app.providers.QwenMLX.ready',lambda _:True)
+    monkeypatch.setattr('app.providers.QwenMLX.transcribe_live',lambda *args:[{'start':0,'end':1,'text':'千问实时草稿'}])
+    monkeypatch.setattr('app.main.WhisperCpp.transcribe',lambda *args:pytest.fail('不得回退 Whisper'))
+    result=client.post('/api/live-transcribe',data={'offset':'15','engine':'qwen'},files={'file':('live.wav',wav_bytes(),'audio/wav')})
+    assert result.status_code==200,result.text
+    assert result.json()['engine']=='qwen'
+    assert result.json()['segments']==[{'start':15,'end':16,'text':'千问实时草稿'}]
+    assert client.post('/api/live-transcribe',data={'engine':'other'},files={'file':('live.wav',wav_bytes(),'audio/wav')}).status_code==422
+    monkeypatch.setattr('app.providers.QwenMLX.ready',lambda _:False)
+    response=client.post('/api/live-transcribe',data={'engine':'qwen'},files={'file':('live.wav',wav_bytes(),'audio/wav')})
+    assert response.status_code==409 and '千问' in response.json()['detail']
+
+def test_native_live_qwen_respects_selected_engine(client,monkeypatch):
+    monkeypatch.setattr('app.providers.QwenMLX.ready',lambda _:True)
+    monkeypatch.setattr('app.providers.QwenMLX.transcribe_live',lambda *args:[{'start':0,'end':15,'text':'联合采集草稿'}])
+    monkeypatch.setattr('app.main.NativeCapture.draft_window',lambda *args:{
+        'ready':True,'payload':wav_bytes(15),'silent':False,'offset':30,'next_offset':45,'skipped_seconds':0})
+    response=client.post('/api/native-capture/test/draft',json={'offset':30,'engine':'qwen'})
+    assert response.status_code==200,response.text
+    assert response.json()['engine']=='qwen'
+    assert response.json()['segments'][0]['start']==30
+    assert client.post('/api/native-capture/test/draft',json={'engine':'cloud'}).status_code==422

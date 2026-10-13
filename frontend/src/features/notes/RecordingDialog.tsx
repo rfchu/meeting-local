@@ -7,6 +7,7 @@ import type {
   RecordingSession,
   NativeCapability,
   NativeCaptureStatus,
+  EngineInfo,
 } from "../../types";
 import { clock } from "../../utils";
 import Modal from "../../components/Modal";
@@ -35,11 +36,13 @@ const supportedMime = () =>
 
 export default function RecordingDialog({
   engineLabel,
+  engines,
   onClose,
   onComplete,
   toast,
 }: {
   engineLabel: string;
+  engines: EngineInfo[];
   onClose: () => void;
   onComplete: (meetingId: string) => Promise<void>;
   toast: (text: string) => void;
@@ -52,6 +55,7 @@ export default function RecordingDialog({
     [noteType, setNoteType] = useState<MeetingNoteType>("note"),
     [notes, setNotes] = useState<MeetingNoteInput[]>([]),
     [drafts, setDrafts] = useState<LiveDraftSegment[]>([]),
+    [draftEngine, setDraftEngine] = useState<"whisper" | "qwen">("whisper"),
     [draftStatus, setDraftStatus] = useState("开始录音后自动生成"),
     [saveStatus, setSaveStatus] = useState("录音分段会自动保存到本机"),
     [recoveries, setRecoveries] = useState<RecordingSession[]>([]),
@@ -185,6 +189,7 @@ export default function RecordingDialog({
         const result = await api.nativeDraft(
           nativeSessionId,
           nativeDraftOffsetRef.current,
+          draftEngine,
         );
         if (!active || !draftEnabledRef.current) return;
         if (result.ready) {
@@ -214,7 +219,7 @@ export default function RecordingDialog({
       active = false;
       window.clearInterval(timer);
     };
-  }, [nativeSessionId, captureSource, state]);
+  }, [nativeSessionId, captureSource, state, draftEngine]);
   useEffect(() => {
     const guard = (event: BeforeUnloadEvent) => {
       if (
@@ -364,7 +369,7 @@ export default function RecordingDialog({
         return;
       }
       try {
-        const result = await api.liveTranscribe(file, offset);
+        const result = await api.liveTranscribe(file, offset, draftEngine);
         if (!draftEnabledRef.current) return;
         if (result.segments.length)
           setDrafts((old) => [...old, ...result.segments]);
@@ -451,7 +456,9 @@ export default function RecordingDialog({
         activeSinceRef.current = performance.now();
         draftEnabledRef.current = true;
         nativeDraftOffsetRef.current = 0;
-        setDraftStatus("Whisper 每约 15 秒识别原生音轨，仅作会议跟随参考");
+        setDraftStatus(
+          `${draftEngine === "qwen" ? "Qwen-ASR" : "Whisper"} 每约 15 秒识别原生音轨，仅作会议跟随参考`,
+        );
         setState("requesting");
       } catch (error) {
         if (sessionRef.current?.source === "macos")
@@ -677,7 +684,7 @@ export default function RecordingDialog({
       </div>
       <p className="recording-intro">
         {captureSource === "browser"
-          ? "原音每约 5 秒分段保存，浏览器暂存保护待同步内容。Whisper 生成实时草稿；"
+          ? "原音每约 5 秒分段保存，浏览器暂存保护待同步内容。所选引擎生成实时草稿；"
           : "电脑声音由原生采集器保存，联合模式还会保留独立麦克风音轨；"}
         停止后使用 {engineLabel} 生成高质量文字稿。
       </p>
@@ -700,11 +707,40 @@ export default function RecordingDialog({
           </option>
         </select>
       </label>
+      <label className="capture-source">
+        实时草稿引擎
+        <select
+          aria-label="实时草稿引擎"
+          value={draftEngine}
+          disabled={state !== "idle"}
+          onChange={(event) =>
+            setDraftEngine(event.target.value as "whisper" | "qwen")
+          }
+        >
+          {(["whisper", "qwen"] as const).map((id) => (
+            <option
+              key={id}
+              value={id}
+              disabled={!engines.find((engine) => engine.id === id)?.ready}
+            >
+              {id === "qwen" ? "千问 Qwen-ASR" : "Whisper"}
+              {!engines.find((engine) => engine.id === id)?.ready
+                ? "（未就绪）"
+                : ""}
+            </option>
+          ))}
+        </select>
+      </label>
+      <p className="native-capture-hint">
+        实时草稿与停止后的正式转写引擎独立选择。
+        {draftEngine === "qwen"
+          ? "千问草稿跳过字词对齐，时间戳表示约 15 秒音频块的起点；每段会加载模型，更新速度以本机实际识别时间为准。正式转写仍保留精细对齐。"
+          : "Whisper 草稿保留句级时间戳。"}
+      </p>
       {captureSource !== "browser" && (
         <p className="native-capture-hint">
           首次使用需允许
-          macOS“屏幕与系统音频录制”权限，联合采集还需麦克风权限。仅保存音频，不保存屏幕画面。建议戴耳机，避免麦克风重复收录扬声器声音。Whisper
-          生成实时草稿，停止后生成正式文字稿。
+          macOS“屏幕与系统音频录制”权限，联合采集还需麦克风权限。仅保存音频，不保存屏幕画面。建议戴耳机，避免麦克风重复收录扬声器声音。所选引擎生成实时草稿，停止后生成正式文字稿。
         </p>
       )}
       {state === "idle" && (

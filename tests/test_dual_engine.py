@@ -128,3 +128,15 @@ def test_qwen_capped_output_is_retried_as_smaller_audio():
     assert text=='成功\n成功'
     assert model.lengths[0]==1600 and max(model.lengths[1:])<1600
     assert attempts[0]['capped'] and not attempts[-1]['capped']
+
+def test_qwen_live_skips_alignment_but_final_keeps_it(tmp_path,monkeypatch):
+    provider=QwenMLX()
+    monkeypatch.setattr(provider,'ready',lambda:True)
+    calls=[]
+    def run(args):
+        calls.append(args)
+        output=Path(args[args.index('--output')+1])
+        output.write_text(json.dumps({'segments':[{'start':0,'end':15,'text':'测试草稿'}]}))
+    assert provider.transcribe_live(tmp_path/'audio.wav',tmp_path/'draft',run)[0]['text']=='测试草稿'
+    provider.transcribe(tmp_path/'audio.wav',tmp_path/'final',run)
+    assert '--draft' in calls[0] and '--draft' not in calls[1]

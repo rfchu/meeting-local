@@ -74,10 +74,18 @@ class QwenMLX:
         return [{'path':str(p),'size':p.stat().st_size,'mtime_ns':p.stat().st_mtime_ns} for p in files if p.is_file()]
 
     def transcribe(self,audio,output,run):
+        return self._transcribe(audio,output,run,False)
+
+    def transcribe_live(self,audio,output,run):
+        return self._transcribe(audio,output,run,True)
+
+    def _transcribe(self,audio,output,run,draft):
         if not self.ready(): raise RuntimeError('千问模型或对齐模型尚未就绪，请运行 bash scripts/setup_qwen.sh')
         result_path=output.with_suffix('.qwen.json')
-        run([self.python,str(BASE/'scripts/qwen_transcribe.py'),'--model',self.model,'--aligner',self.aligner,
-             '--audio',str(audio),'--output',str(result_path)])
+        args=[self.python,str(BASE/'scripts/qwen_transcribe.py'),'--model',self.model,'--aligner',self.aligner,
+              '--audio',str(audio),'--output',str(result_path)]
+        if draft:args.append('--draft')
+        run(args)
         result=json.loads(result_path.read_text())
         return result['segments']
 
