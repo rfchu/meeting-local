@@ -5,8 +5,10 @@ import { clock } from "../../utils";
 export default function LiveDraftList({
   drafts,
   onAddNote,
+  partial,
 }: {
   drafts: LiveDraftSegment[];
+  partial?: LiveDraftSegment | null;
   onAddNote: (draft: LiveDraftSegment) => void;
 }) {
   const list = useRef<HTMLDivElement>(null),
@@ -27,7 +29,7 @@ export default function LiveDraftList({
       if (list.current) list.current.scrollTop = list.current.scrollHeight;
       setUnread(0);
     } else if (added) setUnread((old) => old + added);
-  }, [drafts]);
+  }, [drafts, partial?.text]);
   return (
     <>
       <div className="live-draft-follow">
@@ -70,12 +72,16 @@ export default function LiveDraftList({
           }
         }}
       >
-        {!drafts.length && <p>每约 15 秒更新一次，仅作会议跟随参考。</p>}
+        {!drafts.length && !partial && (
+          <p>每约 15 秒更新一次，仅作会议跟随参考。</p>
+        )}
         {drafts.map((draft, index) => (
           <article
             key={`${draft.start}-${index}`}
             className={
-              index === drafts.length - 1 ? "live-draft-latest" : undefined
+              index === drafts.length - 1 && !partial
+                ? "live-draft-latest"
+                : undefined
             }
           >
             <b>{clock(draft.start)}</b>
@@ -85,6 +91,23 @@ export default function LiveDraftList({
             </button>
           </article>
         ))}
+        {partial && (
+          <article
+            className="live-draft-latest live-draft-partial"
+            aria-label="正在生成的临时文字"
+          >
+            <b>{clock(partial.start)}</b>
+            <p>
+              {partial.text}
+              <span className="stream-caret" aria-hidden="true" />
+            </p>
+            <small>
+              生成中
+              <br />
+              未确认
+            </small>
+          </article>
+        )}
       </div>
     </>
   );

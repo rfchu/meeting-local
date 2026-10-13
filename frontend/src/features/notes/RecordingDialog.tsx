@@ -59,6 +59,8 @@ export default function RecordingDialog({
     [noteType, setNoteType] = useState<MeetingNoteType>("note"),
     [notes, setNotes] = useState<MeetingNoteInput[]>([]),
     [drafts, setDrafts] = useState<LiveDraftSegment[]>([]),
+    [partialDraft, setPartialDraft] = useState<LiveDraftSegment | null>(null),
+    [streamEnabled, setStreamEnabled] = useState(true),
     [draftEngine, setDraftEngine] = useState<"whisper" | "qwen">("whisper"),
     [completionMode, setCompletionMode] = useState<"quick" | "full">("quick"),
     [coverageDetails, setCoverageDetails] = useState<{
@@ -106,6 +108,7 @@ export default function RecordingDialog({
     draftOffsetRef = useRef(0),
     nativeDraftOffsetRef = useRef(0),
     nativeDraftBusyRef = useRef(false),
+    streamAbortRef = useRef<AbortController | null>(null),
     draftQueueRef = useRef<Promise<void>>(Promise.resolve()),
     draftPendingRef = useRef(0),
     draftEnabledRef = useRef(true);
@@ -190,24 +193,40 @@ export default function RecordingDialog({
     };
   }, [state, captureSource, nativeSessionId]);
   useEffect(() => {
-    if (
-      !nativeSessionId ||
-      captureSource === "browser" ||
-      !["recording", "paused"].includes(state)
-    )
+    if (!nativeSessionId || captureSource === "browser" || !sessionRef.current)
       return;
     let active = true;
     const pollDraft = async () => {
-      if (nativeDraftBusyRef.current) return;
+      if (
+        nativeDraftBusyRef.current ||
+        !["recording", "paused"].includes(stateRef.current)
+      )
+        return;
       nativeDraftBusyRef.current = true;
       try {
-        const result = await api.nativeDraft(
-          nativeSessionId,
-          nativeDraftOffsetRef.current,
-          draftEngine,
-        );
+        const controller = new AbortController();
+        streamAbortRef.current = controller;
+        const result =
+          draftEngine === "qwen" && streamEnabled
+            ? await api.nativeDraftStream(
+                nativeSessionId,
+                nativeDraftOffsetRef.current,
+                (partial) => {
+                  if (active && draftEnabledRef.current) {
+                    setPartialDraft(partial);
+                    setDraftStatus("Qwen 正在逐步生成 · 部分文字尚未确认");
+                  }
+                },
+                controller.signal,
+              )
+            : await api.nativeDraft(
+                nativeSessionId,
+                nativeDraftOffsetRef.current,
+                draftEngine,
+              );
         if (!active || !draftEnabledRef.current) return;
         if (result.ready) {
+          setPartialDraft(null);
           nativeDraftOffsetRef.current = result.next_offset;
           if (result.segments.length)
             setDrafts((old) => [...old, ...result.segments]);
@@ -220,12 +239,13 @@ export default function RecordingDialog({
           );
         }
       } catch (error) {
-        if (active)
+        if (active && draftEnabledRef.current)
           setDraftStatus(
             `暂时不可用 · ${(error as Error).message}；正式转写不受影响`,
           );
       } finally {
         nativeDraftBusyRef.current = false;
+        if (active) setPartialDraft(null);
       }
     };
     void pollDraft();
@@ -234,7 +254,7 @@ export default function RecordingDialog({
       active = false;
       window.clearInterval(timer);
     };
-  }, [nativeSessionId, captureSource, state, draftEngine]);
+  }, [nativeSessionId, captureSource, draftEngine, streamEnabled]);
   useEffect(() => {
     if (!sessionRef.current || state === "idle") return;
     let active = true;
@@ -385,6 +405,7 @@ export default function RecordingDialog({
   useEffect(
     () => () => {
       draftEnabledRef.current = false;
+      streamAbortRef.current?.abort();
       streamRef.current?.getTracks().forEach((track) => track.stop());
       audioSourceRef.current?.disconnect();
       audioProcessorRef.current?.disconnect();
@@ -416,13 +437,30 @@ export default function RecordingDialog({
         return;
       }
       try {
-        const result = await api.liveTranscribe(
-          file,
-          offset,
-          draftEngine,
-          sessionRef.current?.id,
-        );
+        const controller = new AbortController();
+        streamAbortRef.current = controller;
+        const result =
+          draftEngine === "qwen" && streamEnabled
+            ? await api.liveTranscribeStream(
+                file,
+                offset,
+                sessionRef.current?.id,
+                (partial) => {
+                  if (draftEnabledRef.current) {
+                    setPartialDraft(partial);
+                    setDraftStatus("Qwen 正在逐步生成 · 部分文字尚未确认");
+                  }
+                },
+                controller.signal,
+              )
+            : await api.liveTranscribe(
+                file,
+                offset,
+                draftEngine,
+                sessionRef.current?.id,
+              );
         if (!draftEnabledRef.current) return;
+        setPartialDraft(null);
         if (result.segments.length)
           setDrafts((old) => [...old, ...result.segments]);
         setDraftStatus(
@@ -435,6 +473,7 @@ export default function RecordingDialog({
           setDraftStatus(`暂时不可用 · ${(error as Error).message}`);
       } finally {
         draftPendingRef.current--;
+        if (draftEnabledRef.current) setPartialDraft(null);
       }
     });
     draftQueueRef.current = task;
@@ -494,6 +533,7 @@ export default function RecordingDialog({
   };
 
   const start = async () => {
+    setPartialDraft(null);
     setMicrophoneLevels([]);
     setSystemLevels([]);
     if (captureSource !== "browser") {
@@ -657,6 +697,8 @@ export default function RecordingDialog({
     if (sessionRef.current?.source === "macos") {
       accruedRef.current = currentSeconds();
       draftEnabledRef.current = false;
+      streamAbortRef.current?.abort();
+      setPartialDraft(null);
       stateRef.current = "saving";
       setState("saving");
       if (noteDraftRef.current.text.trim()) {
@@ -697,6 +739,8 @@ export default function RecordingDialog({
     await stopped;
     // Saving the full recording must not wait for optional draft inference.
     draftEnabledRef.current = false;
+    streamAbortRef.current?.abort();
+    setPartialDraft(null);
     await closeDraftCapture();
     streamRef.current?.getTracks().forEach((track) => track.stop());
     const savedNotes = [...notesRef.current];
@@ -791,6 +835,21 @@ export default function RecordingDialog({
           ? "千问草稿跳过字词对齐，时间戳表示约 15 秒音频块的起点；每段会加载模型，更新速度以本机实际识别时间为准。正式转写仍保留精细对齐。"
           : "Whisper 草稿保留句级时间戳。"}
       </p>
+      {draftEngine === "qwen" && (
+        <label className="capture-source">
+          <input
+            type="checkbox"
+            checked={streamEnabled}
+            disabled={state !== "idle"}
+            onChange={(event) => setStreamEnabled(event.target.checked)}
+          />
+          逐字推送
+          <small>
+            收集约 15
+            秒音频后，识别文字逐步显示；未确认文字不计入覆盖，也不能转为简记。关闭后整批显示。
+          </small>
+        </label>
+      )}
       {captureSource !== "browser" && (
         <p className="native-capture-hint">
           首次使用需允许
@@ -996,6 +1055,7 @@ export default function RecordingDialog({
           </header>
           <LiveDraftList
             drafts={drafts}
+            partial={partialDraft}
             onAddNote={(draft) =>
               setNotes((old) => [
                 ...old,

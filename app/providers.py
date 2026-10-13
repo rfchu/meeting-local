@@ -79,6 +79,10 @@ class QwenMLX:
     def transcribe_live(self,audio,output,run):
         return self._transcribe(audio,output,run,True)
 
+    def stream_command(self,audio,output):
+        return [self.python,str(BASE/'scripts/qwen_transcribe.py'),'--model',self.model,'--aligner',self.aligner,
+                '--audio',str(audio),'--output',str(output),'--draft','--stream-events']
+
     def _transcribe(self,audio,output,run,draft):
         if not self.ready(): raise RuntimeError('千问模型或对齐模型尚未就绪，请运行 bash scripts/setup_qwen.sh')
         result_path=output.with_suffix('.qwen.json')

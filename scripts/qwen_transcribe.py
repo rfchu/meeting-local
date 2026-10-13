@@ -44,11 +44,30 @@ def transcribe_adaptive(model,samples,rate,max_tokens=MAX_TOKENS,depth=0):
     return '\n'.join(x for x in (left,right) if x),[attempt,*left_attempts,*right_attempts]
 
 
+def transcribe_streamed(model,samples,rate,max_tokens=MAX_TOKENS):
+    """Emit genuine cumulative token decodes; hold incomplete Unicode bytes."""
+    from mlx_audio.lm.sample_utils import make_sampler
+    tokens=[];last=''
+    for token,_ in model.stream_generate(samples,language='Chinese',max_tokens=max_tokens,
+                                         sampler=make_sampler(0.0),verbose=False):
+        tokens.append(int(token))
+        text=model._tokenizer.decode(tokens,skip_special_tokens=True).strip()
+        if '\ufffd' not in text and text!=last:
+            print(json.dumps({'type':'qwen_partial','text':text},ensure_ascii=False),flush=True);last=text
+    if len(tokens)>=max_tokens:raise RuntimeError('流式草稿达到输出上限，部分文字未保存为完整结果')
+    text=model._tokenizer.decode(tokens,skip_special_tokens=True).strip()
+    if '\ufffd' in text:raise RuntimeError('流式结果包含未完成的字符，不能作为完整结果保存')
+    if text!=last:print(json.dumps({'type':'qwen_partial','text':text},ensure_ascii=False),flush=True)
+    return text,[{'duration':len(samples)/rate,'generation_tokens':len(tokens),'capped':False,'streamed':True}]
+
+
 def main():
     p=argparse.ArgumentParser()
     for name in ('model','aligner','audio','output'):p.add_argument('--'+name,required=True)
     p.add_argument('--draft',action='store_true',help='实时草稿跳过强制对齐，时间戳仅表示音频块范围')
+    p.add_argument('--stream-events',action='store_true')
     args=p.parse_args()
+    if args.stream_events and not args.draft:p.error('--stream-events 必须配合 --draft')
     for directory in (args.model,args.aligner):
         if not Path(directory).is_dir():raise RuntimeError('只接受已下载的本地模型目录')
     import mlx.core as mx
@@ -62,7 +81,7 @@ def main():
     started=time.monotonic()
     mx.random.seed(0)
     model=load(str(Path(args.model).resolve()))
-    text,attempts=transcribe_adaptive(model,samples,rate)
+    text,attempts=transcribe_streamed(model,samples,rate) if args.stream_events else transcribe_adaptive(model,samples,rate)
     output=Path(args.output)
     raw={'engine':'qwen','model':Path(args.model).name,'text':text,'duration':duration,'asr_attempts':attempts}
     output.with_suffix('.raw.json').write_text(json.dumps(raw,ensure_ascii=False,indent=2))

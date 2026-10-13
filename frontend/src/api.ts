@@ -1,3 +1,8 @@
+import {
+  readLiveStream,
+  type LivePartial,
+  type LiveStreamResult,
+} from "./features/notes/liveStream";
 import type {
   Artifact,
   Environment,
@@ -63,6 +68,23 @@ export const api = {
       segments: LiveDraftSegment[];
       processing_ms: number;
     }>(`/native-capture/${id}/draft`, json("POST", { offset })),
+  nativeDraftStream: (
+    id: string,
+    offset: number,
+    onPartial: (partial: LivePartial) => void,
+    signal: AbortSignal,
+  ) =>
+    readLiveStream<
+      LiveStreamResult & {
+        ready: boolean;
+        next_offset: number;
+        skipped_seconds: number;
+      }
+    >(
+      `/native-capture/${id}/draft/stream`,
+      { ...json("POST", { offset, engine: "qwen" }), signal },
+      onPartial,
+    ),
   nativeCommand: (id: string, command: "pause" | "resume" | "stop") =>
     request<NativeCaptureStatus>(
       `/native-capture/${id}/command`,
@@ -116,6 +138,23 @@ export const api = {
     const data = new FormData();
     data.append("file", file);
     return request<Meeting>("/meetings", { method: "POST", body: data });
+  },
+  liveTranscribeStream: (
+    file: File,
+    offset: number,
+    recordingId: string | undefined,
+    onPartial: (partial: LivePartial) => void,
+    signal: AbortSignal,
+  ) => {
+    const data = new FormData();
+    data.append("file", file);
+    data.append("offset", String(offset));
+    if (recordingId) data.append("recording_id", recordingId);
+    return readLiveStream<LiveStreamResult>(
+      "/live-transcribe/stream",
+      { method: "POST", body: data, signal },
+      onPartial,
+    );
   },
   liveTranscribe: (
     file: File,

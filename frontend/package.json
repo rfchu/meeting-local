@@ -8,7 +8,8 @@
     "build": "tsc -b && vite build",
     "typecheck": "tsc -b --pretty false",
     "format": "prettier --write \"src/**/*.{ts,tsx,css}\" \"*.{json,ts,html}\"",
-    "format:check": "prettier --check \"src/**/*.{ts,tsx,css}\" \"*.{json,ts,html}\""
+    "format:check": "prettier --check \"src/**/*.{ts,tsx,css}\" \"*.{json,ts,html}\"",
+    "test:stream": "node --test tests/liveStream.test.mjs"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.90.2",

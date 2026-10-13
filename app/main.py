@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Literal
 from urllib.parse import urlparse, quote
 from fastapi import FastAPI, File, Form, UploadFile, HTTPException, Request
-from fastapi.responses import FileResponse, Response, JSONResponse
+from fastapi.responses import FileResponse, Response, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
 from pydantic import BaseModel, Field
@@ -18,6 +18,7 @@ from .speaker_review import generate_review
 from .recordings import RecordingStore
 from .native_capture import NativeCapture
 from .live_results import LiveResults
+from .live_stream import inspect_audio, qwen_events
 
 BASE=Path(__file__).resolve().parents[1]
 
@@ -222,6 +223,21 @@ def create_app(data_dir=None, start_worker=True):
             await file.close()
             if locked:live_asr_lock.release()
 
+    def stream_response(events):
+        return StreamingResponse(events,media_type='application/x-ndjson',headers={'Cache-Control':'no-store','X-Accel-Buffering':'no'})
+
+    @app.post('/api/live-transcribe/stream')
+    async def live_transcribe_stream(file:UploadFile=File(...),offset:float=Form(default=0,ge=0,le=86400,allow_inf_nan=False),
+                                    recording_id:str|None=Form(default=None)):
+        try:
+            payload=await file.read(4*1024*1024+1)
+            inspect_audio(payload)
+            if recording_id:live_results.check_session(recording_id,'browser')
+        except FileNotFoundError as error:raise HTTPException(404,str(error))
+        except ValueError as error:raise HTTPException(400,str(error))
+        finally:await file.close()
+        return stream_response(qwen_events(get_asr_provider('qwen'),live_results,live_asr_lock,payload,offset,recording_id,'browser',store.root))
+
     def llm_config(cid):
         row=store.one('SELECT * FROM llm_configs WHERE id=?',(cid,))
         if not row:raise HTTPException(404,'模型配置不存在')
@@ -334,6 +350,20 @@ def create_app(data_dir=None, start_worker=True):
         window.pop('silent')
         result=await live_transcribe(UploadFile(file=io.BytesIO(payload),filename='native-draft.wav'),window['offset'],body.engine,rid,'native')
         return window|result
+
+    @app.post('/api/native-capture/{rid}/draft/stream')
+    async def native_draft_stream(rid:str,body:NativeDraftInput):
+        if body.engine!='qwen':raise HTTPException(400,'逐字推送仅支持 Qwen，请使用 Whisper 整批接口')
+        try:window=await run_in_threadpool(native_capture.draft_window,rid,body.offset)
+        except FileNotFoundError as error:raise HTTPException(404,str(error))
+        except ValueError as error:raise HTTPException(409,str(error))
+        if not window['ready']:
+            async def waiting():
+                yield encode({'type':'final','seq':0,'request_id':uid(),'recording_id':rid,'engine':'qwen',
+                    'result':window|{'segments':[],'duration':0,'processing_ms':0}})+'\n'
+            return stream_response(waiting())
+        payload=window.pop('payload');window.pop('silent')
+        return stream_response(qwen_events(get_asr_provider('qwen'),live_results,live_asr_lock,payload,window['offset'],rid,'native',store.root,window))
 
     @app.post('/api/native-capture/{rid}/command')
     def native_command(rid:str,body:NativeCommandInput):
