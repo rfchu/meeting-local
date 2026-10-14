@@ -7,10 +7,12 @@ export default function LiveDraftList({
   onAddNote,
   partial,
   emptyText,
+  canAddNote = true,
 }: {
   drafts: LiveDraftSegment[];
   partial?: LiveDraftSegment | null;
   emptyText?: string;
+  canAddNote?: boolean;
   onAddNote: (draft: LiveDraftSegment) => void;
 }) {
   const list = useRef<HTMLDivElement>(null),
@@ -88,7 +90,11 @@ export default function LiveDraftList({
           >
             <b>{clock(draft.start)}</b>
             <p>{draft.text}</p>
-            <button className="text-btn" onClick={() => onAddNote(draft)}>
+            <button
+              className="text-btn"
+              disabled={!canAddNote}
+              onClick={() => onAddNote(draft)}
+            >
               转为简记
             </button>
           </article>

@@ -1726,3 +1726,241 @@ dialog code {
   white-space: pre-wrap;
   line-height: 1.8;
 }
+
+.recording-workbench[open] {
+  display: flex;
+  flex-direction: column;
+  width: 100vw;
+  max-width: none;
+  height: 100dvh;
+  max-height: 100dvh;
+  margin: 0;
+  inset: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: #f6f8fb;
+  overflow: auto;
+}
+.workbench-topbar {
+  display: flex;
+  align-items: center;
+  gap: 28px;
+  padding: 20px 32px;
+  background: white;
+  border-bottom: 1px solid var(--line);
+  flex-shrink: 0;
+}
+.workbench-topbar h2 {
+  margin: 5px 0 0;
+}
+.workbench-topbar .eyebrow {
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  color: var(--muted);
+}
+.workbench-topbar .recording-controls {
+  margin: 0 0 0 auto;
+}
+.workbench-config-summary {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 14px;
+  padding: 10px 32px;
+  flex-shrink: 0;
+  color: #56647b;
+  font-size: 13px;
+}
+.workbench-config-summary button {
+  padding: 6px 12px;
+}
+.workbench-config-summary small {
+  color: var(--muted);
+  margin-left: auto;
+}
+.recording-workbench > .capture-warning {
+  padding: 0 32px;
+  margin: 0;
+}
+.recording-workbench .recording-workspace {
+  flex: 1;
+  min-height: 180px;
+  margin: 0;
+  padding: 8px 32px 18px;
+  grid-template-columns: minmax(0, 2fr) minmax(300px, 1fr);
+}
+.recording-workbench .live-draft,
+.recording-workbench .live-notes {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: white;
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+}
+.recording-workbench .live-draft > header,
+.recording-workbench .live-notes > header {
+  height: auto;
+  min-height: 24px;
+  padding: 0;
+  position: static;
+  border: 0;
+  background: transparent;
+  flex-shrink: 0;
+}
+.recording-workbench .live-draft h3,
+.recording-workbench .live-notes h3 {
+  font-size: 15px;
+}
+.recording-workbench .live-draft-list,
+.recording-workbench .live-note-list {
+  flex: 1;
+  height: auto;
+  min-height: 90px;
+}
+.recording-workbench .live-draft-follow,
+.recording-workbench .live-note-form {
+  flex-shrink: 0;
+}
+.workbench-bottom {
+  padding: 0 32px 12px;
+  flex-shrink: 0;
+}
+.workbench-bottom .recording-waveform {
+  padding: 6px 14px;
+  margin-bottom: 6px;
+}
+.workbench-bottom .recording-waveform header {
+  display: none;
+}
+.workbench-bottom .waveform-track svg {
+  height: 34px;
+}
+.workbench-bottom .recording-waveform footer {
+  padding: 3px 0 0;
+}
+.workbench-details {
+  font-size: 12px;
+  color: var(--muted);
+}
+.workbench-details[open] {
+  max-height: 190px;
+  overflow: auto;
+}
+.workbench-details summary {
+  cursor: pointer;
+}
+.recording-settings-dialog {
+  width: min(680px, 94vw);
+  max-width: 680px;
+  max-height: 90vh;
+  overflow: auto;
+}
+.settings-tabs {
+  display: flex;
+  gap: 12px;
+  margin: 16px 0;
+}
+.settings-tabs button[aria-pressed="true"] {
+  color: var(--accent);
+  background: var(--soft);
+  border-color: #c7d0ed;
+}
+.recording-finish-panel {
+  margin: 4px 32px 14px;
+  padding: 16px 20px;
+  border: 1px solid #d4e1d9;
+  background: #f4faf6;
+  border-radius: 12px;
+  flex-shrink: 0;
+}
+.recording-finish-panel h3 {
+  margin: 0;
+}
+.recording-finish-panel p {
+  margin: 6px 0 12px;
+}
+.finish-options {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+.finish-options button {
+  text-align: left;
+}
+.finish-options strong,
+.finish-options span {
+  display: block;
+}
+.finish-options span {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.7;
+  margin-top: 8px;
+}
+.finish-options button.selected {
+  border-color: #87a0ef;
+  background: #f1f4ff;
+}
+.recording-workbench .recording-recovery {
+  margin: 4px 32px 12px;
+  max-height: 130px;
+  overflow: auto;
+  flex-shrink: 0;
+}
+@media (max-width: 850px) {
+  .workbench-topbar {
+    gap: 12px;
+    flex-wrap: wrap;
+    padding: 16px;
+  }
+  .workbench-config-summary {
+    padding: 10px 16px;
+  }
+  .recording-workbench .recording-workspace {
+    grid-template-columns: 1fr;
+    min-height: 650px;
+    padding: 6px 16px 16px;
+  }
+  .workbench-bottom {
+    padding: 0 16px 12px;
+  }
+  .recording-finish-panel {
+    margin: 4px 16px 12px;
+  }
+  .finish-options {
+    grid-template-columns: 1fr;
+  }
+}
+
+.workbench-history-wrapper {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+.workbench-history-wrapper.ended {
+  flex: 0 0 auto;
+}
+.workbench-history-wrapper.ended.open {
+  flex: 0 0 350px;
+  min-height: 350px;
+}
+.history-toggle {
+  align-self: flex-start;
+  margin: 0 32px 12px;
+  color: var(--accent);
+}
+.workbench-bottom {
+  margin-top: auto;
+}
+@media (max-width: 850px) {
+  .workbench-history-wrapper.ended.open {
+    min-height: 720px;
+  }
+  .history-toggle {
+    margin-left: 16px;
+  }
+}

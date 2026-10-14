@@ -9,6 +9,12 @@ import type {
   NativeCaptureStatus,
   EngineInfo,
 } from "../../types";
+import {
+  readRecordingPreferences,
+  saveRecordingPreferences,
+  DEFAULT_RECORDING_PREFERENCES,
+  type CompletionMode,
+} from "./recordingPreferences";
 import { clock } from "../../utils";
 import Modal from "../../components/Modal";
 import { encodeLiveWav } from "./liveAudio";
@@ -42,18 +48,42 @@ export default function RecordingDialog({
   onClose,
   onComplete,
   toast,
+  onModels,
 }: {
+  onModels: () => void;
   engineLabel: string;
   engines: EngineInfo[];
   onClose: () => void;
   onComplete: (
     meetingId: string,
-    options: { mode: "quick" | "full"; engine: "whisper" | "qwen" },
+    options: { mode: CompletionMode; engine: "whisper" | "qwen" },
   ) => Promise<void>;
   toast: (text: string) => void;
 }) {
+  const [preferences] = useState(() => {
+    try {
+      return readRecordingPreferences(window.localStorage);
+    } catch {
+      return { ...DEFAULT_RECORDING_PREFERENCES };
+    }
+  });
+  const [settingsOpen, setSettingsOpen] = useState(false),
+    [settingsTab, setSettingsTab] = useState<"recording" | "model">(
+      "recording",
+    );
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [preferencesSaved, setPreferencesSaved] = useState(true),
+    [savedMeetingId, setSavedMeetingId] = useState(""),
+    [savedEngine, setSavedEngine] = useState<"qwen" | "whisper">("whisper"),
+    [completing, setCompleting] = useState(false);
   const [state, setState] = useState<
-      "idle" | "requesting" | "recording" | "paused" | "saving" | "failed"
+      | "idle"
+      | "requesting"
+      | "recording"
+      | "paused"
+      | "saving"
+      | "failed"
+      | "finished"
     >("idle"),
     [elapsed, setElapsed] = useState(0),
     [noteText, setNoteText] = useState(""),
@@ -68,14 +98,18 @@ export default function RecordingDialog({
       lagMs: null as number | null,
       revisions: 0,
     }),
-    [responsiveMode, setResponsiveMode] = useState(false),
+    [responsiveMode, setResponsiveMode] = useState(preferences.responsiveMode),
     [modelStatus, setModelStatus] = useState<Awaited<
       ReturnType<typeof api.liveModelStatus>
     > | null>(null),
     [modelActionBusy, setModelActionBusy] = useState(false),
-    [streamEnabled, setStreamEnabled] = useState(true),
-    [draftEngine, setDraftEngine] = useState<"whisper" | "qwen">("whisper"),
-    [completionMode, setCompletionMode] = useState<"quick" | "full">("quick"),
+    [streamEnabled, setStreamEnabled] = useState(preferences.streamEnabled),
+    [draftEngine, setDraftEngine] = useState<"whisper" | "qwen">(
+      preferences.draftEngine,
+    ),
+    [completionMode, setCompletionMode] = useState<CompletionMode>(
+      preferences.completionMode,
+    ),
     [coverageDetails, setCoverageDetails] = useState<{
       gaps: { start: number; end: number }[];
       recent_failures: {
@@ -91,7 +125,7 @@ export default function RecordingDialog({
     [recoveries, setRecoveries] = useState<RecordingSession[]>([]),
     [captureSource, setCaptureSource] = useState<
       "browser" | "macos-system" | "macos-both"
-    >("browser"),
+    >(preferences.captureSource),
     [nativeCapability, setNativeCapability] = useState<NativeCapability | null>(
       null,
     ),
@@ -131,6 +165,45 @@ export default function RecordingDialog({
     draftEnabledRef = useRef(true);
   notesRef.current = notes;
   noteDraftRef.current = { text: noteText, type: noteType };
+
+  const persistPreferences = (mode = completionMode) => {
+    let saved = false;
+    try {
+      saved = saveRecordingPreferences(window.localStorage, {
+        version: 1,
+        captureSource,
+        draftEngine,
+        streamEnabled,
+        responsiveMode,
+        completionMode: mode,
+      });
+    } catch {
+      /* storage can be disabled */
+    }
+    setPreferencesSaved(saved);
+  };
+  useEffect(() => {
+    persistPreferences();
+  }, [
+    captureSource,
+    draftEngine,
+    streamEnabled,
+    responsiveMode,
+    completionMode,
+  ]);
+  const processSaved = async (mode: CompletionMode) => {
+    if (!savedMeetingId || completing) return;
+    setCompletionMode(mode);
+    persistPreferences(mode);
+    setCompleting(true);
+    try {
+      await onComplete(savedMeetingId, { mode, engine: savedEngine });
+    } catch (error) {
+      toast(`录音已保存：${(error as Error).message}`);
+    } finally {
+      setCompleting(false);
+    }
+  };
 
   const currentSeconds = () =>
     accruedRef.current +
@@ -232,8 +305,7 @@ export default function RecordingDialog({
     if (
       !sessionRef.current ||
       sessionRef.current.source !== "macos" ||
-      state === "idle" ||
-      state === "failed"
+      !["requesting", "recording", "paused"].includes(state)
     )
       return;
     let active = true,
@@ -243,7 +315,8 @@ export default function RecordingDialog({
       polling = true;
       try {
         const status = await api.nativeStatus(sessionRef.current!.id);
-        if (!active) return;
+        if (!active || ["saving", "finished"].includes(stateRef.current))
+          return;
         accruedRef.current = status.duration;
         activeSinceRef.current = performance.now();
         setElapsed(status.duration);
@@ -480,10 +553,12 @@ export default function RecordingDialog({
           ? await api.nativeFinish(session.id)
           : await api.finishRecording(session.id, session.chunk_count);
       await forgetRecording(session.id);
-      await onComplete(meeting.id, {
-        mode: completionMode,
-        engine: reuseEngine,
-      });
+      setSaveStatus("录音和简记已保存到本机");
+      setSavedMeetingId(meeting.id);
+      setSavedEngine(reuseEngine);
+      stateRef.current = "finished";
+      setState("finished");
+      setElapsed(accruedRef.current);
     } catch (error) {
       setState("failed");
       stateRef.current = "failed";
@@ -694,6 +769,12 @@ export default function RecordingDialog({
   };
 
   const start = async () => {
+    if (!engines.find((engine) => engine.id === draftEngine)?.ready)
+      return toast("上次选择的识别引擎未就绪，请调整设置");
+    if (captureSource !== "browser" && !nativeCapability?.available)
+      return toast("上次选择的原生音源暂不可用，请调整设置");
+    setSettingsOpen(false);
+    persistPreferences();
     setPartialDraft(null);
     priorPreviewRef.current = null;
     setLiveMetrics({
@@ -719,9 +800,8 @@ export default function RecordingDialog({
         nativeDraftOffsetRef.current = 0;
         nativePreviewGoalRef.current = 5;
         setDraftStatus(
-          `${draftEngine === "qwen" ? "Qwen-ASR" : "Whisper"} ${responsiveMode && streamEnabled ? "短片段预览与修订" : "约 15 秒识别"}，仅作会议跟随参考`,
+          `${draftEngine === "qwen" ? "Qwen-ASR" : "Whisper"} ${draftEngine === "qwen" && responsiveMode && streamEnabled ? "短片段预览与修订" : "约 15 秒识别"}，仅作会议跟随参考`,
         );
-        setState("requesting");
       } catch (error) {
         if (sessionRef.current?.source === "macos")
           await api
@@ -930,18 +1010,29 @@ export default function RecordingDialog({
   };
 
   const recording = state === "recording" || state === "paused";
+  const sourceLabel = {
+    browser: "浏览器麦克风",
+    "macos-system": "电脑声音",
+    "macos-both": "电脑声音 + 麦克风",
+  }[captureSource];
+  const engineName = draftEngine === "qwen" ? "千问 Qwen-ASR" : "Whisper";
   return (
     <Modal
-      id="recordingDialog"
-      className="recording-dialog"
+      id="recordingWorkbench"
+      className="recording-workbench"
+      ariaLabel="录音与会议简记工作台"
       onClose={() => {
-        if (failedChunksRef.current.length || localSaveFailedRef.current)
-          return toast("还有尚未落盘的录音分段，请先重试保存");
-        if (!recording && state !== "saving" && state !== "requesting")
+        if (
+          !recording &&
+          !completing &&
+          !["saving", "requesting"].includes(state) &&
+          !failedChunksRef.current.length &&
+          !localSaveFailedRef.current
+        )
           onClose();
       }}
     >
-      <div className="recording-header">
+      <div className="workbench-topbar">
         <div>
           <div className="eyebrow">本机会议采集</div>
           <h2>录音与会议简记</h2>
@@ -949,229 +1040,139 @@ export default function RecordingDialog({
         <div className={`recording-clock${recording ? " active" : ""}`}>
           <span /> {clock(elapsed)}
         </div>
+        <div className="recording-controls">
+          {state === "idle" && (
+            <button
+              className="primary"
+              disabled={
+                !engines.find((engine) => engine.id === draftEngine)?.ready ||
+                (captureSource !== "browser" && !nativeCapability?.available)
+              }
+              onClick={() => void start()}
+            >
+              ● 开始录音
+            </button>
+          )}
+          {state === "requesting" && (
+            <button disabled>
+              {captureSource === "browser"
+                ? "正在请求麦克风…"
+                : "等待 macOS 采集权限…"}
+            </button>
+          )}
+          {state === "recording" && <button onClick={pause}>暂停</button>}
+          {state === "paused" && <button onClick={resume}>继续录音</button>}
+          {recording && (
+            <button className="recording-stop" onClick={() => void stop()}>
+              ■ 结束录音
+            </button>
+          )}
+          {state === "saving" && <button disabled>正在保存并创建会议…</button>}
+          {state === "failed" && (
+            <button
+              className="primary"
+              onClick={() => {
+                const session = metadata();
+                if (session) void finish(session);
+              }}
+            >
+              重试完成保存
+            </button>
+          )}
+          {!recording &&
+            !completing &&
+            state !== "saving" &&
+            state !== "requesting" && (
+              <button
+                onClick={() => {
+                  if (
+                    failedChunksRef.current.length ||
+                    localSaveFailedRef.current
+                  )
+                    return toast("还有未落盘的分段，请先重试保存");
+                  onClose();
+                }}
+              >
+                {state === "failed"
+                  ? "稍后恢复"
+                  : state === "finished"
+                    ? "返回会议资料库"
+                    : "返回"}
+              </button>
+            )}
+        </div>
       </div>
-      <p className="recording-intro">
-        {captureSource === "browser"
-          ? "原音每约 5 秒分段保存，浏览器暂存保护待同步内容。所选引擎生成实时草稿；"
-          : "电脑声音由原生采集器保存，联合模式还会保留独立麦克风音轨；"}
-        {completionMode === "quick"
-          ? `停止后复用 ${draftEngine === "qwen" ? "Qwen-ASR" : "Whisper"} 实时结果，仅补识别缺段与尾段。`
-          : `停止后使用 ${engineLabel} 重新转写完整录音。`}
-      </p>
-      <label className="capture-source">
-        录音来源
-        <select
-          aria-label="录音来源"
-          value={captureSource}
+      <div className="workbench-config-summary">
+        <span>
+          {sourceLabel} · {engineName} ·{" "}
+          {draftEngine === "qwen" && streamEnabled
+            ? responsiveMode
+              ? "短片段模式"
+              : "逐字推送"
+            : "分段识别"}
+        </span>
+        <button
           disabled={state !== "idle"}
-          onChange={(e) =>
-            setCaptureSource(e.target.value as typeof captureSource)
-          }
+          onClick={() => setSettingsOpen(true)}
         >
-          <option value="browser">浏览器麦克风（支持实时草稿）</option>
-          <option value="macos-both" disabled={!nativeCapability?.available}>
-            macOS 电脑声音 + 麦克风
-          </option>
-          <option value="macos-system" disabled={!nativeCapability?.available}>
-            macOS 仅电脑声音
-          </option>
-        </select>
-      </label>
-      <label className="capture-source">
-        实时草稿引擎
-        <select
-          aria-label="实时草稿引擎"
-          value={draftEngine}
-          disabled={state !== "idle"}
-          onChange={(event) =>
-            setDraftEngine(event.target.value as "whisper" | "qwen")
-          }
-        >
-          {(["whisper", "qwen"] as const).map((id) => (
-            <option
-              key={id}
-              value={id}
-              disabled={!engines.find((engine) => engine.id === id)?.ready}
-            >
-              {id === "qwen" ? "千问 Qwen-ASR" : "Whisper"}
-              {!engines.find((engine) => engine.id === id)?.ready
-                ? "（未就绪）"
-                : ""}
-            </option>
-          ))}
-        </select>
-      </label>
-      <p className="native-capture-hint">
-        实时草稿与停止后的正式转写引擎独立选择。
-        {draftEngine === "qwen"
-          ? `千问草稿按识别片段定位，不是精确字词时间。${streamEnabled ? "流式识别复用常驻模型" : "整批输出每段加载模型"}；正式转写仍保留精细对齐。`
-          : "Whisper 草稿保留句级时间戳。"}
-      </p>
-      {draftEngine === "qwen" && (
-        <label className="capture-source">
-          <input
-            type="checkbox"
-            checked={streamEnabled}
-            disabled={state !== "idle"}
-            onChange={(event) => setStreamEnabled(event.target.checked)}
-          />
-          逐字推送
-          <small>
-            {responsiveMode
-              ? "短片段先预览，再用后续上下文修订。"
-              : "收集约 15 秒音频后，文字逐步显示。"}
-            未确认文字不计入覆盖，也不能转为简记。关闭后整批显示。
-          </small>
-        </label>
-      )}
-      {draftEngine === "qwen" && streamEnabled && (
-        <>
-          <label className="capture-source">
-            <input
-              type="checkbox"
-              checked={responsiveMode}
-              disabled={state !== "idle" || !modelStatus}
-              onChange={(event) => setResponsiveMode(event.target.checked)}
-            />
-            短片段与尾部修订（试用）
-          </label>
-          <p className="native-capture-hint">
-            {responsiveMode
-              ? "约 5 秒开始预览，更多上下文会修订同一临时尾部；静音、暂停或最长 15 秒后确认。能量静音检测可能提前分段，建议与标准模式对比。"
-              : "标准模式：约 15 秒一段，完成后确认。"}
+          调整设置
+        </button>
+        <small>
+          {preferencesSaved
+            ? "设置已记住，下次自动恢复"
+            : "当前浏览器无法保存设置，本次仍可使用"}
+        </small>
+      </div>
+      {state === "idle" &&
+        (!engines.find((engine) => engine.id === draftEngine)?.ready ||
+          (captureSource !== "browser" && !nativeCapability?.available)) && (
+          <p className="capture-warning">
+            上次选择的音源或模型暂不可用，请调整设置后开始。
           </p>
-          <div className="capture-preflight">
-            <span>
-              Qwen 模型：
-              {modelStatus?.loading
-                ? "加载中"
-                : modelStatus?.loaded
-                  ? "已常驻"
-                  : "未加载"}{" "}
-              ·{" "}
-              {modelStatus?.busy
-                ? "识别中"
-                : modelStatus?.formal_job_running
-                  ? "正式任务处理中"
-                  : "空闲"}
-              {modelStatus?.peak_memory_gb
-                ? ` · 峰值 ${modelStatus.peak_memory_gb.toFixed(1)} GB`
-                : ""}
-            </span>
-            <button
-              disabled={
-                state !== "idle" || modelActionBusy || modelStatus?.busy
-              }
-              onClick={() => void controlModel("warm")}
-            >
-              预加载模型
-            </button>
-            <button
-              disabled={
-                !modelStatus?.loaded ||
-                modelActionBusy ||
-                modelStatus?.busy ||
-                !["idle", "paused"].includes(state)
-              }
-              onClick={() => void controlModel("release")}
-            >
-              释放模型
-            </button>
-            <small>
-              同一进程复用模型，空闲约 3
-              分钟自动释放；正式处理任务优先释放常驻模型。取消正在识别的窗口会重建进程。
-            </small>
-          </div>
-        </>
-      )}
-      {captureSource !== "browser" && (
-        <p className="native-capture-hint">
-          首次使用需允许
-          macOS“屏幕与系统音频录制”权限，联合采集还需麦克风权限。仅保存音频，不保存屏幕画面。建议戴耳机，避免麦克风重复收录扬声器声音。所选引擎生成实时草稿，停止后生成正式文字稿。
-        </p>
-      )}
-      {state === "idle" && (
-        <div className="capture-preflight">
-          <span>
-            原生采集器：{nativeCapability?.available ? "已就绪" : "未就绪"} ·
-            系统音频权限：
-            {nativeCapability?.screen_permission ? "已授权" : "待授权"} ·
-            麦克风权限：
-            {nativeCapability?.microphone_permission ? "已授权" : "待授权"}
-          </span>
-          <button
-            disabled={checkingCapture}
-            onClick={() => void checkCapture()}
-          >
-            {checkingCapture ? "检查中…" : "重新检查"}
-          </button>
-          <small>
-            在系统设置中授权后重新检查；开始原生录音时会请求所需权限。
-          </small>
-        </div>
-      )}
-      {!nativeCapability?.available && (
-        <p className="native-capture-hint">
-          系统音频采集器尚未就绪，可运行 bash scripts/build_capture.sh 构建。
-        </p>
-      )}
-      <RecordingWaveform
-        tracks={
-          captureSource === "browser"
-            ? [{ label: "麦克风", levels: microphoneLevels, color: "#263752" }]
-            : [
-                { label: "电脑声音", levels: systemLevels, color: "#3968e8" },
-                ...(captureSource === "macos-both"
-                  ? [
-                      {
-                        label: "麦克风",
-                        levels: microphoneLevels,
-                        color: "#263752",
-                      },
-                    ]
-                  : []),
-              ]
-        }
-        active={recording}
-        paused={state === "paused"}
-        status={saveStatus}
-        onRetry={
-          recording
-            ? () => void retrySync().catch((error) => toast(error.message))
-            : undefined
-        }
-      />
-      {captureSource !== "browser" && captureHealth && (
-        <div className="capture-health" role="status" aria-live="polite">
-          {captureHealth.tracks.map((track) => (
-            <p
-              key={track.name}
-              className={
-                ["no_data", "quiet", "stalled"].includes(track.state)
-                  ? "capture-warning"
-                  : ""
-              }
-            >
-              <strong>{track.name === "system" ? "电脑声音" : "麦克风"}</strong>{" "}
-              ·{" "}
-              {
+        )}
+      {state === "finished" && (
+        <section
+          className="recording-finish-panel"
+          aria-label="录音结束后的处理选择"
+        >
+          <h3>录音和简记已保存</h3>
+          <p>{coverageStatus}。选择下一步处理方式：</p>
+          <div className="finish-options">
+            {(
+              [
                 {
-                  receiving: "正在接收音频",
-                  waiting: "等待音频",
-                  paused: "已暂停",
-                  inactive: "已停止",
-                  stalled: "采集状态超过 10 秒未更新，已有音轨保留",
-                  no_data: "超过 10 秒未收到音频数据，请检查声音来源和权限",
-                  quiet: "连续 10 秒声音很弱，请确认会议正在播放或麦克风正常",
-                }[track.state]
-              }{" "}
-              · 已保存 {track.saved_seconds.toFixed(1)}s
-            </p>
-          ))}
-          <small>
-            静音提醒不会停止录音。保存时长包含时间线中的静音间隔，不能代表有效发言时长。
-          </small>
-        </div>
+                  mode: "quick",
+                  title: "快速完成",
+                  description: `复用 ${savedEngine === "qwen" ? "千问" : "Whisper"} 实时结果，补齐缺段与尾段；不区分发言人。`,
+                },
+                {
+                  mode: "full",
+                  title: "精细处理",
+                  description: `使用 ${engineLabel} 重识别、时间对齐，按会议设置区分发言人。`,
+                },
+                {
+                  mode: "none",
+                  title: "暂不处理",
+                  description: "保留录音和简记，稍后在会议中启动转写。",
+                },
+              ] as const
+            ).map((choice) => (
+              <button
+                key={choice.mode}
+                className={completionMode === choice.mode ? "selected" : ""}
+                disabled={completing}
+                onClick={() => void processSaved(choice.mode)}
+              >
+                <strong>
+                  {choice.title}
+                  {completionMode === choice.mode ? " · 上次选择" : ""}
+                </strong>
+                <span>{choice.description}</span>
+              </button>
+            ))}
+          </div>
+          {completing && <p role="status">正在打开会议…</p>}
+        </section>
       )}
       {state === "idle" && recoveries.length > 0 && (
         <section className="recording-recovery">
@@ -1191,106 +1192,159 @@ export default function RecordingDialog({
           ))}
         </section>
       )}
-      <label className="capture-source">
-        停止后处理
-        <select
-          aria-label="停止后处理"
-          value={completionMode}
-          disabled={state === "saving"}
-          onChange={(event) =>
-            setCompletionMode(event.target.value as "quick" | "full")
-          }
-        >
-          <option value="quick">快速完成：复用草稿，补缺段与尾段</option>
-          <option value="full">
-            精细处理：完整重识别、对齐与所选发言人区分
-          </option>
-        </select>
-      </label>
-      <p className="native-capture-hint">
-        {coverageStatus}
-        <br />
-        {completionMode === "quick"
-          ? "快速完成使用实时草稿引擎，保留草稿时间精度，不执行发言人区分；文字稿生成后可再启动精细转写。未完成或失败的范围会从原音补识别。"
-          : `精细处理使用 ${engineLabel} 重新转写完整录音。`}
-      </p>
-      {coverageDetails &&
-        (coverageDetails.gaps.length > 0 ||
-          coverageDetails.recent_failures.length > 0) && (
-          <details className="capture-health">
-            <summary>查看未覆盖范围及失败记录</summary>
-            {coverageDetails.gaps.slice(0, 20).map((gap, index) => (
-              <p key={`gap-${index}`}>
-                {clock(gap.start)}–{clock(gap.end)} · 快速完成时补识别
-              </p>
-            ))}
-            {coverageDetails.recent_failures.map((attempt, index) => (
-              <p key={`attempt-${index}`}>
-                {clock(attempt.start)}–{clock(attempt.end)} ·{" "}
-                {attempt.state === "running"
-                  ? "识别中"
-                  : attempt.state === "preview"
-                    ? "临时结果，未确认"
-                    : "失败"}{" "}
-                {attempt.error}
-              </p>
-            ))}
-            <small>
-              历史失败尝试会保留；已重试成功的范围不会再次补识别。最多显示 20
-              个缺段及最近 50 条失败/进行中记录。
-            </small>
-          </details>
-        )}
-      <div className="recording-controls">
-        {state === "idle" && (
-          <button className="primary" onClick={() => void start()}>
-            ● 开始录音
-          </button>
-        )}
-        {state === "requesting" && (
-          <button disabled>
-            {captureSource === "browser"
-              ? "正在请求麦克风…"
-              : "等待 macOS 采集权限…"}
-          </button>
-        )}
-        {state === "recording" && <button onClick={pause}>暂停</button>}
-        {state === "paused" && <button onClick={resume}>继续录音</button>}
-        {recording && (
-          <button className="recording-stop" onClick={() => void stop()}>
-            ■ 停止并生成文字稿
-          </button>
-        )}
-        {state === "saving" && <button disabled>正在保存并创建会议…</button>}
-        {state === "failed" && (
+      <div
+        className={`workbench-history-wrapper${state === "finished" ? (historyOpen ? " ended open" : " ended") : ""}`}
+      >
+        {state === "finished" && (
           <button
-            className="primary"
-            onClick={() => {
-              const session = metadata();
-              if (session) void finish(session);
-            }}
+            className="history-toggle"
+            aria-expanded={historyOpen}
+            onClick={() => setHistoryOpen((value) => !value)}
           >
-            重试完成保存
+            {historyOpen ? "收起" : "查看"}本次实时文字与简记（{notes.length}{" "}
+            条简记）
           </button>
         )}
-        {!recording && state !== "saving" && state !== "requesting" && (
-          <button
-            onClick={() => {
-              if (failedChunksRef.current.length || localSaveFailedRef.current)
-                return toast("还有未落盘的分段，请先重试保存");
-              onClose();
-            }}
-          >
-            {state === "failed" ? "稍后恢复" : "取消"}
-          </button>
+        {(state !== "finished" || historyOpen) && (
+          <div className="recording-workspace">
+            <section className="live-draft">
+              <header>
+                <h3>实时草稿</h3>
+                <span>{draftStatus}</span>
+              </header>
+              <LiveDraftList
+                drafts={drafts}
+                canAddNote={recording}
+                partial={partialDraft}
+                emptyText={
+                  responsiveMode && draftEngine === "qwen" && streamEnabled
+                    ? "约 5 秒开始预览，临时尾部会随上下文修订。"
+                    : undefined
+                }
+                onAddNote={(draft) =>
+                  setNotes((old) => [
+                    ...old,
+                    {
+                      captured_at: draft.start,
+                      note_type: "note",
+                      raw_text: draft.text,
+                    },
+                  ])
+                }
+              />
+            </section>
+            <section className="live-notes">
+              <header>
+                <h3>会议简记</h3>
+                <span>
+                  {notes.length ? `${notes.length} 条` : "原文永久保留"}
+                </span>
+              </header>
+              <div className="live-note-form">
+                <select
+                  aria-label="简记类型"
+                  value={noteType}
+                  disabled={!recording}
+                  onChange={(event) =>
+                    setNoteType(event.target.value as MeetingNoteType)
+                  }
+                >
+                  {Object.entries(noteLabels).map(([value, label]) => (
+                    <option value={value} key={value}>
+                      {label}
+                    </option>
+                  ))}
+                </select>
+                <textarea
+                  aria-label="会议简记"
+                  placeholder={
+                    recording
+                      ? "只记关键词，系统会保留对应会议时间…"
+                      : "开始录音后可记下重点"
+                  }
+                  value={noteText}
+                  disabled={!recording}
+                  onChange={(event) => setNoteText(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (
+                      (event.metaKey || event.ctrlKey) &&
+                      event.key === "Enter"
+                    )
+                      addNote();
+                  }}
+                />
+                <button
+                  disabled={!recording || !noteText.trim()}
+                  onClick={addNote}
+                >
+                  添加简记
+                </button>
+              </div>
+              <div className="live-note-list">
+                {!notes.length && (
+                  <p>简记会自动绑定当前录音时间，支持 ⌘/Ctrl + Enter 添加。</p>
+                )}
+                {notes.map((note, index) => (
+                  <article key={`${note.captured_at}-${index}`}>
+                    <button
+                      className="text-btn danger"
+                      aria-label="删除简记"
+                      disabled={!recording}
+                      onClick={() =>
+                        setNotes((old) => old.filter((_, i) => i !== index))
+                      }
+                    >
+                      删除
+                    </button>
+                    <b>{clock(note.captured_at)}</b>
+                    <span>{noteLabels[note.note_type]}</span>
+                    <p>{note.raw_text}</p>
+                  </article>
+                ))}
+              </div>
+            </section>
+          </div>
         )}
       </div>
-      <div className="recording-workspace">
-        <section className="live-draft">
-          <header>
-            <h3>实时草稿</h3>
-            <span>{draftStatus}</span>
-          </header>
+      <div className="workbench-bottom">
+        <RecordingWaveform
+          tracks={
+            captureSource === "browser"
+              ? [
+                  {
+                    label: "麦克风",
+                    levels: microphoneLevels,
+                    color: "#263752",
+                  },
+                ]
+              : [
+                  { label: "电脑声音", levels: systemLevels, color: "#3968e8" },
+                  ...(captureSource === "macos-both"
+                    ? [
+                        {
+                          label: "麦克风",
+                          levels: microphoneLevels,
+                          color: "#263752",
+                        },
+                      ]
+                    : []),
+                ]
+          }
+          active={recording}
+          paused={state === "paused"}
+          status={saveStatus}
+          onRetry={
+            recording &&
+            (failedChunksRef.current.length > 0 ||
+              localSaveFailedRef.current ||
+              /失败|未完成|错误/.test(saveStatus))
+              ? () => void retrySync().catch((error) => toast(error.message))
+              : undefined
+          }
+        />
+        <details className="workbench-details">
+          <summary>运行详情 · {coverageStatus}</summary>
+          <p>{draftStatus}</p>
           {draftEngine === "qwen" && streamEnabled && (
             <p className="native-capture-hint">
               {liveMetrics.firstMs !== null
@@ -1298,90 +1352,295 @@ export default function RecordingDialog({
                 : ""}
               处理 {(liveMetrics.processingMs / 1000).toFixed(2)}s ·
               临时尾部更新 {liveMetrics.revisions} 次（不含逐字追加）
+              {liveMetrics.rtf !== null
+                ? ` · RTF ${liveMetrics.rtf.toFixed(2)}`
+                : ""}
+              {liveMetrics.lagMs !== null
+                ? ` · 确认滞后 ${(liveMetrics.lagMs / 1000).toFixed(1)}s`
+                : ""}
             </p>
           )}
-          <LiveDraftList
-            drafts={drafts}
-            partial={partialDraft}
-            emptyText={
-              responsiveMode && draftEngine === "qwen" && streamEnabled
-                ? "约 5 秒开始预览，临时尾部会随上下文修订。"
-                : undefined
-            }
-            onAddNote={(draft) =>
-              setNotes((old) => [
-                ...old,
-                {
-                  captured_at: draft.start,
-                  note_type: "note",
-                  raw_text: draft.text,
-                },
-              ])
-            }
-          />
-        </section>
-        <section className="live-notes">
-          <header>
-            <h3>会议简记</h3>
-            <span>{notes.length ? `${notes.length} 条` : "原文永久保留"}</span>
-          </header>
-          <div className="live-note-form">
-            <select
-              aria-label="简记类型"
-              value={noteType}
-              disabled={!recording}
-              onChange={(event) =>
-                setNoteType(event.target.value as MeetingNoteType)
-              }
-            >
-              {Object.entries(noteLabels).map(([value, label]) => (
-                <option value={value} key={value}>
-                  {label}
-                </option>
-              ))}
-            </select>
-            <textarea
-              aria-label="会议简记"
-              placeholder={
-                recording
-                  ? "只记关键词，系统会保留对应会议时间…"
-                  : "开始录音后可记下重点"
-              }
-              value={noteText}
-              disabled={!recording}
-              onChange={(event) => setNoteText(event.target.value)}
-              onKeyDown={(event) => {
-                if ((event.metaKey || event.ctrlKey) && event.key === "Enter")
-                  addNote();
-              }}
-            />
-            <button disabled={!recording || !noteText.trim()} onClick={addNote}>
-              添加简记
-            </button>
-          </div>
-          <div className="live-note-list">
-            {!notes.length && (
-              <p>简记会自动绑定当前录音时间，支持 ⌘/Ctrl + Enter 添加。</p>
-            )}
-            {notes.map((note, index) => (
-              <article key={`${note.captured_at}-${index}`}>
-                <button
-                  className="text-btn danger"
-                  aria-label="删除简记"
-                  onClick={() =>
-                    setNotes((old) => old.filter((_, i) => i !== index))
+          {captureSource !== "browser" && captureHealth && (
+            <div className="capture-health" role="status" aria-live="polite">
+              {captureHealth.tracks.map((track) => (
+                <p
+                  key={track.name}
+                  className={
+                    ["no_data", "quiet", "stalled"].includes(track.state)
+                      ? "capture-warning"
+                      : ""
                   }
                 >
-                  删除
-                </button>
-                <b>{clock(note.captured_at)}</b>
-                <span>{noteLabels[note.note_type]}</span>
-                <p>{note.raw_text}</p>
-              </article>
-            ))}
-          </div>
-        </section>
+                  <strong>
+                    {track.name === "system" ? "电脑声音" : "麦克风"}
+                  </strong>{" "}
+                  ·{" "}
+                  {
+                    {
+                      receiving: "正在接收音频",
+                      waiting: "等待音频",
+                      paused: "已暂停",
+                      inactive: "已停止",
+                      stalled: "采集状态超过 10 秒未更新，已有音轨保留",
+                      no_data: "超过 10 秒未收到音频数据，请检查声音来源和权限",
+                      quiet:
+                        "连续 10 秒声音很弱，请确认会议正在播放或麦克风正常",
+                    }[track.state]
+                  }{" "}
+                  · 已保存 {track.saved_seconds.toFixed(1)}s
+                </p>
+              ))}
+              <small>
+                静音提醒不会停止录音。保存时长包含时间线中的静音间隔，不能代表有效发言时长。
+              </small>
+            </div>
+          )}
+          {coverageDetails &&
+            (coverageDetails.gaps.length > 0 ||
+              coverageDetails.recent_failures.length > 0) && (
+              <details className="capture-health">
+                <summary>查看未覆盖范围及失败记录</summary>
+                {coverageDetails.gaps.slice(0, 20).map((gap, index) => (
+                  <p key={`gap-${index}`}>
+                    {clock(gap.start)}–{clock(gap.end)} · 快速完成时补识别
+                  </p>
+                ))}
+                {coverageDetails.recent_failures.map((attempt, index) => (
+                  <p key={`attempt-${index}`}>
+                    {clock(attempt.start)}–{clock(attempt.end)} ·{" "}
+                    {attempt.state === "running"
+                      ? "识别中"
+                      : attempt.state === "preview"
+                        ? "临时结果，未确认"
+                        : "失败"}{" "}
+                    {attempt.error}
+                  </p>
+                ))}
+                <small>
+                  历史失败尝试会保留；已重试成功的范围不会再次补识别。最多显示
+                  20 个缺段及最近 50 条失败/进行中记录。
+                </small>
+              </details>
+            )}
+        </details>
       </div>
+      {settingsOpen && (
+        <Modal
+          className="recording-settings-dialog"
+          onClose={() => setSettingsOpen(false)}
+        >
+          <div className="search-heading">
+            <h2>录音设置</h2>
+            <button onClick={() => setSettingsOpen(false)}>完成</button>
+          </div>
+          <div className="settings-tabs">
+            <button
+              aria-pressed={settingsTab === "recording"}
+              onClick={() => setSettingsTab("recording")}
+            >
+              音源与权限
+            </button>
+            <button
+              aria-pressed={settingsTab === "model"}
+              onClick={() => setSettingsTab("model")}
+            >
+              模型与识别
+            </button>
+          </div>
+          {settingsTab === "recording" && (
+            <section>
+              <label className="capture-source">
+                录音来源
+                <select
+                  aria-label="录音来源"
+                  value={captureSource}
+                  disabled={state !== "idle"}
+                  onChange={(e) =>
+                    setCaptureSource(e.target.value as typeof captureSource)
+                  }
+                >
+                  <option value="browser">浏览器麦克风（支持实时草稿）</option>
+                  <option
+                    value="macos-both"
+                    disabled={!nativeCapability?.available}
+                  >
+                    macOS 电脑声音 + 麦克风
+                  </option>
+                  <option
+                    value="macos-system"
+                    disabled={!nativeCapability?.available}
+                  >
+                    macOS 仅电脑声音
+                  </option>
+                </select>
+              </label>
+              {captureSource !== "browser" && (
+                <p className="native-capture-hint">
+                  首次使用需允许
+                  macOS“屏幕与系统音频录制”权限，联合采集还需麦克风权限。仅保存音频，不保存屏幕画面。建议戴耳机，避免麦克风重复收录扬声器声音。所选引擎生成实时草稿，停止后生成正式文字稿。
+                </p>
+              )}
+              {state === "idle" && (
+                <div className="capture-preflight">
+                  <span>
+                    原生采集器：
+                    {nativeCapability?.available ? "已就绪" : "未就绪"} ·
+                    系统音频权限：
+                    {nativeCapability?.screen_permission
+                      ? "已授权"
+                      : "待授权"}{" "}
+                    · 麦克风权限：
+                    {nativeCapability?.microphone_permission
+                      ? "已授权"
+                      : "待授权"}
+                  </span>
+                  <button
+                    disabled={checkingCapture}
+                    onClick={() => void checkCapture()}
+                  >
+                    {checkingCapture ? "检查中…" : "重新检查"}
+                  </button>
+                  <small>
+                    在系统设置中授权后重新检查；开始原生录音时会请求所需权限。
+                  </small>
+                </div>
+              )}
+              {!nativeCapability?.available && (
+                <p className="native-capture-hint">
+                  系统音频采集器尚未就绪，可运行 bash scripts/build_capture.sh
+                  构建。
+                </p>
+              )}
+            </section>
+          )}
+          {settingsTab === "model" && (
+            <section>
+              <button
+                onClick={() => {
+                  setSettingsOpen(false);
+                  onModels();
+                }}
+              >
+                分析 LLM 与本机服务配置
+              </button>
+              <label className="capture-source">
+                实时草稿引擎
+                <select
+                  aria-label="实时草稿引擎"
+                  value={draftEngine}
+                  disabled={state !== "idle"}
+                  onChange={(event) =>
+                    setDraftEngine(event.target.value as "whisper" | "qwen")
+                  }
+                >
+                  {(["whisper", "qwen"] as const).map((id) => (
+                    <option
+                      key={id}
+                      value={id}
+                      disabled={
+                        !engines.find((engine) => engine.id === id)?.ready
+                      }
+                    >
+                      {id === "qwen" ? "千问 Qwen-ASR" : "Whisper"}
+                      {!engines.find((engine) => engine.id === id)?.ready
+                        ? "（未就绪）"
+                        : ""}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <p className="native-capture-hint">
+                实时草稿与停止后的正式转写引擎独立选择。
+                {draftEngine === "qwen"
+                  ? `千问草稿按识别片段定位，不是精确字词时间。${streamEnabled ? "流式识别复用常驻模型" : "整批输出每段加载模型"}；正式转写仍保留精细对齐。`
+                  : "Whisper 草稿保留句级时间戳。"}
+              </p>
+              {draftEngine === "qwen" && (
+                <label className="capture-source">
+                  <input
+                    type="checkbox"
+                    checked={streamEnabled}
+                    disabled={state !== "idle"}
+                    onChange={(event) => setStreamEnabled(event.target.checked)}
+                  />
+                  逐字推送
+                  <small>
+                    {responsiveMode
+                      ? "短片段先预览，再用后续上下文修订。"
+                      : "收集约 15 秒音频后，文字逐步显示。"}
+                    未确认文字不计入覆盖，也不能转为简记。关闭后整批显示。
+                  </small>
+                </label>
+              )}
+              {draftEngine === "qwen" && streamEnabled && (
+                <>
+                  <label className="capture-source">
+                    <input
+                      type="checkbox"
+                      checked={responsiveMode}
+                      disabled={state !== "idle" || !modelStatus}
+                      onChange={(event) =>
+                        setResponsiveMode(event.target.checked)
+                      }
+                    />
+                    短片段与尾部修订（试用）
+                  </label>
+                  <p className="native-capture-hint">
+                    {responsiveMode
+                      ? "约 5 秒开始预览，更多上下文会修订同一临时尾部；静音、暂停或最长 15 秒后确认。能量静音检测可能提前分段，建议与标准模式对比。"
+                      : "标准模式：约 15 秒一段，完成后确认。"}
+                  </p>
+                  <div className="capture-preflight">
+                    <span>
+                      Qwen 模型：
+                      {modelStatus?.loading
+                        ? "加载中"
+                        : modelStatus?.loaded
+                          ? "已常驻"
+                          : "未加载"}{" "}
+                      ·{" "}
+                      {modelStatus?.busy
+                        ? "识别中"
+                        : modelStatus?.formal_job_running
+                          ? "正式任务处理中"
+                          : "空闲"}
+                      {modelStatus?.peak_memory_gb
+                        ? ` · 峰值 ${modelStatus.peak_memory_gb.toFixed(1)} GB`
+                        : ""}
+                    </span>
+                    <button
+                      disabled={
+                        state !== "idle" || modelActionBusy || modelStatus?.busy
+                      }
+                      onClick={() => void controlModel("warm")}
+                    >
+                      预加载模型
+                    </button>
+                    <button
+                      disabled={
+                        !modelStatus?.loaded ||
+                        modelActionBusy ||
+                        modelStatus?.busy ||
+                        !["idle", "paused"].includes(state)
+                      }
+                      onClick={() => void controlModel("release")}
+                    >
+                      释放模型
+                    </button>
+                    <small>
+                      同一进程复用模型，空闲约 3
+                      分钟自动释放；正式处理任务优先释放常驻模型。取消正在识别的窗口会重建进程。
+                    </small>
+                  </div>
+                </>
+              )}
+            </section>
+          )}
+          <p className="muted">
+            设置自动保存在当前浏览器。录音时不能更换音源或识别模式；结束后再选择快速完成、精细处理或暂不处理。
+          </p>
+        </Modal>
+      )}
     </Modal>
   );
 }

@@ -5,9 +5,16 @@ interface Props {
   onClose: () => void;
   id?: string;
   className?: string;
+  ariaLabel?: string;
 }
 
-export default function Modal({ children, onClose, id, className }: Props) {
+export default function Modal({
+  children,
+  onClose,
+  id,
+  className,
+  ariaLabel,
+}: Props) {
   const ref = useRef<HTMLDialogElement>(null);
 
   useEffect(() => {
@@ -23,6 +30,7 @@ export default function Modal({ children, onClose, id, className }: Props) {
       ref={ref}
       id={id}
       className={className}
+      aria-label={ariaLabel}
       onCancel={(event) => {
         event.preventDefault();
         onClose();

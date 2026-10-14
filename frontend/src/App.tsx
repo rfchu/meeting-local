@@ -1,3 +1,7 @@
+import {
+  transcriptionOptions,
+  type CompletionMode,
+} from "./features/notes/recordingPreferences";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, download } from "./api";
@@ -270,7 +274,7 @@ export default function App() {
   };
   const completeRecording = async (
     meetingId: string,
-    options: { mode: "quick" | "full"; engine: "whisper" | "qwen" },
+    options: { mode: CompletionMode; engine: "whisper" | "qwen" },
   ) => {
     setUploading(true);
     let created: Meeting | null = null;
@@ -278,12 +282,14 @@ export default function App() {
     try {
       created = await api.meeting(meetingId);
       try {
-        await api.transcribe(created.id, {
-          engine: options.mode === "quick" ? options.engine : engine,
-          completion_mode: options.mode,
-          diarization: options.mode === "quick" ? false : diarization,
-          num_speakers: numSpeakers,
-        });
+        const plan = transcriptionOptions(
+          options.mode,
+          options.engine,
+          engine,
+          diarization,
+          numSpeakers,
+        );
+        if (plan) await api.transcribe(created.id, plan);
       } catch (error) {
         followUpErrors.push(`转写未启动：${(error as Error).message}`);
       }
@@ -294,7 +300,9 @@ export default function App() {
       toast(
         followUpErrors.length
           ? `录音已保存；${followUpErrors.join("；")}`
-          : `录音和 ${created.notes.length} 条简记已保存，文字稿正在本机生成`,
+          : options.mode === "none"
+            ? `录音和 ${created.notes.length} 条简记已保存，可稍后转写`
+            : `录音和 ${created.notes.length} 条简记已保存，文字稿正在本机生成`,
       );
     } catch (error) {
       toast((error as Error).message);
@@ -903,6 +911,7 @@ export default function App() {
           engines={environment?.engines || []}
           onClose={() => setRecordingOpen(false)}
           onComplete={completeRecording}
+          onModels={() => setModelsOpen(true)}
           toast={toast}
         />
       )}
