@@ -1,3 +1,4 @@
+import type { SearchHit, SearchStatus } from "./features/SearchDialog";
 import {
   readLiveStream,
   type LivePartial,
@@ -48,6 +49,26 @@ const json = (method: string, body?: unknown): RequestInit => ({
 });
 
 export const api = {
+  searchStatus: () => request<SearchStatus>("/retrieval"),
+  configureSearch: (profileId: string, model: string) =>
+    request("/retrieval/config", json("PUT", { profile_id: profileId, model })),
+  buildSearch: (force: boolean) =>
+    request("/retrieval/build", json("POST", { force })),
+  searchLibrary: (body: {
+    query: string;
+    mode: string;
+    meeting_id: string | null;
+    kind: string | null;
+  }) =>
+    request<{ results: SearchHit[]; pending: number }>(
+      "/retrieval/search",
+      json("POST", body),
+    ),
+  resolveSearch: (hit: SearchHit) =>
+    request<SearchHit>(
+      "/retrieval/resolve",
+      json("POST", { id: hit.id, fingerprint: hit.fingerprint }),
+    ),
   environment: () => request<Environment>("/status"),
   meetings: () => request<MeetingSummary[]>("/meetings"),
   recordings: () => request<RecordingSession[]>("/recordings"),

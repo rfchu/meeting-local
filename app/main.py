@@ -1,4 +1,4 @@
-import asyncio, io, hashlib, json, os, shutil, subprocess, tempfile, threading, time, wave
+import asyncio, sqlite3, io, hashlib, json, os, shutil, subprocess, tempfile, threading, time, wave
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Literal
@@ -20,6 +20,7 @@ from .native_capture import NativeCapture
 from .live_results import LiveResults
 from .live_stream import inspect_audio, qwen_events
 from .qwen_resident import QwenResident
+from .retrieval import Retrieval
 
 BASE=Path(__file__).resolve().parents[1]
 
@@ -65,6 +66,20 @@ class MeetingNoteInput(BaseModel):
     raw_text: str=Field(min_length=1,max_length=5000)
 class MeetingNotesBatchInput(BaseModel):
     notes: list[MeetingNoteInput]=Field(max_length=1000)
+class RetrievalConfigInput(BaseModel):
+    profile_id: str=Field(min_length=1,max_length=100)
+    model: str=Field(min_length=1,max_length=500)
+class SearchInput(BaseModel):
+    query: str=Field(min_length=1,max_length=500)
+    mode: Literal['keyword','semantic','hybrid']='keyword'
+    meeting_id: str | None=None
+    kind: Literal['transcript','note','expanded_note','minutes'] | None=None
+class SearchResolveInput(BaseModel):
+    id: str=Field(min_length=1,max_length=1000)
+    fingerprint: str=Field(min_length=64,max_length=64)
+class IndexBuildInput(BaseModel):
+    force: bool=False
+
 class NoteAcceptInput(BaseModel):
     artifact_id: str=Field(min_length=1,max_length=100)
 
@@ -104,6 +119,7 @@ class AIMinutesGenerateInput(MinutesPolishInput):
 def create_app(data_dir=None, start_worker=True):
     store=Store(data_dir or os.getenv('MEETING_DATA',str(BASE/'data')))
     worker=Worker(store)
+    retrieval=Retrieval(store)
     @asynccontextmanager
     async def lifespan(app):
         loop=asyncio.get_running_loop()
@@ -167,6 +183,49 @@ def create_app(data_dir=None, start_worker=True):
         row['notes']=notes
         row['audio_tracks']=[name for name in ('system','microphone') if (store.directory(row['id'])/(name+'.wav')).is_file()]
         return row
+
+    @app.get('/api/retrieval')
+    def retrieval_status():return retrieval.status()
+    @app.put('/api/retrieval/config')
+    def retrieval_configure(body:RetrievalConfigInput):
+        profile=store.one('SELECT * FROM llm_configs WHERE id=?',(body.profile_id,))
+        if not profile:raise HTTPException(404,'本地模型配置不存在')
+        if worker.busy_jid or not live_asr_lock.acquire(blocking=False):raise HTTPException(409,'正在处理录音或正式任务，请稍后配置向量模型')
+        try:
+            if worker.release_model:worker.release_model()
+            return retrieval.configure(profile,body.model.strip())
+        except (RuntimeError,ValueError) as error:raise HTTPException(409,str(error))
+        finally:live_asr_lock.release()
+    @app.post('/api/retrieval/build',status_code=201)
+    def retrieval_build(body:IndexBuildInput):
+        status=retrieval.status();config=status['config']
+        if not config or not status['vec_ready'] or status['error']:raise HTTPException(409,status['error'] or '请先配置本地向量模型')
+        try:retrieval.profile(config)
+        except ValueError as error:raise HTTPException(409,str(error))
+        jid=uid()
+        with store.connect() as db:
+            db.execute('BEGIN IMMEDIATE')
+            if db.execute("SELECT 1 FROM jobs WHERE kind='retrieval_index' AND state IN ('running','queued')").fetchone():raise HTTPException(409,'索引任务已在处理中')
+            if body.force:db.execute("UPDATE retrieval_units SET embedding=NULL,identity=''")
+            db.execute('INSERT INTO jobs(id,meeting_id,state,stage,config,kind) VALUES(?,?,?,?,?,?)',(jid,'','queued','等待建立检索索引',encode(config),'retrieval_index'))
+        return {'id':jid}
+    @app.post('/api/retrieval/search')
+    def retrieval_search(body:SearchInput):
+        if not body.query.strip():raise HTTPException(422,'请输入搜索内容')
+        acquired=False
+        try:
+            if body.mode!='keyword':
+                if worker.busy_jid or not live_asr_lock.acquire(blocking=False):raise HTTPException(409,'正在处理录音或正式任务，请先使用关键词搜索')
+                acquired=True
+                if worker.release_model:worker.release_model()
+            return retrieval.search(body.query,body.mode,meeting_id=body.meeting_id,kind=body.kind)
+        except (RuntimeError,ValueError,ImportError,sqlite3.Error) as error:raise HTTPException(409,str(error))
+        finally:
+            if acquired:live_asr_lock.release()
+    @app.post('/api/retrieval/resolve')
+    def retrieval_resolve(body:SearchResolveInput):
+        try:return retrieval.resolve(body.id,body.fingerprint)
+        except ValueError as error:raise HTTPException(409,str(error))
 
     @app.get('/api/status')
     def status():
@@ -596,7 +655,7 @@ def create_app(data_dir=None, start_worker=True):
             if db.execute("SELECT 1 FROM jobs WHERE meeting_id=? AND state IN ('running','queued')",(mid,)).fetchone():
                 raise HTTPException(409,'请先取消任务，等待处理停止后删除')
             db.execute('DELETE FROM live_asr_ranges WHERE recording_id=?',(mid,))
-            for table in ['meeting_notes','artifacts','revisions','jobs','meetings']:
+            for table in ['retrieval_units','meeting_notes','artifacts','revisions','jobs','meetings']:
                 key='id' if table=='meetings' else 'meeting_id'
                 db.execute(f'DELETE FROM {table} WHERE {key}=?',(mid,))
         shutil.rmtree(store.directory(mid),ignore_errors=True)

@@ -19,6 +19,7 @@ import {
   latestMinutes,
   revisionLabel,
 } from "./utils";
+import SearchDialog, { type SearchHit } from "./features/SearchDialog";
 import Sidebar from "./components/Sidebar";
 import Workflow from "./components/Workflow";
 import Player from "./components/Player";
@@ -72,6 +73,8 @@ export default function App() {
     [modelsOpen, setModelsOpen] = useState(false),
     [previewOpen, setPreviewOpen] = useState(false),
     [recordingOpen, setRecordingOpen] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchTarget, setSearchTarget] = useState<SearchHit | null>(null);
   const [engine, setEngine] = useState("whisper"),
     [diarization, setDiarization] = useState(false),
     [numSpeakers, setNumSpeakers] = useState(0);
@@ -104,6 +107,15 @@ export default function App() {
     window.addEventListener("beforeunload", handler);
     return () => window.removeEventListener("beforeunload", handler);
   }, [transcriptDirty, savingTranscript, minutesDirty, savingMinutes]);
+
+  useEffect(() => {
+    if (!searchTarget || meeting?.id !== searchTarget.meeting_id) return;
+    const timer = window.setTimeout(() => {
+      if (searchTarget.start !== null) seekRef.current?.(searchTarget.start);
+      setSearchTarget(null);
+    }, 100);
+    return () => window.clearTimeout(timer);
+  }, [searchTarget, meeting?.id]);
 
   const saveTranscript = useCallback(async () => {
     const target = meetingRef.current;
@@ -196,6 +208,7 @@ export default function App() {
       setShowCitations(artifact?.payload.style === "internal");
       setWorkspace("transcript");
       setFullPending(false);
+      meetingRef.current = value;
       const job = latestJob(value, "transcription");
       try {
         const config = JSON.parse(job?.config || "{}");
@@ -205,8 +218,10 @@ export default function App() {
       } catch {
         setEngine("whisper");
       }
+      return value;
     } catch (error) {
       toast((error as Error).message);
+      return null;
     }
   };
 
@@ -503,6 +518,7 @@ export default function App() {
         onUpload={(file) => void upload(file)}
         onRecord={() => setRecordingOpen(true)}
         onModels={() => setModelsOpen(true)}
+        onSearch={() => setSearchOpen(true)}
         onEnvironment={() => setEnvironmentOpen(true)}
       />
       <main>
@@ -826,6 +842,20 @@ export default function App() {
           </section>
         )}
       </main>
+      {searchOpen && (
+        <SearchDialog
+          meetings={listQuery.data || []}
+          onClose={() => setSearchOpen(false)}
+          onOpen={async (hit) => {
+            const current = await api.resolveSearch(hit);
+            const opened = await openMeeting(current.meeting_id);
+            if (!opened) throw new Error("会议未能打开，请重试");
+            await api.resolveSearch(hit);
+            setSearchOpen(false);
+            setSearchTarget(current);
+          }}
+        />
+      )}
       {toastText && (
         <div id="toast" role="status">
           {toastText}

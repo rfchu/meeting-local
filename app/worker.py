@@ -58,7 +58,7 @@ class Worker:
             self.busy_jid=job['id']
             try:
                 self.process(job)
-                stage={'analysis':'分析完成','note_expansion':'简记扩写完成'}.get(job.get('kind'),'转写完成')
+                stage={'analysis':'分析完成','note_expansion':'简记扩写完成','retrieval_index':'检索索引建立完成'}.get(job.get('kind'),'转写完成')
                 self.store.execute("UPDATE jobs SET state='completed',stage=?,progress=1 WHERE id=? AND state='running'",(stage,job['id']))
             except Cancelled: pass
             except Exception as e:
@@ -71,6 +71,9 @@ class Worker:
                 while not self.asr_lock.acquire(timeout=.2):self.check(job['id'])
                 acquired=True;self.check(job['id'])
             if self.release_model:self.release_model()
+            if job.get('kind')=='retrieval_index':
+                from .retrieval import Retrieval
+                return Retrieval(self.store).build(self,job)
             if job.get('kind')=='note_expansion':return self.process_note_expansion(job)
             if job.get('kind')=='analysis':return self.process_analysis(job)
             return self.process_transcription(job)

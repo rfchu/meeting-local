@@ -1653,3 +1653,76 @@ dialog code {
 .note-expansion small {
   color: #657084;
 }
+
+.search-dialog {
+  width: min(960px, 94vw);
+}
+.search-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.search-heading h2 {
+  margin: 8px 0;
+}
+.search-heading small,
+.search-dialog .muted {
+  color: var(--muted);
+}
+.library-query {
+  display: flex;
+  gap: 10px;
+  margin: 20px 0 12px;
+}
+.library-query input {
+  flex: 1;
+  min-width: 0;
+}
+.library-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.library-filters select {
+  max-width: 300px;
+}
+.search-index {
+  margin: 20px 0;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+.search-index summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+.search-index label {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 12px 0;
+}
+.search-index input {
+  flex: 1;
+  min-width: 0;
+}
+.search-index-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.library-results article {
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  margin: 12px 0;
+}
+.library-results small {
+  display: block;
+  margin-top: 5px;
+  color: var(--muted);
+}
+.library-results p {
+  white-space: pre-wrap;
+  line-height: 1.8;
+}

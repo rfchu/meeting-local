@@ -16,6 +16,7 @@ interface Props {
   onUpload: (file: File) => void;
   onRecord: () => void;
   onModels: () => void;
+  onSearch: () => void;
   onEnvironment: () => void;
 }
 
@@ -27,6 +28,7 @@ export default function Sidebar({
   onUpload,
   onRecord,
   onModels,
+  onSearch,
   onEnvironment,
 }: Props) {
   const choose = () => document.getElementById("file")?.click();
@@ -64,6 +66,9 @@ export default function Sidebar({
           event.target.value = "";
         }}
       />
+      <button className="wide" onClick={onSearch}>
+        ⌕ 搜索会议资料
+      </button>
       <div className="nav-label">
         会议资料库 <span>{meetings.length}</span>
       </div>
