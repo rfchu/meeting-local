@@ -7,11 +7,13 @@ interface Props {
   segments: Segment[];
   seekRef: React.MutableRefObject<((time: number) => void) | null>;
   audioTracks?: string[];
+  pauseRef?: React.MutableRefObject<(() => void) | null>;
 }
 export default function Player({
   meetingId,
   segments,
   seekRef,
+  pauseRef,
   audioTracks = [],
 }: Props) {
   const audio = useRef<HTMLAudioElement>(null);
@@ -20,6 +22,7 @@ export default function Player({
     [duration, setDuration] = useState(0),
     [track, setTrack] = useState("");
   useEffect(() => {
+    if (pauseRef) pauseRef.current = () => audio.current?.pause();
     seekRef.current = (value) => {
       if (!audio.current) return;
       audio.current.currentTime = value;
@@ -27,8 +30,9 @@ export default function Player({
     };
     return () => {
       seekRef.current = null;
+      if (pauseRef) pauseRef.current = null;
     };
-  }, [seekRef]);
+  }, [seekRef, pauseRef]);
   useEffect(() => {
     setTime(0);
     setDuration(0);

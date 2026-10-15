@@ -102,8 +102,8 @@ class RecordingStore:
                 if not db.execute('SELECT id FROM meetings WHERE id=?',(rid,)).fetchone():
                     db.execute('INSERT INTO meetings(id,title,filename,duration) VALUES(?,?,?,?)',(rid,Path(filename).stem,filename,session['duration']))
                     for note in session['notes']:
-                        db.execute('INSERT INTO meeting_notes(id,meeting_id,captured_at,note_type,raw_text) VALUES(?,?,?,?,?)',
-                            (uid(),rid,note['captured_at'],note['note_type'],note['raw_text']))
+                        from .notes import insert_note
+                        insert_note(db,rid,note)
             session.update(state='completed',updated=time.time());self.write(folder/'session.json',session)
             for part in actual:part.unlink(missing_ok=True)
             return rid

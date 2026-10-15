@@ -82,6 +82,7 @@ export default function App() {
   const [engine, setEngine] = useState("whisper"),
     [diarization, setDiarization] = useState(false),
     [numSpeakers, setNumSpeakers] = useState(0);
+  const pausePlaybackRef = useRef<(() => void) | null>(null);
   const seekRef = useRef<((time: number) => void) | null>(null),
     toastTimer = useRef<number | undefined>(undefined),
     meetingRef = useRef<Meeting | null>(null);
@@ -245,6 +246,7 @@ export default function App() {
           return {
             ...old,
             notes: fresh.notes,
+            note_todos: fresh.note_todos,
             jobs: fresh.jobs,
             artifacts: fresh.artifacts,
             revisions: fresh.revisions,
@@ -753,9 +755,18 @@ export default function App() {
                 {workspace === "notes" && (
                   <NotesView
                     meeting={meeting}
-                    onRefresh={async () =>
-                      setMeeting(await api.meeting(meeting.id))
-                    }
+                    onRefresh={async () => {
+                      const fresh = await api.meeting(meeting.id);
+                      setMeeting(fresh);
+                      if (!minutesDirty) {
+                        const artifact = latestMinutes(fresh);
+                        setMinutesDraft(
+                          artifact ? clone(artifact.payload) : null,
+                        );
+                      }
+                    }}
+                    minutesDirty={minutesDirty}
+                    onPause={() => pausePlaybackRef.current?.()}
                     onSeek={(time) => seekRef.current?.(time)}
                     toast={toast}
                   />
@@ -845,6 +856,7 @@ export default function App() {
               meetingId={meeting.id}
               segments={meeting.segments}
               seekRef={seekRef}
+              pauseRef={pausePlaybackRef}
               audioTracks={meeting.audio_tracks}
             />
           </section>

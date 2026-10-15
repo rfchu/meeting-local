@@ -69,6 +69,13 @@ class Store:
                 db.execute("ALTER TABLE jobs ADD COLUMN kind TEXT NOT NULL DEFAULT 'transcription'")
             note_columns={row['name'] for row in db.execute('PRAGMA table_info(meeting_notes)')}
             if 'expansion_revision' not in note_columns:db.execute('ALTER TABLE meeting_notes ADD COLUMN expansion_revision INTEGER NOT NULL DEFAULT 0')
+            if 'note_scope' not in note_columns:db.execute("ALTER TABLE meeting_notes ADD COLUMN note_scope TEXT NOT NULL DEFAULT 'personal'")
+            if 'is_marker' not in note_columns:db.execute('ALTER TABLE meeting_notes ADD COLUMN is_marker INTEGER NOT NULL DEFAULT 0')
+            db.execute('''CREATE TABLE IF NOT EXISTS note_todos (
+                id TEXT PRIMARY KEY,meeting_id TEXT NOT NULL,note_id TEXT NOT NULL,content TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending',owner TEXT NOT NULL DEFAULT '',due_date TEXT NOT NULL DEFAULT '',
+                revision INTEGER NOT NULL,note_fingerprint TEXT NOT NULL,source_segment_ids TEXT NOT NULL DEFAULT '[]',
+                note_scope TEXT NOT NULL DEFAULT 'personal',created TEXT DEFAULT CURRENT_TIMESTAMP,updated TEXT DEFAULT CURRENT_TIMESTAMP)''')
             config_columns={row['name'] for row in db.execute('PRAGMA table_info(llm_configs)')}
             if 'context_window' not in config_columns:
                 db.execute('ALTER TABLE llm_configs ADD COLUMN context_window INTEGER NOT NULL DEFAULT 32768')
@@ -84,7 +91,7 @@ class Store:
                     version=excluded.version,builtin=excluded.builtin,definition=excluded.definition,
                     updated=CURRENT_TIMESTAMP''',
                     (template.id,template.name,template.description,template.category,template.version,1,definition))
-            db.execute('PRAGMA user_version=9')
+            db.execute('PRAGMA user_version=10')
         os.chmod(self.path,0o600)
     @contextmanager
     def connect(self):

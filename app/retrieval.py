@@ -3,7 +3,7 @@ import hashlib,json,math,re,sqlite3,urllib.request,urllib.error
 from .analysis import OpenAICompatibleProvider
 from .db import encode
 
-UNIT_VERSION='retrieval-units-v1'
+UNIT_VERSION='retrieval-units-v2'
 class NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self,*args,**kwargs):raise RuntimeError('本地向量接口不允许重定向')
 
@@ -44,6 +44,7 @@ class Retrieval:
         row=self.store.one('SELECT config FROM retrieval_settings WHERE id=1')
         return json.loads(row['config']) if row else None
     def profile(self,config):
+        if config.get("unit_version")!=UNIT_VERSION:raise ValueError("检索单元规则已升级，请重新测试保存向量模型配置，再更新索引")
         profile=self.store.one('SELECT * FROM llm_configs WHERE id=?',(config['profile_id'],))
         if not profile or profile['provider_type']!='local':raise ValueError('本地向量模型配置不存在，请重新配置')
         provider=OpenAICompatibleProvider(profile)
@@ -67,15 +68,15 @@ class Retrieval:
         units=[]
         for meeting in db.execute('SELECT * FROM meetings ORDER BY created,id').fetchall():
             mid=meeting['id'];revision=meeting['revision'];segments=json.loads(meeting['segments']);by_id={s['id']:s for s in segments}
-            def add(key,kind,text,ids,start=None,end=None,artifact_id=None):
+            def add(key,kind,text,ids,start=None,end=None,artifact_id=None,note_scope=None):
                 if not text.strip():return
                 # Bound model input, while retaining every text part and its provenance.
                 for offset in range(0,len(text),700):
                     part=text[offset:offset+700]
                     uid=mid+':'+key+':'+str(offset)
                     meta={'meeting_id':mid,'title':meeting['title'],'date':meeting['created'][:10],'revision':revision,
-                          'kind':kind,'source_segment_ids':ids,'start':start,'end':end,'artifact_id':artifact_id}
-                    fp=digest([UNIT_VERSION,revision,kind,part,ids,start,end,artifact_id])
+                          'kind':kind,'source_segment_ids':ids,'start':start,'end':end,'artifact_id':artifact_id,'note_scope':note_scope}
+                    fp=digest([UNIT_VERSION,revision,kind,part,ids,start,end,artifact_id,note_scope])
                     units.append((uid,mid,part,encode(meta),fp))
             group=[];size=0
             def flush():
@@ -85,10 +86,10 @@ class Retrieval:
                 group.append(segment);size+=len(segment['text'])
             flush()
             for note in db.execute('SELECT * FROM meeting_notes WHERE meeting_id=?',(mid,)).fetchall():
-                add('note:'+note['id'],'note',note['raw_text'],[],note['captured_at'],note['captured_at'])
+                add('note:'+note['id'],'note',note['raw_text'],[],note['captured_at'],note['captured_at'],note_scope=note['note_scope'])
                 ids=json.loads(note['source_segment_ids'])
                 if note['status']=='accepted' and note['expansion_revision']==revision and ids and set(ids)<=by_id.keys():
-                    add('expanded:'+note['id'],'expanded_note',note['accepted_text'],ids,min(by_id[i]['start'] for i in ids),max(by_id[i]['end'] for i in ids))
+                    add('expanded:'+note['id'],'expanded_note',note['accepted_text'],ids,min(by_id[i]['start'] for i in ids),max(by_id[i]['end'] for i in ids),note_scope=note['note_scope'])
             artifact=db.execute("SELECT * FROM artifacts WHERE meeting_id=? AND revision=? AND kind='meeting_minutes' ORDER BY created DESC,rowid DESC LIMIT 1",(mid,revision)).fetchone()
             # Only user-saved minutes participate; raw AI candidates are not trusted retrieval facts.
             if artifact and json.loads(artifact['provenance']).get('edited'):

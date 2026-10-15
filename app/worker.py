@@ -92,7 +92,7 @@ class Worker:
         work=self.store.directory(mid)/jid;work.mkdir(exist_ok=True)
         segments=config['segments'];self.update(jid,'整理简记与原文依据',.1)
         if not segments:result=Expansion(status='insufficient',text='',reason='简记附近没有可用文字稿，请完成转写或调整简记时间。',evidence=[])
-        else:result=generate_expansion(provider,config['model'],{key:config[key] for key in ('raw_text','note_type','captured_at')},segments,work/'expansion',lambda args,extra=None:self.run(jid,args,work/'worker.log',extra))
+        else:result=generate_expansion(provider,config['model'],{key:config[key] for key in ('raw_text','note_type','captured_at')}|{'note_scope':config.get('note_scope','personal')},segments,work/'expansion',lambda args,extra=None:self.run(jid,args,work/'worker.log',extra))
         self.check(jid);self.update(jid,'核验引用',.95);publish(self.store,job,result,segments)
 
     def process_analysis(self,job):

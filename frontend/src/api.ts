@@ -1,3 +1,4 @@
+import type { NoteReview } from "./types";
 import type { SearchHit, SearchStatus } from "./features/SearchDialog";
 import {
   readLiveStream,
@@ -268,17 +269,46 @@ export const api = {
   updateNote: (
     id: string,
     noteId: string,
-    note: Pick<MeetingNoteInput, "note_type" | "raw_text">,
+    note: Pick<
+      MeetingNoteInput,
+      "note_type" | "raw_text" | "note_scope" | "is_marker" | "captured_at"
+    >,
   ) => request(`/meetings/${id}/notes/${noteId}`, json("PUT", note)),
+  reviewNote: (id: string, noteId: string) =>
+    request<NoteReview>(`/meetings/${id}/notes/${noteId}/review`),
+  useNote: (
+    id: string,
+    noteId: string,
+    body: {
+      kind: "minutes" | "todo";
+      fingerprint: string;
+      revision: number;
+      content: string;
+      source_segment_ids: string[];
+      section: string;
+      minutes_id: string | null;
+      confirmed: boolean;
+    },
+  ) => request(`/meetings/${id}/notes/${noteId}/use`, json("POST", body)),
+  updateNoteTodo: (
+    id: string,
+    todoId: string,
+    body: { status: "pending" | "done"; owner: string; due_date: string },
+  ) => request(`/meetings/${id}/note-todos/${todoId}`, json("PUT", body)),
   expandNote: (id: string, noteId: string, profileId?: string) =>
     request<{ id: string }>(
       `/meetings/${id}/notes/${noteId}/expand`,
       json("POST", { profile_id: profileId || null }),
     ),
-  acceptNoteExpansion: (id: string, noteId: string, artifactId: string) =>
+  acceptNoteExpansion: (
+    id: string,
+    noteId: string,
+    artifactId: string,
+    acceptedText?: string,
+  ) =>
     request(
       `/meetings/${id}/notes/${noteId}/accept-expansion`,
-      json("POST", { artifact_id: artifactId }),
+      json("POST", { artifact_id: artifactId, accepted_text: acceptedText }),
     ),
   deleteNote: (id: string, noteId: string) =>
     request(`/meetings/${id}/notes/${noteId}`, { method: "DELETE" }),

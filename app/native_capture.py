@@ -205,8 +205,8 @@ class NativeCapture:
                     db.execute('INSERT INTO meetings(id,title,filename,duration) VALUES(?,?,?,?)',(rid,Path(filename).stem,filename,duration))
                     from .db import uid
                     for note in session['notes']:
-                        db.execute('INSERT INTO meeting_notes(id,meeting_id,captured_at,note_type,raw_text) VALUES(?,?,?,?,?)',
-                            (uid(),rid,note['captured_at'],note['note_type'],note['raw_text']))
+                        from .notes import insert_note
+                        insert_note(db,rid,note)
             session.update(state='completed',duration=duration);RecordingStore.write(folder/'session.json',session)
             for source in sources:source.unlink(missing_ok=True)
             return rid

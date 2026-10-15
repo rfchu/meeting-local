@@ -7,6 +7,7 @@ import { clock } from "../utils";
 export interface SearchHit {
   id: string;
   fingerprint: string;
+  note_scope?: string;
   meeting_id: string;
   title: string;
   date: string;
@@ -281,6 +282,7 @@ export default function SearchDialog({
               <strong>{hit.title}</strong>
               <small>
                 {hit.date} · v{hit.revision} · {labels[hit.kind]}
+                {hit.note_scope === "personal" ? " · 个人备注" : ""}
               </small>
             </div>
             <p>{hit.content}</p>

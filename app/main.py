@@ -7,7 +7,7 @@ from fastapi import FastAPI, File, Form, UploadFile, HTTPException, Request
 from fastapi.responses import FileResponse, Response, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from .db import Store, uid, encode
 from .worker import Worker
 from .providers import WhisperCpp, get_asr_provider, engine_catalog, LocalDiarization, LocalPunctuation
@@ -63,7 +63,13 @@ class RenameInput(BaseModel):
 class MeetingNoteInput(BaseModel):
     captured_at: float=Field(default=0,ge=0,allow_inf_nan=False)
     note_type: Literal['note','highlight','question','decision','action']='note'
-    raw_text: str=Field(min_length=1,max_length=5000)
+    raw_text: str=Field(default='',max_length=5000)
+    note_scope: Literal['personal','meeting']='personal'
+    is_marker: bool=False
+    @model_validator(mode='after')
+    def valid_note(self):
+        if not self.raw_text.strip() and not self.is_marker:raise ValueError('简记内容不能为空，或使用标记此刻')
+        return self
 class MeetingNotesBatchInput(BaseModel):
     notes: list[MeetingNoteInput]=Field(max_length=1000)
 class RetrievalConfigInput(BaseModel):
@@ -82,10 +88,27 @@ class IndexBuildInput(BaseModel):
 
 class NoteAcceptInput(BaseModel):
     artifact_id: str=Field(min_length=1,max_length=100)
+    accepted_text: str | None=Field(default=None,min_length=1,max_length=3000)
 
+class NoteUseInput(BaseModel):
+    kind: Literal['minutes','todo']
+    fingerprint: str=Field(min_length=64,max_length=64)
+    revision: int=Field(ge=0)
+    content: str=Field(min_length=1,max_length=2000)
+    source_segment_ids: list[str]=Field(default_factory=list,max_length=20)
+    section: Literal['conclusions','decisions','action_items','open_questions']='conclusions'
+    minutes_id: str | None=None
+    confirmed: bool=False
+class TodoUpdate(BaseModel):
+    status: Literal['pending','done']
+    owner: str=Field(default='',max_length=200)
+    due_date: str=Field(default='',max_length=100)
 class MeetingNoteUpdate(BaseModel):
     note_type: Literal['note','highlight','question','decision','action']
-    raw_text: str=Field(min_length=1,max_length=5000)
+    raw_text: str=Field(max_length=5000)
+    note_scope: Literal['personal','meeting'] | None=None
+    is_marker: bool | None=None
+    captured_at: float | None=Field(default=None,ge=0,allow_inf_nan=False)
 class RecordingInput(BaseModel):
     mime_type: Literal['audio/webm;codecs=opus','audio/webm','audio/mp4','audio/mp4;codecs=mp4a.40.2']='audio/webm'
 class RecordingMetadata(MeetingNotesBatchInput):
@@ -178,9 +201,19 @@ def create_app(data_dir=None, start_worker=True):
             note['expansion_stale']=bool(note['expansion_revision'] and note['expansion_revision']!=row['revision'])
             suggestion=next((a for a in artifacts if a['kind']=='note_expansion' and a['payload'].get('note_id')==note['id']),None)
             if suggestion:
-                suggestion['stale']=suggestion['stale'] or any(suggestion['payload'].get(key)!=note[key] for key in ('raw_text','note_type','captured_at'))
+                suggestion['stale']=suggestion['stale'] or any(suggestion['payload'].get(key)!=note[key] for key in ('raw_text','note_type','captured_at')) or suggestion['payload'].get('note_scope','personal')!=note['note_scope']
             note['expansion']=suggestion
         row['notes']=notes
+        from .notes import fingerprint
+        todos=store.all('SELECT * FROM note_todos WHERE meeting_id=? ORDER BY created,rowid',(row['id'],))
+        by_id={n['id']:n for n in notes}
+        current_minutes=next((a for a in artifacts if a['kind']=='meeting_minutes' and a['revision']==row['revision']),None)
+        for note in notes:
+            note['adopted_to_minutes']=bool(current_minutes and any(item.get('note_id')==note['id'] and item.get('note_fingerprint')==fingerprint(note) for item in current_minutes['provenance'].get('adopted_notes',[])))
+        for todo in todos:
+            todo['source_segment_ids']=json.loads(todo['source_segment_ids'])
+            todo['stale']=todo['note_id'] not in by_id or todo['note_fingerprint']!=fingerprint(by_id[todo['note_id']]) or (bool(todo['source_segment_ids']) and todo['revision']!=row['revision'])
+        row['note_todos']=todos
         row['audio_tracks']=[name for name in ('system','microphone') if (store.directory(row['id'])/(name+'.wav')).is_file()]
         return row
 
@@ -562,10 +595,9 @@ def create_app(data_dir=None, start_worker=True):
         return {'revision':revision}
     @app.post('/api/meetings/{mid}/notes',status_code=201)
     def create_note(mid:str,body:MeetingNoteInput):
-        meeting(mid);nid=uid();text=body.raw_text.strip()
-        if not text:raise HTTPException(422,'简记内容不能为空')
-        store.execute('INSERT INTO meeting_notes(id,meeting_id,captured_at,note_type,raw_text) VALUES(?,?,?,?,?)',
-            (nid,mid,body.captured_at,body.note_type,text))
+        from .notes import insert_note
+        meeting(mid)
+        with store.connect() as db:nid=insert_note(db,mid,body.model_dump())
         note=store.one('SELECT * FROM meeting_notes WHERE id=?',(nid,))
         note['source_segment_ids']=json.loads(note['source_segment_ids'] or '[]')
         return note
@@ -574,26 +606,46 @@ def create_app(data_dir=None, start_worker=True):
         meeting(mid);created=[]
         with store.connect() as db:
             db.execute('BEGIN IMMEDIATE')
-            for item in body.notes:
-                text=item.raw_text.strip()
-                if not text:raise HTTPException(422,'简记内容不能为空')
-                nid=uid();db.execute('INSERT INTO meeting_notes(id,meeting_id,captured_at,note_type,raw_text) VALUES(?,?,?,?,?)',
-                    (nid,mid,item.captured_at,item.note_type,text));created.append(nid)
+            from .notes import insert_note
+            for item in body.notes:created.append(insert_note(db,mid,item.model_dump()))
         return {'ids':created,'count':len(created)}
     @app.put('/api/meetings/{mid}/notes/{nid}')
     def update_note(mid:str,nid:str,body:MeetingNoteUpdate):
         meeting(mid)
-        if not store.one('SELECT id FROM meeting_notes WHERE id=? AND meeting_id=?',(nid,mid)):raise HTTPException(404,'简记不存在')
-        text=body.raw_text.strip()
-        if not text:raise HTTPException(422,'简记内容不能为空')
-        store.execute("UPDATE meeting_notes SET raw_text=?,note_type=?,expanded_text='',accepted_text='',source_segment_ids='[]',status='raw',expansion_revision=0,updated=CURRENT_TIMESTAMP WHERE id=? AND meeting_id=? AND (raw_text!=? OR note_type!=?)",
-            (text,body.note_type,nid,mid,text,body.note_type));return {'ok':True}
+        with store.connect() as db:
+            db.execute('BEGIN IMMEDIATE')
+            old=db.execute('SELECT * FROM meeting_notes WHERE id=? AND meeting_id=?',(nid,mid)).fetchone()
+            if not old:raise HTTPException(404,'简记不存在')
+            text=body.raw_text.strip();scope=body.note_scope or old['note_scope']
+            marker=bool(old['is_marker']) if body.is_marker is None else body.is_marker
+            position=old['captured_at'] if body.captured_at is None else body.captured_at
+            if not text and not marker:raise HTTPException(422,'请补充内容或保留时间标记')
+            if any([text!=old['raw_text'],body.note_type!=old['note_type'],scope!=old['note_scope'],marker!=bool(old['is_marker']),position!=old['captured_at']]):
+                db.execute("UPDATE meeting_notes SET raw_text=?,note_type=?,note_scope=?,is_marker=?,captured_at=?,expanded_text='',accepted_text='',source_segment_ids='[]',status='raw',expansion_revision=0,updated=CURRENT_TIMESTAMP WHERE id=?",(text,body.note_type,scope,int(marker),position,nid))
+        return {'ok':True}
+    @app.get('/api/meetings/{mid}/notes/{nid}/review')
+    def review_note(mid:str,nid:str):
+        from .notes import review
+        try:return review(store,mid,nid)
+        except ValueError as error:raise HTTPException(404,str(error))
+    @app.post('/api/meetings/{mid}/notes/{nid}/use')
+    def use_meeting_note(mid:str,nid:str,body:NoteUseInput):
+        from .notes import use_note
+        try:return use_note(store,mid,nid,body)
+        except ValueError as error:raise HTTPException(409,str(error))
+    @app.put('/api/meetings/{mid}/note-todos/{tid}')
+    def update_note_todo(mid:str,tid:str,body:TodoUpdate):
+        meeting(mid)
+        if not store.one('SELECT id FROM note_todos WHERE meeting_id=? AND id=?',(mid,tid)):raise HTTPException(404,'待办不存在')
+        store.execute('UPDATE note_todos SET status=?,owner=?,due_date=?,updated=CURRENT_TIMESTAMP WHERE id=?',(body.status,body.owner.strip(),body.due_date.strip(),tid))
+        return {'ok':True}
     @app.post('/api/meetings/{mid}/notes/{nid}/expand',status_code=201)
     def expand_note(mid:str,nid:str,body:AnalysisJobInput):
         from .note_expansion import nearby_segments
         row=meeting(mid)
         note=store.one('SELECT * FROM meeting_notes WHERE id=? AND meeting_id=?',(nid,mid))
         if not note:raise HTTPException(404,'简记不存在')
+        if not note['raw_text'].strip():raise HTTPException(409,'时间标记需要先补充内容，再请求扩写')
         if not row['revision']:raise HTTPException(409,'请先完成文字稿，再关联依据扩写')
         profile=None
         if body.profile_id:profile=llm_config(body.profile_id)
@@ -617,7 +669,7 @@ def create_app(data_dir=None, start_worker=True):
             budget=min(8000,int(((int(profile['context_window']) if profile else 32768)-2048-1200)*.6)-len(note['raw_text']))
             if budget<256:raise HTTPException(409,'当前模型上下文不足以容纳简记和依据，请缩短简记或选择更大上下文模型')
             config={'note_id':nid,'revision':current['revision'],'profile_id':profile['id'] if profile else None,'provider':provider_snapshot,'model':model,
-                **{key:note[key] for key in ('raw_text','note_type','captured_at')},'segments':nearby_segments(json.loads(current['segments']),note['captured_at'],budget)}
+                **{key:note[key] for key in ('raw_text','note_type','captured_at','note_scope')},'segments':nearby_segments(json.loads(current['segments']),note['captured_at'],budget)}
             db.execute('INSERT INTO jobs(id,meeting_id,state,stage,config,kind) VALUES(?,?,?,?,?,?)',(jid,mid,'queued','等待简记扩写',encode(config),'note_expansion'))
         return {'id':jid,'model':model,'revision':current['revision']}
 
@@ -632,12 +684,14 @@ def create_app(data_dir=None, start_worker=True):
             if not row or not note or not artifact:raise HTTPException(404,'简记或扩写建议不存在')
             payload=json.loads(artifact['payload'])
             if payload.get('note_id')!=nid:raise HTTPException(400,'扩写建议不属于这条简记')
-            if artifact['revision']!=row['revision'] or any(payload.get(key)!=note[key] for key in ('raw_text','note_type','captured_at')):raise HTTPException(409,'文字稿或简记已变化，请重新扩写')
+            if artifact['revision']!=row['revision'] or payload.get('note_scope','personal')!=note['note_scope'] or any(payload.get(key)!=note[key] for key in ('raw_text','note_type','captured_at')):raise HTTPException(409,'文字稿或简记已变化，请重新扩写')
             if payload['status']!='supported':raise HTTPException(409,'依据不足，无法接受扩写')
             try:result=validate_expansion(Expansion.model_validate(payload),json.loads(row['segments']))
             except ValueError as error:raise HTTPException(409,str(error))
+            accepted=result.text if body.accepted_text is None else body.accepted_text.strip()
+            if not accepted:raise HTTPException(422,'接受的扩写内容不能为空')
             db.execute("UPDATE meeting_notes SET expanded_text=?,accepted_text=?,source_segment_ids=?,status='accepted',expansion_revision=?,updated=CURRENT_TIMESTAMP WHERE id=?",
-                (result.text,result.text,encode(list(dict.fromkeys(e.segment_id for e in result.evidence))),row['revision'],nid))
+                (result.text,accepted,encode(list(dict.fromkeys(e.segment_id for e in result.evidence))),row['revision'],nid))
         return {'ok':True}
 
     @app.delete('/api/meetings/{mid}/notes/{nid}')
@@ -655,7 +709,7 @@ def create_app(data_dir=None, start_worker=True):
             if db.execute("SELECT 1 FROM jobs WHERE meeting_id=? AND state IN ('running','queued')",(mid,)).fetchone():
                 raise HTTPException(409,'请先取消任务，等待处理停止后删除')
             db.execute('DELETE FROM live_asr_ranges WHERE recording_id=?',(mid,))
-            for table in ['retrieval_units','meeting_notes','artifacts','revisions','jobs','meetings']:
+            for table in ['note_todos','retrieval_units','meeting_notes','artifacts','revisions','jobs','meetings']:
                 key='id' if table=='meetings' else 'meeting_id'
                 db.execute(f'DELETE FROM {table} WHERE {key}=?',(mid,))
         shutil.rmtree(store.directory(mid),ignore_errors=True)

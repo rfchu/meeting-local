@@ -33,6 +33,8 @@ export interface Revision {
 export type MeetingNoteType =
   "note" | "highlight" | "question" | "decision" | "action";
 export interface MeetingNoteInput {
+  note_scope?: "personal" | "meeting";
+  is_marker?: boolean;
   captured_at: number;
   note_type: MeetingNoteType;
   raw_text: string;
@@ -40,6 +42,7 @@ export interface MeetingNoteInput {
 export interface MeetingNote extends MeetingNoteInput {
   id: string;
   meeting_id: string;
+  adopted_to_minutes?: boolean;
   expansion_revision: number;
   expansion_stale: boolean;
   expansion?: Artifact<NoteExpansion> | null;
@@ -59,6 +62,22 @@ export interface NoteExpansion {
   text: string;
   reason: string;
   evidence: { segment_id: string; quote: string }[];
+}
+export interface NoteTodo {
+  id: string;
+  note_id: string;
+  content: string;
+  status: "pending" | "done";
+  owner: string;
+  due_date: string;
+  note_scope: string;
+  revision: number;
+  stale: boolean;
+}
+export interface NoteReview {
+  fingerprint: string;
+  revision: number;
+  segments: Segment[];
 }
 export interface LiveDraftSegment {
   start: number;
@@ -212,6 +231,7 @@ export interface Meeting extends MeetingSummary {
   revisions: Revision[];
   artifacts: Artifact[];
   notes: MeetingNote[];
+  note_todos: NoteTodo[];
   audio_tracks?: string[];
 }
 

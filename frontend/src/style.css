@@ -1964,3 +1964,94 @@ dialog code {
     margin-left: 16px;
   }
 }
+
+.notes-purpose p,
+.note-purpose-hint {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.7;
+}
+.note-compose-options {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  align-items: center;
+  margin: 12px 0;
+}
+.notes-view .notes-compose {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+.note-review-dialog {
+  width: min(1180px, 96vw);
+  max-width: 1180px;
+  max-height: 92vh;
+  overflow: auto;
+}
+.note-review-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr) minmax(0, 1fr);
+  gap: 18px;
+}
+.note-review-grid > section {
+  background: #f7f9fc;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 16px;
+  min-width: 0;
+}
+.note-review-grid textarea {
+  width: 100%;
+  padding: 12px;
+  line-height: 1.7;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.review-source {
+  border-bottom: 1px solid var(--line);
+  padding: 12px 0;
+}
+.review-source button {
+  padding: 6px 10px;
+  margin-left: 8px;
+}
+.note-confirm {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  line-height: 1.7;
+  margin: 16px 0;
+}
+.note-todo-card {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 16px;
+  margin: 12px 0;
+}
+.note-todo-card small {
+  display: block;
+  color: var(--muted);
+  margin-top: 8px;
+}
+.note-review-message {
+  padding: 12px;
+  background: var(--soft);
+  border-radius: 8px;
+}
+.mark-now {
+  align-self: flex-start;
+  margin: 4px 0;
+  color: var(--accent);
+}
+.live-note-options {
+  font-size: 12px;
+  margin-bottom: 10px;
+}
+@media (max-width: 900px) {
+  .note-review-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.recording-workbench .live-note-form {
+  grid-template-columns: minmax(0, 1fr) auto;
+}

@@ -37,6 +37,9 @@ const noteLabels: Record<MeetingNoteType, string> = {
   action: "待办",
 };
 
+const recordingState = (state: string) =>
+  ["recording", "paused"].includes(state);
+
 const supportedMime = () =>
   ["audio/webm;codecs=opus", "audio/mp4", "audio/webm"].find((value) =>
     MediaRecorder.isTypeSupported(value),
@@ -88,6 +91,7 @@ export default function RecordingDialog({
     [elapsed, setElapsed] = useState(0),
     [noteText, setNoteText] = useState(""),
     [noteType, setNoteType] = useState<MeetingNoteType>("note"),
+    [noteScope, setNoteScope] = useState<"personal" | "meeting">("personal"),
     [notes, setNotes] = useState<MeetingNoteInput[]>([]),
     [drafts, setDrafts] = useState<LiveDraftSegment[]>([]),
     [partialDraft, setPartialDraft] = useState<LiveDraftSegment | null>(null),
@@ -144,7 +148,7 @@ export default function RecordingDialog({
     activeSinceRef = useRef(0),
     accruedRef = useRef(0),
     notesRef = useRef(notes),
-    noteDraftRef = useRef({ text: noteText, type: noteType }),
+    noteDraftRef = useRef({ text: noteText, type: noteType, scope: noteScope }),
     stateRef = useRef(state),
     audioContextRef = useRef<AudioContext | null>(null),
     audioSourceRef = useRef<MediaStreamAudioSourceNode | null>(null),
@@ -164,7 +168,7 @@ export default function RecordingDialog({
     draftPendingRef = useRef(0),
     draftEnabledRef = useRef(true);
   notesRef.current = notes;
-  noteDraftRef.current = { text: noteText, type: noteType };
+  noteDraftRef.current = { text: noteText, type: noteType, scope: noteScope };
 
   const persistPreferences = (mode = completionMode) => {
     let saved = false;
@@ -941,10 +945,44 @@ export default function RecordingDialog({
     const capturedAt = Math.max(0, currentSeconds());
     setNotes((old) => [
       ...old,
-      { captured_at: capturedAt, note_type: noteType, raw_text: text },
+      {
+        captured_at: capturedAt,
+        note_type: noteType,
+        raw_text: text,
+        note_scope: noteScope,
+      },
     ]);
     setNoteText("");
   };
+  const markNow = () => {
+    if (!["recording", "paused"].includes(stateRef.current)) return;
+    setNotes((old) => [
+      ...old,
+      {
+        captured_at: Math.max(0, currentSeconds()),
+        note_type: "note",
+        raw_text: "",
+        note_scope: "personal",
+        is_marker: true,
+      },
+    ]);
+  };
+  useEffect(() => {
+    if (!recordingState(state)) return;
+    const handler = (event: KeyboardEvent) => {
+      if (
+        event.altKey &&
+        event.code === "KeyM" &&
+        !event.repeat &&
+        !event.isComposing
+      ) {
+        event.preventDefault();
+        markNow();
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [state]);
   const stop = async () => {
     if (sessionRef.current?.source === "macos") {
       accruedRef.current = currentSeconds();
@@ -960,6 +998,7 @@ export default function RecordingDialog({
             captured_at: accruedRef.current,
             note_type: noteDraftRef.current.type,
             raw_text: noteDraftRef.current.text.trim(),
+            note_scope: noteDraftRef.current.scope,
           },
         ];
         setNotes(notesRef.current);
@@ -1001,6 +1040,7 @@ export default function RecordingDialog({
         captured_at: accruedRef.current,
         note_type: noteDraftRef.current.type,
         raw_text: noteDraftRef.current.text.trim(),
+        note_scope: noteDraftRef.current.scope,
       });
     notesRef.current = savedNotes;
     setNotes(savedNotes);
@@ -1228,6 +1268,7 @@ export default function RecordingDialog({
                       captured_at: draft.start,
                       note_type: "note",
                       raw_text: draft.text,
+                      note_scope: "meeting",
                     },
                   ])
                 }
@@ -1240,7 +1281,32 @@ export default function RecordingDialog({
                   {notes.length ? `${notes.length} 条` : "原文永久保留"}
                 </span>
               </header>
-              <div className="live-note-form">
+              <button
+                className="mark-now"
+                disabled={!recording}
+                onClick={markNow}
+              >
+                ⚑ 标记此刻 <small>Alt+M</small>
+              </button>
+              <p className="note-purpose-hint">
+                先记关键词或标记时间，会后核对；个人备注默认不进入纪要。
+              </p>
+              <details className="live-note-options">
+                <summary>
+                  可选标签与用途 · {noteLabels[noteType]} /{" "}
+                  {noteScope === "personal" ? "个人备注" : "会议内容"}
+                </summary>
+                <select
+                  aria-label="记录用途"
+                  value={noteScope}
+                  onChange={(e) =>
+                    setNoteScope(e.target.value as typeof noteScope)
+                  }
+                  disabled={!recording}
+                >
+                  <option value="personal">个人备注</option>
+                  <option value="meeting">会议内容（待核对）</option>
+                </select>
                 <select
                   aria-label="简记类型"
                   value={noteType}
@@ -1255,6 +1321,8 @@ export default function RecordingDialog({
                     </option>
                   ))}
                 </select>
+              </details>
+              <div className="live-note-form">
                 <textarea
                   aria-label="会议简记"
                   placeholder={
@@ -1298,7 +1366,16 @@ export default function RecordingDialog({
                     </button>
                     <b>{clock(note.captured_at)}</b>
                     <span>{noteLabels[note.note_type]}</span>
-                    <p>{note.raw_text}</p>
+                    <p>
+                      {note.is_marker && !note.raw_text
+                        ? "⚑ 时间标记 · 会后补充"
+                        : note.raw_text}
+                    </p>
+                    <small>
+                      {note.note_scope === "meeting"
+                        ? "会议内容 · 待核对"
+                        : "个人备注"}
+                    </small>
                   </article>
                 ))}
               </div>
