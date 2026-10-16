@@ -72,6 +72,11 @@ export const api = {
     ),
   environment: () => request<Environment>("/status"),
   meetings: () => request<MeetingSummary[]>("/meetings"),
+  recordingKeepAwake: (id: string, enabled: boolean) =>
+    request<{ active: boolean; supported: boolean; error: string }>(
+      `/recordings/${id}/keep-awake`,
+      json("POST", { enabled }),
+    ),
   recordings: () => request<RecordingSession[]>("/recordings"),
   liveModelStatus: () =>
     request<{
@@ -90,8 +95,11 @@ export const api = {
   liveModelControl: (action: "warm" | "release") =>
     request("/live-model/" + action, { method: "POST" }),
   nativeCapability: () => request<NativeCapability>("/native-capture"),
-  nativeStart: (microphone: boolean) =>
-    request<RecordingSession>("/native-capture", json("POST", { microphone })),
+  nativeStart: (microphone: boolean, keepAwake = true) =>
+    request<RecordingSession>(
+      "/native-capture",
+      json("POST", { microphone, keep_awake: keepAwake }),
+    ),
   nativeStatus: (id: string) =>
     request<NativeCaptureStatus>(`/native-capture/${id}`),
   nativeDraft: (

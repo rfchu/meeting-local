@@ -20,6 +20,7 @@ from .native_capture import NativeCapture
 from .live_results import LiveResults
 from .live_stream import inspect_audio, qwen_events
 from .qwen_resident import QwenResident
+from .keep_awake import KeepAwake
 from .retrieval import Retrieval
 
 BASE=Path(__file__).resolve().parents[1]
@@ -121,8 +122,11 @@ class NativeDraftInput(BaseModel):
     offset: float=Field(default=0,ge=0,le=86400,allow_inf_nan=False)
     responsive: bool=False
     window_seconds: Literal[5,10,15]=15
+class KeepAwakeInput(BaseModel):
+    enabled: bool=True
 class NativeRecordingInput(BaseModel):
     microphone: bool=True
+    keep_awake: bool=True
 class NativeCommandInput(BaseModel):
     command: Literal['pause','resume','stop']
 class MinutesGenerateInput(BaseModel):
@@ -152,7 +156,9 @@ def create_app(data_dir=None, start_worker=True):
         resident.start_monitor()
         store.execute("UPDATE live_asr_ranges SET state='failed',error='服务重启，识别未完成；快速完成会补识别该范围' WHERE state='running'")
         native_capture.start_monitor()
+        keep_awake.start_monitor()
         yield
+        await run_in_threadpool(keep_awake.close)
         await run_in_threadpool(native_capture.close)
         await run_in_threadpool(worker.close)
         await resident.shutdown()
@@ -160,6 +166,11 @@ def create_app(data_dir=None, start_worker=True):
     app.state.store=store; app.state.worker=worker
     recordings=RecordingStore(store)
     native_capture=NativeCapture(store,recordings)
+    def recording_open(rid):
+        try:return recordings.read(rid).get('state')!='completed' and not store.one('SELECT id FROM meetings WHERE id=?',(rid,))
+        except (FileNotFoundError,ValueError):return False
+    keep_awake=KeepAwake(recording_open,lambda rid:getattr(native_capture,'is_running',lambda _:False)(rid))
+    app.state.keep_awake=keep_awake
     live_results=LiveResults(store,recordings)
     live_asr_lock=threading.Lock()
     resident=QwenResident(store.root)
@@ -455,7 +466,10 @@ def create_app(data_dir=None, start_worker=True):
     def native_capability():return native_capture.capability()
     @app.post('/api/native-capture',status_code=201)
     def native_start(body:NativeRecordingInput):
-        try:return native_capture.start(body.microphone)
+        try:
+            session=native_capture.start(body.microphone)
+            if body.keep_awake:keep_awake.acquire(session['id'])
+            return session
         except (ValueError,OSError) as error:raise HTTPException(409,str(error))
     @app.get('/api/native-capture/{rid}')
     def native_status(rid:str):
@@ -495,7 +509,8 @@ def create_app(data_dir=None, start_worker=True):
         except (ValueError,RuntimeError) as error:raise HTTPException(409,str(error))
     @app.post('/api/native-capture/{rid}/finish')
     def native_finish(rid:str):
-        try:return decorated(meeting(native_capture.finish(rid)))
+        try:
+            mid=native_capture.finish(rid);keep_awake.release(rid);return decorated(meeting(mid))
         except FileNotFoundError as error:raise HTTPException(404,str(error))
         except (ValueError,RuntimeError,subprocess.SubprocessError) as error:raise HTTPException(409,str(error))
     @app.get('/api/recordings/{rid}/live-results')
@@ -505,6 +520,14 @@ def create_app(data_dir=None, start_worker=True):
         except ValueError as error:raise HTTPException(409,str(error))
     @app.post('/api/recordings',status_code=201)
     def create_recording(body:RecordingInput):return recordings.create(body.mime_type)
+    @app.post('/api/recordings/{rid}/keep-awake')
+    def recording_keep_awake(rid:str,body:KeepAwakeInput):
+        try:
+            recordings.folder(rid)
+            if not body.enabled:return keep_awake.release(rid)
+            if not recording_open(rid):raise HTTPException(409,'录音已完成或不存在，不能保持亮屏')
+            return keep_awake.acquire(rid)
+        except (FileNotFoundError,ValueError) as error:raise HTTPException(409,str(error))
     @app.put('/api/recordings/{rid}/metadata')
     def save_recording_metadata(rid:str,body:RecordingMetadata):
         try:return recordings.metadata(rid,[note.model_dump() for note in body.notes],body.duration,body.chunk_count)
@@ -523,7 +546,8 @@ def create_app(data_dir=None, start_worker=True):
         finally:file.file.close()
     @app.post('/api/recordings/{rid}/finish')
     def finish_recording(rid:str,body:RecordingFinish):
-        try:return decorated(meeting(recordings.finish(rid,body.chunk_count)))
+        try:
+            mid=recordings.finish(rid,body.chunk_count);keep_awake.release(rid);return decorated(meeting(mid))
         except FileNotFoundError as error:raise HTTPException(404,str(error))
         except ValueError as error:raise HTTPException(409,str(error))
     @app.post('/api/meetings',status_code=201)

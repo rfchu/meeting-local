@@ -1939,10 +1939,11 @@ dialog code {
   display: flex;
   flex-direction: column;
   flex: 1;
-  min-height: 0;
+  min-height: 380px;
 }
 .workbench-history-wrapper.ended {
   flex: 0 0 auto;
+  min-height: 0;
 }
 .workbench-history-wrapper.ended.open {
   flex: 0 0 350px;
@@ -1957,6 +1958,10 @@ dialog code {
   margin-top: auto;
 }
 @media (max-width: 850px) {
+  .workbench-history-wrapper:not(.ended) {
+    flex: 0 0 auto;
+    min-height: 650px;
+  }
   .workbench-history-wrapper.ended.open {
     min-height: 720px;
   }
@@ -2054,4 +2059,23 @@ dialog code {
 
 .recording-workbench .live-note-form {
   grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.recording-awake-status {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  font-size: 12px;
+  color: #56647b;
+  margin-bottom: 8px;
+}
+.recording-awake-status label {
+  display: flex;
+  gap: 7px;
+  align-items: center;
+  cursor: pointer;
+}
+.recording-awake-status small {
+  color: var(--muted);
 }

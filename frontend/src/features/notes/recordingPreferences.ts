@@ -1,6 +1,7 @@
 export type CompletionMode = "quick" | "full" | "none";
 export interface RecordingPreferences {
   version: 1;
+  keepAwake: boolean;
   captureSource: "browser" | "macos-system" | "macos-both";
   draftEngine: "whisper" | "qwen";
   streamEnabled: boolean;
@@ -10,6 +11,7 @@ export interface RecordingPreferences {
 export const RECORDING_PREFERENCES_KEY = "tingji.recording.preferences.v1";
 export const DEFAULT_RECORDING_PREFERENCES: RecordingPreferences = {
   version: 1,
+  keepAwake: true,
   captureSource: "browser",
   draftEngine: "whisper",
   streamEnabled: true,
@@ -27,6 +29,7 @@ export function readRecordingPreferences(
       return { ...DEFAULT_RECORDING_PREFERENCES };
     return {
       ...DEFAULT_RECORDING_PREFERENCES,
+      keepAwake: typeof value.keepAwake === "boolean" ? value.keepAwake : true,
       captureSource: ["browser", "macos-system", "macos-both"].includes(
         value.captureSource,
       )

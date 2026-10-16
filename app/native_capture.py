@@ -12,6 +12,11 @@ class NativeCapture:
         self.store=store;self.recordings=recordings;self.processes={};self.last_seen={}
         self.stop_reasons={};self.lock=threading.RLock();self.closed=threading.Event();self.monitor=None
 
+    def is_running(self,rid):
+        with self.lock:
+            process=self.processes.get(rid)
+            return process is not None and process.poll() is None
+
     def available(self):return platform.system()=='Darwin' and HELPER.is_file()
 
     def capability(self):

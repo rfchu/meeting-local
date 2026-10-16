@@ -20,6 +20,7 @@ import Modal from "../../components/Modal";
 import { encodeLiveWav } from "./liveAudio";
 import RecordingWaveform from "./RecordingWaveform";
 import LiveDraftList from "./LiveDraftList";
+import { useRecordingAwake } from "./useRecordingAwake";
 import { responsivePlan, takeFrames } from "./rollingAudio";
 import {
   bufferRecording,
@@ -74,6 +75,7 @@ export default function RecordingDialog({
     [settingsTab, setSettingsTab] = useState<"recording" | "model">(
       "recording",
     );
+  const [keepAwake, setKeepAwake] = useState(preferences.keepAwake);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [preferencesSaved, setPreferencesSaved] = useState(true),
     [savedMeetingId, setSavedMeetingId] = useState(""),
@@ -175,6 +177,7 @@ export default function RecordingDialog({
     try {
       saved = saveRecordingPreferences(window.localStorage, {
         version: 1,
+        keepAwake,
         captureSource,
         draftEngine,
         streamEnabled,
@@ -194,6 +197,7 @@ export default function RecordingDialog({
     streamEnabled,
     responsiveMode,
     completionMode,
+    keepAwake,
   ]);
   const processSaved = async (mode: CompletionMode) => {
     if (!savedMeetingId || completing) return;
@@ -794,7 +798,10 @@ export default function RecordingDialog({
       stateRef.current = "requesting";
       setState("requesting");
       try {
-        const session = await api.nativeStart(captureSource === "macos-both");
+        const session = await api.nativeStart(
+          captureSource === "macos-both",
+          keepAwake,
+        );
         sessionRef.current = session;
         setNativeSessionId(session.id);
         await bufferRecording(session);
@@ -1050,6 +1057,11 @@ export default function RecordingDialog({
   };
 
   const recording = state === "recording" || state === "paused";
+  const awakeStatus = useRecordingAwake(
+    ["requesting", "recording", "paused", "saving"].includes(state),
+    sessionRef.current?.id || "",
+    keepAwake,
+  );
   const sourceLabel = {
     browser: "浏览器麦克风",
     "macos-system": "电脑声音",
@@ -1384,6 +1396,22 @@ export default function RecordingDialog({
         )}
       </div>
       <div className="workbench-bottom">
+        <div className="recording-awake-status">
+          <label>
+            <input
+              type="checkbox"
+              aria-label="录音时保持亮屏"
+              checked={keepAwake}
+              disabled={state === "requesting" || state === "saving"}
+              onChange={(event) => setKeepAwake(event.target.checked)}
+            />{" "}
+            录音时保持亮屏
+          </label>
+          <span role="status">{awakeStatus}</span>
+          <small>
+            暂停期间保持，结束后释放；合盖、手动睡眠或断电仍会中断录音。
+          </small>
+        </div>
         <RecordingWaveform
           tracks={
             captureSource === "browser"
