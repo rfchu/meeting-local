@@ -21,6 +21,8 @@ import { encodeLiveWav } from "./liveAudio";
 import RecordingWaveform from "./RecordingWaveform";
 import LiveDraftList from "./LiveDraftList";
 import { useRecordingAwake } from "./useRecordingAwake";
+import { watchRecordingRecovery } from "./recordingRecovery";
+import { queueAwake } from "./awakeQueue";
 import { responsivePlan, takeFrames } from "./rollingAudio";
 import {
   bufferRecording,
@@ -319,7 +321,7 @@ export default function RecordingDialog({
     let active = true,
       polling = false;
     const poll = async () => {
-      if (polling) return;
+      if (!active || polling) return;
       polling = true;
       try {
         const status = await api.nativeStatus(sessionRef.current!.id);
@@ -358,9 +360,11 @@ export default function RecordingDialog({
     };
     void poll();
     const timer = window.setInterval(() => void poll(), 1000);
+    const unwatch = watchRecordingRecovery(() => void poll());
     return () => {
       active = false;
       window.clearInterval(timer);
+      unwatch();
     };
   }, [state, captureSource, nativeSessionId]);
   useEffect(() => {
@@ -814,10 +818,13 @@ export default function RecordingDialog({
           `${draftEngine === "qwen" ? "Qwen-ASR" : "Whisper"} ${draftEngine === "qwen" && responsiveMode && streamEnabled ? "短片段预览与修订" : "约 15 秒识别"}，仅作会议跟随参考`,
         );
       } catch (error) {
-        if (sessionRef.current?.source === "macos")
-          await api
-            .nativeCommand(sessionRef.current.id, "stop")
-            .catch(() => {});
+        if (sessionRef.current?.source === "macos") {
+          const rid = sessionRef.current.id;
+          void queueAwake(rid, () => api.recordingKeepAwake(rid, false)).catch(
+            () => {},
+          );
+          await api.nativeCommand(rid, "stop").catch(() => {});
+        }
         stateRef.current = "idle";
         setState("idle");
         toast((error as Error).message);

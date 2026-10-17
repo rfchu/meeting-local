@@ -75,7 +75,7 @@ export const api = {
   recordingKeepAwake: (id: string, enabled: boolean) =>
     request<{ active: boolean; supported: boolean; error: string }>(
       `/recordings/${id}/keep-awake`,
-      json("POST", { enabled }),
+      { ...json("POST", { enabled }), signal: AbortSignal.timeout(10000) },
     ),
   recordings: () => request<RecordingSession[]>("/recordings"),
   liveModelStatus: () =>
@@ -101,7 +101,9 @@ export const api = {
       json("POST", { microphone, keep_awake: keepAwake }),
     ),
   nativeStatus: (id: string) =>
-    request<NativeCaptureStatus>(`/native-capture/${id}`),
+    request<NativeCaptureStatus>(`/native-capture/${id}`, {
+      signal: AbortSignal.timeout(10000),
+    }),
   nativeDraft: (
     id: string,
     offset: number,

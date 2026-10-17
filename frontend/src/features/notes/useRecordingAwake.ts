@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { api } from "../../api";
 import { ScreenAwake } from "./screenAwake";
 import { queueAwake } from "./awakeQueue";
+import { watchRecordingRecovery } from "./recordingRecovery";
 export function useRecordingAwake(
   active: boolean,
   rid: string,
@@ -34,7 +35,9 @@ export function useRecordingAwake(
       busy = true;
       try {
         const status = await queueAwake(rid, () =>
-          api.recordingKeepAwake(rid, true),
+          live
+            ? api.recordingKeepAwake(rid, true)
+            : Promise.resolve({ active: false }),
         );
         if (live) setNative(status.active);
       } catch {
@@ -46,15 +49,12 @@ export function useRecordingAwake(
     };
     void renew();
     const timer = window.setInterval(() => void renew(), 20000);
-    const visible = () => {
-      if (document.visibilityState === "visible") void renew();
-    };
-    document.addEventListener("visibilitychange", visible);
+    const unwatch = watchRecordingRecovery(() => void renew());
     return () => {
       live = false;
       screen.stop();
       window.clearInterval(timer);
-      document.removeEventListener("visibilitychange", visible);
+      unwatch();
       void queueAwake(rid, () => api.recordingKeepAwake(rid, false)).catch(
         () => {},
       );
