@@ -18,6 +18,8 @@
 
 运行：`PYTHONPATH=. .venv/bin/pytest -q`、`npm --prefix frontend run test:stream`、`npm --prefix frontend run build`。
 
+重复页面验收：在项目根目录运行 `PYTHONPATH=. .venv/bin/python scripts/recording_ui_fixture.py`，访问 `http://127.0.0.1:8766/`。它创建临时数据库和一条缺中间分段的测试录音；在录音设置选择“电脑声音”后，开始录音只使用固定 12 秒合成音轨，不调用 macOS 采集器或麦克风。可验证简记、暂停、结束和暂不处理；实时识别窗口固定返回未就绪，不加载 ASR。退出时清理临时业务数据；浏览器下载的诊断文件和本域浏览器暂存由浏览器保留。不要将真实资料导入此测试服务。
+
 页面测试使用临时数据库和合成音轨，没有开启真实麦克风。12 秒合成测试不能代替长会议实录。字节数和元数据时长也不能证明音频可听、有效发言完整或识别准确。
 
 ## 待完成的实录矩阵
