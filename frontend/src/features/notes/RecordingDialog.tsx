@@ -19,6 +19,10 @@ import { clock } from "../../utils";
 import Modal from "../../components/Modal";
 import { encodeLiveWav } from "./liveAudio";
 import RecordingWaveform from "./RecordingWaveform";
+import RecordingHealthPanel from "./RecordingHealthPanel";
+import RecordingRecoveryList from "./RecordingRecoveryList";
+import { clientRecordingDiagnostics } from "./recordingInventory";
+import { stopRecorder } from "./stopRecorder";
 import LiveDraftList from "./LiveDraftList";
 import { useRecordingAwake } from "./useRecordingAwake";
 import { watchRecordingRecovery } from "./recordingRecovery";
@@ -29,6 +33,7 @@ import {
   flushRecording,
   forgetRecording,
   recoverableRecordings,
+  pendingRecordingChunks,
   syncRecording,
 } from "./recordingBuffer";
 
@@ -305,12 +310,71 @@ export default function RecordingDialog({
     priorPreviewRef.current =
       result.confirmed === false ? current || null : null;
   };
+  const exportDiagnostics = async (id: string) => {
+    const [server, local] = await Promise.allSettled([
+      api.recordingDiagnostics(id),
+      pendingRecordingChunks(id),
+    ]);
+    const current = sessionRef.current?.id === id;
+    const report = {
+      schema_version: 1,
+      server:
+        server.status === "fulfilled" ? server.value : { available: false },
+      client: clientRecordingDiagnostics(
+        current ? state : "idle",
+        local.status === "fulfilled" ? local.value : null,
+        current ? failedChunksRef.current.length : 0,
+        current
+          ? liveMetrics
+          : {
+              firstMs: null,
+              processingMs: 0,
+              rtf: null,
+              lagMs: null,
+              revisions: 0,
+            },
+      ),
+    };
+    const url = URL.createObjectURL(
+      new Blob([JSON.stringify(report, null, 2)], { type: "application/json" }),
+    );
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "tingji-recording-diagnostics.json";
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    toast("脱敏诊断已导出，不包含录音和会议正文");
+  };
   useEffect(() => {
     void checkCapture();
-    void recoverableRecordings()
-      .then(setRecoveries)
-      .catch((error) => toast(error.message));
   }, []);
+  useEffect(() => {
+    if (state !== "idle") return;
+    let active = true,
+      busy = false;
+    const refresh = async () => {
+      if (!active || busy) return;
+      busy = true;
+      try {
+        const rows = await recoverableRecordings();
+        if (active) setRecoveries(rows);
+      } catch (error) {
+        if (active) toast((error as Error).message);
+      } finally {
+        busy = false;
+      }
+    };
+    void refresh();
+    const timer = window.setInterval(() => void refresh(), 15000);
+    const unwatch = watchRecordingRecovery(() => void refresh());
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+      unwatch();
+    };
+  }, [state]);
   useEffect(() => {
     if (
       !sessionRef.current ||
@@ -511,10 +575,18 @@ export default function RecordingDialog({
     bufferQueueRef.current = task;
     void task
       .then(async () => {
-        setSaveStatus("浏览器已暂存，正在同步到本机…");
+        setSaveStatus(
+          session.source === "macos"
+            ? "简记已暂存，正在同步录音信息…"
+            : "浏览器已暂存，正在同步到本机…",
+        );
         try {
           await syncRecording(session.id);
-          setSaveStatus("最近一批分段已同步到本机");
+          setSaveStatus(
+            session.source === "macos"
+              ? "录音信息和简记已同步到本机"
+              : "最近一批分段已同步到本机",
+          );
         } catch (error) {
           setSaveStatus(
             `待重试 · ${(error as Error).message}；浏览器暂存已保留`,
@@ -545,7 +617,11 @@ export default function RecordingDialog({
       await bufferRecording(session);
       localSaveFailedRef.current = false;
       await flushRecording(session.id);
-      setSaveStatus("分段已同步到本机");
+      setSaveStatus(
+        session.source === "macos"
+          ? "录音信息和简记已同步到本机"
+          : "分段已同步到本机",
+      );
     } catch (error) {
       setSaveStatus(`保存未完成：${(error as Error).message}`);
       throw error;
@@ -584,6 +660,10 @@ export default function RecordingDialog({
       )
     )
       return;
+    if (session.health?.native_running) {
+      toast("此会话仍在采集，请先结束录音");
+      return;
+    }
     setNotes(session.notes);
     notesRef.current = session.notes;
     accruedRef.current = session.duration;
@@ -862,6 +942,12 @@ export default function RecordingDialog({
         const session = metadata();
         if (session) void persist(session, index, event.data).catch(() => {});
       };
+      recorder.addEventListener("stop", () => {
+        if (["recording", "paused"].includes(stateRef.current)) {
+          toast("录音输入已停止，正在保存已有内容");
+          void stop().catch((error) => toast(error.message));
+        }
+      });
       recorder.onerror = () => {
         accruedRef.current = currentSeconds();
         stateRef.current = "failed";
@@ -1037,11 +1123,7 @@ export default function RecordingDialog({
     setElapsed(accruedRef.current);
     stateRef.current = "saving";
     setState("saving");
-    const stopped = new Promise<void>((resolve) =>
-      recorder.addEventListener("stop", () => resolve(), { once: true }),
-    );
-    recorder.stop();
-    await stopped;
+    await stopRecorder(recorder);
     // Saving the full recording must not wait for optional draft inference.
     draftEnabledRef.current = false;
     streamAbortRef.current?.abort();
@@ -1233,23 +1315,14 @@ export default function RecordingDialog({
           {completing && <p role="status">正在打开会议…</p>}
         </section>
       )}
-      {state === "idle" && recoveries.length > 0 && (
-        <section className="recording-recovery">
-          <h3>发现未完成的录音</h3>
-          <p>刷新或中断后，可恢复已保存的音频和简记为会议。</p>
-          {recoveries.map((session) => (
-            <div key={session.id}>
-              <span>
-                {new Date(session.created * 1000).toLocaleString()} ·{" "}
-                {clock(session.duration)} ·{" "}
-                {session.source === "macos"
-                  ? "原生音轨"
-                  : `${session.chunk_count} 段`}
-              </span>
-              <button onClick={() => void recover(session)}>恢复为会议</button>
-            </div>
-          ))}
-        </section>
+      {state === "idle" && (
+        <RecordingRecoveryList
+          sessions={recoveries}
+          onRecover={(session) => void recover(session)}
+          onDiagnostics={(id) =>
+            void exportDiagnostics(id).catch((error) => toast(error.message))
+          }
+        />
       )}
       <div
         className={`workbench-history-wrapper${state === "finished" ? (historyOpen ? " ended open" : " ended") : ""}`}
@@ -1403,6 +1476,19 @@ export default function RecordingDialog({
         )}
       </div>
       <div className="workbench-bottom">
+        <RecordingHealthPanel
+          id={sessionRef.current?.id || ""}
+          state={state}
+          native={sessionRef.current?.source === "macos"}
+          tracks={captureHealth}
+          localFailure={localSaveFailedRef.current}
+          memoryOnly={failedChunksRef.current.length}
+          onDiagnostics={() =>
+            void exportDiagnostics(sessionRef.current!.id).catch((error) =>
+              toast(error.message),
+            )
+          }
+        />
         <div className="recording-awake-status">
           <label>
             <input
@@ -1449,7 +1535,7 @@ export default function RecordingDialog({
             recording &&
             (failedChunksRef.current.length > 0 ||
               localSaveFailedRef.current ||
-              /失败|未完成|错误/.test(saveStatus))
+              /失败|未完成|错误|待重试/.test(saveStatus))
               ? () => void retrySync().catch((error) => toast(error.message))
               : undefined
           }

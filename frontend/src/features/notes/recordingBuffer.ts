@@ -1,5 +1,6 @@
 import { api } from "../../api";
 import type { RecordingSession } from "../../types";
+import { mergeRecordingInventory } from "./recordingInventory";
 
 interface BufferedChunk {
   key: string;
@@ -99,31 +100,45 @@ export function syncRecording(id: string): Promise<void> {
   return task;
 }
 export async function recoverableRecordings() {
-  const local = await all<RecordingSession>("sessions");
+  // A disabled/full browser store must not hide audio already saved on the server.
+  const local = await all<RecordingSession>("sessions").catch(() => []);
   try {
     const remote = await api.recordings();
-    const rows = new Map(
-      remote.map((s) => [
-        s.id,
-        { ...s, chunk_count: Math.max(s.chunk_count, s.saved_chunks || 0) },
-      ]),
+    const known = new Set(remote.map((s) => s.id));
+    const checked = await Promise.all(
+      local.map(async (session) =>
+        known.has(session.id)
+          ? session
+          : {
+              ...session,
+              health: await api
+                .recordingHealth(session.id)
+                .catch(() => undefined),
+            },
+      ),
     );
-    for (const session of local) {
-      const existing = rows.get(session.id);
-      rows.set(session.id, {
-        ...(existing && existing.updated > session.updated
-          ? existing
-          : session),
-        chunk_count: Math.max(existing?.chunk_count || 0, session.chunk_count),
-        native_audio_saved:
-          existing?.native_audio_saved || session.native_audio_saved,
-        duration: Math.max(existing?.duration || 0, session.duration),
-      });
-    }
-    return [...rows.values()]
-      .filter((s) => s.chunk_count > 0 || s.native_audio_saved)
-      .sort((a, b) => b.created - a.created);
+    return mergeRecordingInventory(checked, remote);
   } catch {
-    return local.filter((s) => s.chunk_count > 0 || s.source === "macos");
+    return mergeRecordingInventory(local, []);
+  }
+}
+
+export async function pendingRecordingChunks(id: string): Promise<number> {
+  const db = await dbPromise();
+  try {
+    return await new Promise<number>((resolve, reject) => {
+      const request = db
+        .transaction("chunks")
+        .objectStore("chunks")
+        .getAllKeys();
+      request.onsuccess = () =>
+        resolve(
+          request.result.filter((key) => String(key).startsWith(id + ":"))
+            .length,
+        );
+      request.onerror = () => reject(request.error);
+    });
+  } finally {
+    db.close();
   }
 }

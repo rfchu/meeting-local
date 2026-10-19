@@ -85,6 +85,7 @@ class RecordingStore:
             actual=sorted(folder.glob('*.part'))
             expected=[folder/f'{index:08d}.part' for index in range(chunk_count)]
             if not expected or actual!=expected:raise ValueError('录音分段尚未全部保存，请重试；已有分段已保留')
+            if any(part.stat().st_size==0 for part in actual):raise ValueError('录音分段为空，请重新同步；已有分段已保留')
             target=self.store.directory(rid);target.mkdir(exist_ok=True)
             temporary=target/'original.tmp';digest=hashlib.sha256();size=0
             with temporary.open('wb') as output:

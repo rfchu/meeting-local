@@ -2079,3 +2079,67 @@ dialog code {
 .recording-awake-status small {
   color: var(--muted);
 }
+
+.recording-health-panel {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr)) auto;
+  align-items: start;
+  gap: 12px;
+  padding: 10px 14px;
+  margin-bottom: 8px;
+  background: white;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  font-size: 12px;
+}
+.recording-health-panel strong,
+.recording-health-panel span {
+  display: block;
+}
+.recording-health-panel span {
+  color: var(--muted);
+  margin-top: 4px;
+  line-height: 1.5;
+}
+.health-warning,
+.recording-health-panel .health-warning span {
+  color: #9b5812;
+}
+.recording-recovery-banner {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+  margin: 16px 32px;
+  padding: 14px 18px;
+  background: #fff8e8;
+  border: 1px solid #ebd9ad;
+  border-radius: 12px;
+}
+.recording-workbench .recording-recovery {
+  max-height: 250px;
+}
+.recording-recovery article {
+  border-top: 1px solid var(--line);
+  padding: 12px 0;
+  font-size: 13px;
+}
+.recording-recovery article p {
+  margin: 5px 0;
+  line-height: 1.6;
+}
+.recording-recovery article > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 8px;
+}
+@media (max-width: 850px) {
+  .recording-health-panel {
+    grid-template-columns: 1fr;
+  }
+  .recording-recovery-banner {
+    margin: 12px 16px;
+  }
+}

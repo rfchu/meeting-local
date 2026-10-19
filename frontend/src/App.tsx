@@ -38,6 +38,7 @@ import AnalysisView from "./features/analysis/AnalysisView";
 import MinutesView from "./features/minutes/MinutesView";
 import NotesView from "./features/notes/NotesView";
 import RecordingDialog from "./features/notes/RecordingDialog";
+import { recoverableRecordings } from "./features/notes/recordingBuffer";
 
 export default function App() {
   const client = useQueryClient();
@@ -77,6 +78,12 @@ export default function App() {
     [modelsOpen, setModelsOpen] = useState(false),
     [previewOpen, setPreviewOpen] = useState(false),
     [recordingOpen, setRecordingOpen] = useState(false);
+  const recoveryQuery = useQuery({
+    queryKey: ["recording-recoveries"],
+    queryFn: recoverableRecordings,
+    refetchInterval: 30000,
+    enabled: !recordingOpen,
+  });
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchTarget, setSearchTarget] = useState<SearchHit | null>(null);
   const [engine, setEngine] = useState("whisper"),
@@ -540,6 +547,18 @@ export default function App() {
             <span className="dot" /> 转写本地处理 · 分析引擎可配置
           </div>
         </header>
+        {!!recoveryQuery.data?.length && (
+          <section
+            className="recording-recovery-banner"
+            aria-label="录音恢复提醒"
+          >
+            <span>
+              发现 {recoveryQuery.data.length}{" "}
+              条未完成录音，已有内容待核对保存。
+            </span>
+            <button onClick={() => setRecordingOpen(true)}>打开恢复中心</button>
+          </section>
+        )}
         {!meeting ? (
           <Welcome
             onUpload={(file) => void upload(file)}
@@ -921,7 +940,12 @@ export default function App() {
         <RecordingDialog
           engineLabel={engineLabel(engine)}
           engines={environment?.engines || []}
-          onClose={() => setRecordingOpen(false)}
+          onClose={() => {
+            setRecordingOpen(false);
+            void client.invalidateQueries({
+              queryKey: ["recording-recoveries"],
+            });
+          }}
           onComplete={completeRecording}
           onModels={() => setModelsOpen(true)}
           toast={toast}

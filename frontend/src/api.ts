@@ -19,6 +19,7 @@ import type {
   Revision,
   SpeakerReviewResult,
   RecordingSession,
+  RecordingHealth,
   NativeCapability,
   NativeCaptureStatus,
 } from "./types";
@@ -77,7 +78,18 @@ export const api = {
       `/recordings/${id}/keep-awake`,
       { ...json("POST", { enabled }), signal: AbortSignal.timeout(10000) },
     ),
-  recordings: () => request<RecordingSession[]>("/recordings"),
+  recordings: () =>
+    request<RecordingSession[]>("/recordings", {
+      signal: AbortSignal.timeout(10000),
+    }),
+  recordingHealth: (id: string) =>
+    request<RecordingHealth>(`/recordings/${id}/health`, {
+      signal: AbortSignal.timeout(10000),
+    }),
+  recordingDiagnostics: (id: string) =>
+    request<RecordingHealth>(`/recordings/${id}/diagnostics`, {
+      signal: AbortSignal.timeout(10000),
+    }),
   liveModelStatus: () =>
     request<{
       loaded: boolean;
@@ -170,20 +182,21 @@ export const api = {
       json("POST", { mime_type: mimeType }),
     ),
   recordingMetadata: (session: RecordingSession) =>
-    request<RecordingSession>(
-      `/recordings/${session.id}/metadata`,
-      json("PUT", {
+    request<RecordingSession>(`/recordings/${session.id}/metadata`, {
+      ...json("PUT", {
         duration: session.duration,
         notes: session.notes,
         chunk_count: session.chunk_count,
       }),
-    ),
+      signal: AbortSignal.timeout(10000),
+    }),
   recordingChunk: (id: string, index: number, blob: Blob) => {
     const data = new FormData();
     data.append("file", blob, "chunk.part");
     return request(`/recordings/${id}/chunks/${index}`, {
       method: "PUT",
       body: data,
+      signal: AbortSignal.timeout(60000),
     });
   },
   finishRecording: (id: string, count: number) =>

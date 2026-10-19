@@ -21,6 +21,7 @@ from .live_results import LiveResults
 from .live_stream import inspect_audio, qwen_events
 from .qwen_resident import QwenResident
 from .keep_awake import KeepAwake
+from .recording_health import RecordingHealth
 from .retrieval import Retrieval
 
 BASE=Path(__file__).resolve().parents[1]
@@ -171,6 +172,7 @@ def create_app(data_dir=None, start_worker=True):
         except (FileNotFoundError,ValueError):return False
     keep_awake=KeepAwake(recording_open,lambda rid:getattr(native_capture,'is_running',lambda _:False)(rid))
     app.state.keep_awake=keep_awake
+    recording_health=RecordingHealth(store,recordings,native_capture)
     live_results=LiveResults(store,recordings)
     live_asr_lock=threading.Lock()
     resident=QwenResident(store.root)
@@ -448,7 +450,7 @@ def create_app(data_dir=None, start_worker=True):
         for row in rows: row['job']=store.one('SELECT * FROM jobs WHERE meeting_id=? ORDER BY created DESC,rowid DESC LIMIT 1',(row['id'],))
         return rows
     @app.get('/api/recordings')
-    def list_recordings():return recordings.list()
+    def list_recordings():return [row|{'health':recording_health.snapshot(row['id'])} for row in recordings.list()]
     @app.get('/api/live-model')
     def live_model_status():return resident.status()|{'formal_job_running':bool(worker.busy_jid)}
 
@@ -520,6 +522,15 @@ def create_app(data_dir=None, start_worker=True):
         except ValueError as error:raise HTTPException(409,str(error))
     @app.post('/api/recordings',status_code=201)
     def create_recording(body:RecordingInput):return recordings.create(body.mime_type)
+    @app.get('/api/recordings/{rid}/health')
+    def recording_inventory(rid:str):
+        try:return recording_health.snapshot(rid)
+        except FileNotFoundError:raise HTTPException(404,'录音会话不存在')
+        except ValueError:raise HTTPException(409,'录音元数据无法读取，已有文件保留')
+    @app.get('/api/recordings/{rid}/diagnostics')
+    def recording_diagnostics(rid:str):
+        report=recording_inventory(rid)
+        return JSONResponse(report,headers={'Content-Disposition':'attachment; filename="recording-diagnostics.json"','Cache-Control':'no-store'})
     @app.post('/api/recordings/{rid}/keep-awake')
     def recording_keep_awake(rid:str,body:KeepAwakeInput):
         try:

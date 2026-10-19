@@ -97,6 +97,35 @@ export interface RecordingSession {
   source?: "macos";
   native_audio_saved?: boolean;
   draft_engine?: "whisper" | "qwen";
+  health?: RecordingHealth;
+}
+export interface RecordingHealth {
+  schema_version: number;
+  source: "browser" | "native";
+  state: string;
+  duration_seconds: number;
+  native_running: boolean;
+  metadata_age_seconds: number;
+  audio: {
+    saved_bytes: number;
+    saved_chunks: number;
+    expected_chunks: number;
+    missing_chunk_count: number;
+    missing_chunk_indices: number[];
+    contiguous_chunks: number;
+    tracks: { name: string; saved_bytes: number; saved_seconds: number }[];
+    recoverable: boolean;
+  };
+  notes_count: number;
+  asr: Record<
+    string,
+    {
+      covered_seconds: number;
+      failed_attempts: number;
+      running_attempts: number;
+    }
+  >;
+  warning_codes: string[];
 }
 export interface NativeCapability {
   available: boolean;
