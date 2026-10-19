@@ -22,6 +22,7 @@ from .live_stream import inspect_audio, qwen_events
 from .qwen_resident import QwenResident
 from .keep_awake import KeepAwake
 from .recording_health import RecordingHealth
+from .meeting_review import MeetingReview
 from .retrieval import Retrieval
 
 BASE=Path(__file__).resolve().parents[1]
@@ -125,6 +126,9 @@ class NativeDraftInput(BaseModel):
     window_seconds: Literal[5,10,15]=15
 class KeepAwakeInput(BaseModel):
     enabled: bool=True
+class ReviewCheckpointInput(BaseModel):
+    fingerprint: str=Field(pattern=r'^[0-9a-f]{64}$')
+    decision: Literal['confirmed','skipped']='confirmed'
 class NativeRecordingInput(BaseModel):
     microphone: bool=True
     keep_awake: bool=True
@@ -173,6 +177,7 @@ def create_app(data_dir=None, start_worker=True):
     keep_awake=KeepAwake(recording_open,lambda rid:getattr(native_capture,'is_running',lambda _:False)(rid))
     app.state.keep_awake=keep_awake
     recording_health=RecordingHealth(store,recordings,native_capture)
+    meeting_review=MeetingReview(store)
     live_results=LiveResults(store,recordings)
     live_asr_lock=threading.Lock()
     resident=QwenResident(store.root)
@@ -228,7 +233,18 @@ def create_app(data_dir=None, start_worker=True):
             todo['stale']=todo['note_id'] not in by_id or todo['note_fingerprint']!=fingerprint(by_id[todo['note_id']]) or (bool(todo['source_segment_ids']) and todo['revision']!=row['revision'])
         row['note_todos']=todos
         row['audio_tracks']=[name for name in ('system','microphone') if (store.directory(row['id'])/(name+'.wav')).is_file()]
+        row['review']=meeting_review.read(row['id'])
         return row
+
+    @app.put('/api/meetings/{mid}/review/{step}')
+    def confirm_review(mid:str,step:Literal['transcript','speakers','notes','minutes'],body:ReviewCheckpointInput):
+        try:return meeting_review.set(mid,step,body.fingerprint,body.decision)
+        except KeyError:raise HTTPException(404,'会议不存在')
+        except ValueError as error:raise HTTPException(409,str(error))
+    @app.delete('/api/meetings/{mid}/review/{step}')
+    def reset_review(mid:str,step:Literal['transcript','speakers','notes','minutes']):
+        try:return meeting_review.reset(mid,step)
+        except KeyError:raise HTTPException(404,'会议不存在')
 
     @app.get('/api/retrieval')
     def retrieval_status():return retrieval.status()
@@ -744,7 +760,7 @@ def create_app(data_dir=None, start_worker=True):
             if db.execute("SELECT 1 FROM jobs WHERE meeting_id=? AND state IN ('running','queued')",(mid,)).fetchone():
                 raise HTTPException(409,'请先取消任务，等待处理停止后删除')
             db.execute('DELETE FROM live_asr_ranges WHERE recording_id=?',(mid,))
-            for table in ['note_todos','retrieval_units','meeting_notes','artifacts','revisions','jobs','meetings']:
+            for table in ['meeting_reviews','note_todos','retrieval_units','meeting_notes','artifacts','revisions','jobs','meetings']:
                 key='id' if table=='meetings' else 'meeting_id'
                 db.execute(f'DELETE FROM {table} WHERE {key}=?',(mid,))
         shutil.rmtree(store.directory(mid),ignore_errors=True)

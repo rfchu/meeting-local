@@ -3,7 +3,7 @@ import type { MeetingSummary } from "../types";
 const states: Record<string, string> = {
   queued: "排队中",
   running: "处理中",
-  completed: "已完成",
+  completed: "任务完成",
   failed: "失败",
   cancelled: "已取消",
 };
@@ -82,7 +82,11 @@ export default function Sidebar({
             <strong>{meeting.title}</strong>
             <small>
               {meeting.created.slice(0, 10)} ·{" "}
-              {meeting.job ? states[meeting.job.state] : "待转写"}
+              {meeting.job
+                ? states[meeting.job.state]
+                : meeting.revision
+                  ? "已有文字稿"
+                  : "待转写"}
             </small>
           </button>
         ))}

@@ -2092,6 +2092,84 @@ dialog code {
   border-radius: 12px;
   font-size: 12px;
 }
+.postmeeting-review {
+  margin-top: 14px;
+}
+.workflow > .workflow-next {
+  border-top: 0;
+  margin-top: 0;
+  padding-top: 0;
+}
+.postmeeting-review summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+.postmeeting-review > p,
+.review-optional {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
+.review-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+.review-card {
+  padding: 12px;
+  background: white;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  font-size: 12px;
+}
+.review-card strong,
+.review-state {
+  display: block;
+}
+.review-state {
+  color: var(--muted);
+  margin-top: 5px;
+}
+.review-card.done .review-state {
+  color: #28775b;
+}
+.review-card.stale {
+  border-color: #e3bb67;
+}
+.review-card.stale .review-state {
+  color: #9b5812;
+}
+.review-card p {
+  color: var(--muted);
+  line-height: 1.6;
+  min-height: 40px;
+}
+.review-card > div {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.review-card button {
+  font-size: 12px;
+  padding: 5px 8px;
+}
+.review-optional {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 10px;
+  flex-wrap: wrap;
+}
+@media (max-width: 1100px) {
+  .review-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (max-width: 600px) {
+  .review-grid {
+    grid-template-columns: 1fr;
+  }
+}
 .recording-health-panel strong,
 .recording-health-panel span {
   display: block;

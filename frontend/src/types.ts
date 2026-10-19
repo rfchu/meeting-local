@@ -255,6 +255,7 @@ export interface MeetingSummary {
 }
 
 export interface Meeting extends MeetingSummary {
+  review?: MeetingReview;
   segments: Segment[];
   jobs: Job[];
   revisions: Revision[];
@@ -262,6 +263,24 @@ export interface Meeting extends MeetingSummary {
   notes: MeetingNote[];
   note_todos: NoteTodo[];
   audio_tracks?: string[];
+}
+export type ReviewStep = "transcript" | "speakers" | "notes" | "minutes";
+export interface MeetingReview {
+  revision: number;
+  title: string;
+  minutes_id: string | null;
+  notes_count: number;
+  speaker_count: number;
+  has_current_minutes: boolean;
+  steps: Record<
+    ReviewStep,
+    {
+      state: "pending" | "done" | "stale" | "blocked" | "not_needed";
+      fingerprint: string;
+      reviewed_at: string | null;
+      decision: "confirmed" | "skipped" | null;
+    }
+  >;
 }
 
 export interface EngineInfo {

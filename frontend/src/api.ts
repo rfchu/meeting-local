@@ -20,6 +20,8 @@ import type {
   SpeakerReviewResult,
   RecordingSession,
   RecordingHealth,
+  MeetingReview,
+  ReviewStep,
   NativeCapability,
   NativeCaptureStatus,
 } from "./types";
@@ -205,6 +207,20 @@ export const api = {
       json("POST", { chunk_count: count }),
     ),
   meeting: (id: string) => request<Meeting>(`/meetings/${id}`),
+  confirmReview: (
+    id: string,
+    step: ReviewStep,
+    fingerprint: string,
+    decision: "confirmed" | "skipped",
+  ) =>
+    request<MeetingReview>(
+      `/meetings/${id}/review/${step}`,
+      json("PUT", { fingerprint, decision }),
+    ),
+  resetReview: (id: string, step: ReviewStep) =>
+    request<MeetingReview>(`/meetings/${id}/review/${step}`, {
+      method: "DELETE",
+    }),
   upload: (file: File) => {
     const data = new FormData();
     data.append("file", file);

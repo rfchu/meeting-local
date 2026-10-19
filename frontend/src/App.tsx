@@ -7,6 +7,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, download } from "./api";
 import type {
   Meeting,
+  ReviewStep,
   MeetingMinutes,
   MinutesTemplate,
   MinutesStyle,
@@ -84,6 +85,7 @@ export default function App() {
     refetchInterval: 30000,
     enabled: !recordingOpen,
   });
+  const [reviewBusy, setReviewBusy] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchTarget, setSearchTarget] = useState<SearchHit | null>(null);
   const [engine, setEngine] = useState("whisper"),
@@ -129,6 +131,54 @@ export default function App() {
     return () => window.clearTimeout(timer);
   }, [searchTarget, meeting?.id]);
 
+  const navigateReview = (step: ReviewStep) => {
+    setWorkspace(step === "speakers" ? "transcript" : step);
+    window.requestAnimationFrame(() =>
+      document
+        .getElementById("meeting-workspace")
+        ?.scrollIntoView({ behavior: "smooth", block: "start" }),
+    );
+    if (step === "speakers")
+      toast("可在文字稿上方管理发言人，或运行 AI 校对后逐项确认");
+  };
+  const confirmReview = async (
+    step: ReviewStep,
+    decision: "confirmed" | "skipped" | "reset",
+  ) => {
+    const target = meetingRef.current;
+    if (
+      !target ||
+      reviewBusy ||
+      transcriptDirty ||
+      (step === "minutes" && minutesDirty)
+    )
+      return;
+    const checkpoint = target.review?.steps[step];
+    if (!checkpoint) return;
+    setReviewBusy(true);
+    try {
+      const review =
+        decision === "reset"
+          ? await api.resetReview(target.id, step)
+          : await api.confirmReview(
+              target.id,
+              step,
+              checkpoint.fingerprint,
+              decision,
+            );
+      setMeeting((old) => (old?.id === target.id ? { ...old, review } : old));
+      toast(decision === "reset" ? "已撤回核对记录" : "核对进度已保存");
+    } catch (error) {
+      toast((error as Error).message);
+      const fresh = await api.meeting(target.id).catch(() => null);
+      if (fresh)
+        setMeeting((old) =>
+          old?.id === target.id ? { ...old, review: fresh.review } : old,
+        );
+    } finally {
+      setReviewBusy(false);
+    }
+  };
   const saveTranscript = useCallback(async () => {
     const target = meetingRef.current;
     if (!target || !transcriptDirty || savingTranscript) return;
@@ -252,6 +302,7 @@ export default function App() {
           }
           return {
             ...old,
+            review: fresh.review,
             notes: fresh.notes,
             note_todos: fresh.note_todos,
             jobs: fresh.jobs,
@@ -696,13 +747,17 @@ export default function App() {
             <Workflow
               meeting={meeting}
               transcriptDirty={transcriptDirty}
+              minutesDirty={minutesDirty}
+              reviewBusy={reviewBusy}
+              onReview={navigateReview}
+              onConfirm={(step, decision) => void confirmReview(step, decision)}
               onTranscribe={() => void startTranscription()}
               onSave={() => void saveTranscript()}
               onAnalysis={() => setWorkspace("analysis")}
-              onMinutes={() => setWorkspace("minutes")}
+              onMinutes={() => navigateReview("minutes")}
               onPreview={() => void openMinutesPreview()}
             />
-            <div className="workspace">
+            <div className="workspace" id="meeting-workspace">
               <div className="transcript-panel">
                 <div className="panel-header">
                   <div className="tabs">

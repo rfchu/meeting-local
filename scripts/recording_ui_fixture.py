@@ -7,7 +7,7 @@ from app.main import create_app
 import app.main as module
 from app.native_capture import NativeCapture
 from app.recordings import RecordingStore
-from app.db import Store
+from app.db import Store,uid,encode
 
 class SyntheticCapture(NativeCapture):
     def __init__(self,*args):super().__init__(*args);self.states={}
@@ -35,6 +35,7 @@ def main():
     import uvicorn
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--port',type=int,default=8766)
+    parser.add_argument('--review-demo',action='store_true',help='Seed a synthetic transcript and AI minutes for review acceptance')
     args=parser.parse_args()
     with tempfile.TemporaryDirectory(prefix='tingji-reliability-ui-') as workspace:
         root=Path(workspace)
@@ -42,6 +43,19 @@ def main():
         session=recordings.create('audio/webm')
         recordings.metadata(session['id'],[{'captured_at':4,'raw_text':'验证用简记：核对中断后恢复','note_type':'note','note_scope':'personal'}],15,3)
         recordings.chunk(session['id'],0,b'fixture-head');recordings.chunk(session['id'],2,b'fixture-tail')
+        if args.review_demo:
+            import wave
+            from app.minutes import MeetingMinutes
+            from app.notes import insert_note
+            mid=uid();directory=store.directory(mid);directory.mkdir()
+            with wave.open(str(directory/'original'),'wb') as output:
+                output.setnchannels(1);output.setsampwidth(2);output.setframerate(16000);output.writeframes(b'\0\0'*16000*12)
+            store.execute('INSERT INTO meetings(id,title,filename,duration) VALUES(?,?,?,?)',(mid,'合成验收会议','synthetic.wav',12))
+            store.save_revision(mid,[{'id':'demo-seg','start':0,'end':12,'speaker':'发言人 1','text':'测试约定周五交付，负责人仍待确认。','boundary_review':False,'speaker_locked':False}],'manual')
+            with store.connect() as db:insert_note(db,mid,{'captured_at':4,'raw_text':'核对交付安排','note_type':'note','note_scope':'personal'})
+            document=MeetingMinutes(title='合成验收纪要',style='ai',overview=[{'content':'测试约定周五交付，负责人待确认。','source_segment_ids':['demo-seg']}])
+            store.execute('INSERT INTO artifacts(id,meeting_id,revision,kind,payload,provenance) VALUES(?,?,?,?,?,?)',
+                (uid(),mid,1,'meeting_minutes',encode(document.model_dump()),encode({'ai_generated':True,'source_transcript_revision':1})))
         previous=module.NativeCapture
         try:
             module.NativeCapture=SyntheticCapture
