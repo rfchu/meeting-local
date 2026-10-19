@@ -939,6 +939,10 @@ export default function App() {
       {searchOpen && (
         <SearchDialog
           meetings={listQuery.data || []}
+          onConfigure={() => {
+            setSearchOpen(false);
+            setModelsOpen(true);
+          }}
           onClose={() => setSearchOpen(false)}
           onOpen={async (hit) => {
             const current = await api.resolveSearch(hit);

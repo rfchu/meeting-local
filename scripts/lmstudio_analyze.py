@@ -3,9 +3,12 @@ import argparse,json,os,urllib.error,urllib.request
 from pathlib import Path
 from urllib.parse import urlparse
 
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self,*args,**kwargs):raise RuntimeError('模型接口不允许重定向，请确认配置的最终服务地址')
+
 def request_once(url,headers,payload,timeout=600):
     request=urllib.request.Request(url,data=json.dumps(payload).encode(),headers=headers,method='POST')
-    with urllib.request.urlopen(request,timeout=timeout) as response:return json.load(response)
+    with urllib.request.build_opener(NoRedirect()).open(request,timeout=timeout) as response:return json.load(response)
 
 def message_candidates(payload):
     choices=payload.get('choices') or []
@@ -37,6 +40,10 @@ def extract_json(payload):
     raise json.JSONDecodeError('模型返回内容为空','',0)
 
 def validate_shape(result,schema_name='meeting_analysis'):
+    if schema_name=='retrieval_answer':
+        if not isinstance(result,dict) or result.get('status') not in ('answered','insufficient') or not isinstance(result.get('claims'),list):
+            raise ValueError('引用问答结构不完整')
+        return result
     if schema_name=='speaker_review':
         if not isinstance(result,dict) or not isinstance(result.get('suggestions'),list):
             raise ValueError('缺少发言人建议列表')
@@ -90,7 +97,7 @@ def complete_json(url,headers,payload,attempts=3):
             diagnostics.append({'attempt':attempt+1,'finish_reason':choice.get('finish_reason'),
                 'fields':{key:len(value) for key,value in candidates},'error':type(error).__name__})
             if attempt+1>=attempts:break
-            current=dict(current);current['temperature']=0;current['max_tokens']=min(16384,max(8192,int(current.get('max_tokens',4096))*2))
+            current=dict(current);current['temperature']=0;current['max_tokens']=int(payload.get('max_tokens',2048)) if schema_name=='retrieval_answer' else min(16384,max(8192,int(current.get('max_tokens',4096))*2))
             response_type=current.get('response_format',{}).get('type')
             if response_type=='json_schema':current['response_format']={'type':'json_object'}
             elif response_type=='json_object':current.pop('response_format',None)

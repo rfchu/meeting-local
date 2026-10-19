@@ -1,5 +1,6 @@
 import type { NoteReview } from "./types";
 import type { SearchHit, SearchStatus } from "./features/SearchDialog";
+import type { QARun, QAPrepare } from "./features/qaTypes";
 import {
   readLiveStream,
   type LivePartial,
@@ -53,6 +54,26 @@ const json = (method: string, body?: unknown): RequestInit => ({
 });
 
 export const api = {
+  qaPrepare: (body: QAPrepare) =>
+    request<QARun>("/retrieval/qa/prepare", {
+      ...json("POST", body),
+      signal: AbortSignal.timeout(75000),
+    }),
+  qaGenerate: (id: string, confirmCloud: boolean) =>
+    request<QARun>(
+      `/retrieval/qa/${id}/generate`,
+      json("POST", { confirm_cloud: confirmCloud }),
+    ),
+  qaRun: (id: string) =>
+    request<QARun>(`/retrieval/qa/${id}`, {
+      signal: AbortSignal.timeout(10000),
+    }),
+  qaHistory: () =>
+    request<{ id: string; question: string; created: string }[]>(
+      "/retrieval/qa",
+    ),
+  qaDelete: (id: string) =>
+    request(`/retrieval/qa/${id}`, { method: "DELETE" }),
   searchStatus: () => request<SearchStatus>("/retrieval"),
   configureSearch: (profileId: string, model: string) =>
     request("/retrieval/config", json("PUT", { profile_id: profileId, model })),

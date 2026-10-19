@@ -85,12 +85,18 @@ class Retrieval:
                 if group and (size+len(segment['text'])>650 or segment['end']-group[0]['start']>90):flush();group=[];size=0
                 group.append(segment);size+=len(segment['text'])
             flush()
-            for note in db.execute('SELECT * FROM meeting_notes WHERE meeting_id=?',(mid,)).fetchall():
+            note_rows=db.execute('SELECT * FROM meeting_notes WHERE meeting_id=?',(mid,)).fetchall()
+            notes_by_id={note['id']:note for note in note_rows}
+            for note in note_rows:
                 add('note:'+note['id'],'note',note['raw_text'],[],note['captured_at'],note['captured_at'],note_scope=note['note_scope'])
                 ids=json.loads(note['source_segment_ids'])
                 if note['status']=='accepted' and note['expansion_revision']==revision and ids and set(ids)<=by_id.keys():
                     add('expanded:'+note['id'],'expanded_note',note['accepted_text'],ids,min(by_id[i]['start'] for i in ids),max(by_id[i]['end'] for i in ids),note_scope=note['note_scope'])
             artifact=db.execute("SELECT * FROM artifacts WHERE meeting_id=? AND revision=? AND kind='meeting_minutes' ORDER BY created DESC,rowid DESC LIMIT 1",(mid,revision)).fetchone()
+            if artifact:
+                from .notes import fingerprint
+                adopted=json.loads(artifact['provenance'] or '{}').get('adopted_notes',[])
+                if any(item.get('note_id') not in notes_by_id or item.get('note_fingerprint')!=fingerprint(notes_by_id[item['note_id']]) for item in adopted):artifact=None
             # Only user-saved minutes participate; raw AI candidates are not trusted retrieval facts.
             if artifact and json.loads(artifact['provenance']).get('edited'):
                 document=json.loads(artifact['payload'])
@@ -144,7 +150,7 @@ class Retrieval:
                     db.execute('UPDATE retrieval_units SET embedding=?,identity=? WHERE id=? AND fingerprint=?',(sqlite_vec.serialize_float32(vector),config['identity'],row['id'],row['fingerprint']))
                 worker.check(jid)
         self.sync();worker.update(jid,'检索索引建立完成',1)
-    def search(self,query,mode='keyword',limit=20,meeting_id=None,kind=None):
+    def search(self,query,mode='keyword',limit=20,meeting_id=None,kind=None,include_personal=True):
         self.sync();config=self.config();query=query.strip()
         tokens=re.findall(r'[\w]+',query.lower())
         vector=None
@@ -160,6 +166,7 @@ class Retrieval:
             filters=[];args=[]
             if meeting_id:filters.append('meeting_id=?');args.append(meeting_id)
             if kind:filters.append("json_extract(metadata,'$.kind')=?");args.append(kind)
+            if not include_personal:filters.append("COALESCE(json_extract(metadata,'$.note_scope'),'')!='personal'")
             where=' WHERE '+' AND '.join(filters) if filters else ''
             rows=[dict(row) for row in db.execute('SELECT id,content,metadata,fingerprint FROM retrieval_units'+where,args)]
             lexical=[]

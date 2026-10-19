@@ -35,6 +35,10 @@ class Store:
               meeting_id TEXT NOT NULL, step TEXT NOT NULL, fingerprint TEXT NOT NULL,
               decision TEXT NOT NULL, reviewed_at TEXT DEFAULT CURRENT_TIMESTAMP,
               PRIMARY KEY(meeting_id,step));
+            CREATE TABLE IF NOT EXISTS qa_runs (
+              id TEXT PRIMARY KEY, config TEXT NOT NULL, job_id TEXT,
+              cloud_confirmed INTEGER NOT NULL DEFAULT 0, answer TEXT,
+              created TEXT DEFAULT CURRENT_TIMESTAMP);
             CREATE TABLE IF NOT EXISTS llm_configs (
               id TEXT PRIMARY KEY, name TEXT NOT NULL,
               provider_type TEXT NOT NULL CHECK(provider_type IN ('local','cloud')),
@@ -95,7 +99,7 @@ class Store:
                     version=excluded.version,builtin=excluded.builtin,definition=excluded.definition,
                     updated=CURRENT_TIMESTAMP''',
                     (template.id,template.name,template.description,template.category,template.version,1,definition))
-            db.execute('PRAGMA user_version=11')
+            db.execute('PRAGMA user_version=12')
         os.chmod(self.path,0o600)
     @contextmanager
     def connect(self):

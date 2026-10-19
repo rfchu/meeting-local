@@ -289,7 +289,7 @@ def validate_llm_endpoint(provider_type,base_url):
     value=(base_url or '').strip().rstrip('/')
     parsed=urlparse(value)
     loopback=parsed.hostname in ('127.0.0.1','localhost','::1')
-    if not parsed.hostname or parsed.query or parsed.fragment:
+    if not parsed.hostname or parsed.query or parsed.fragment or parsed.username is not None or parsed.password is not None:
         raise ValueError('模型接口地址无效')
     if provider_type=='local':
         if parsed.scheme!='http' or not loopback:raise ValueError('本地模型仅允许 localhost HTTP 地址')

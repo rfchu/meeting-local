@@ -67,7 +67,7 @@ export default function Sidebar({
         }}
       />
       <button className="wide" onClick={onSearch}>
-        ⌕ 搜索会议资料
+        ⌕ 搜索与引用问答
       </button>
       <div className="nav-label">
         会议资料库 <span>{meetings.length}</span>

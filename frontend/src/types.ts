@@ -302,6 +302,7 @@ export interface LLMConfig {
   is_default: boolean;
 }
 export interface Environment {
+  qa_ready?: boolean;
   engines: EngineInfo[];
   default_engine: string;
   diarization_ready: boolean;

@@ -26,14 +26,16 @@ class Worker:
     def check(self,jid):
         job=self.store.one('SELECT state FROM jobs WHERE id=?',(jid,))
         if self.stop.is_set() or not job or job['state']=='cancelled': raise Cancelled()
-    def run(self,jid,args,log,extra_env=None):
+    def run(self,jid,args,log,extra_env=None,timeout=None):
         self.check(jid)
         env=os.environ.copy(); env.update(HF_HUB_OFFLINE='1',HF_HUB_DISABLE_TELEMETRY='1',PYANNOTE_METRICS_ENABLED='0')
         if extra_env:env.update(extra_env)
         with open(log,'ab') as handle:
             process=subprocess.Popen(args,stdout=handle,stderr=handle,env=env,pass_fds=(self.lock_file.fileno(),) if self.lock_file else ())
+            started=time.monotonic()
             try:
                 while process.poll() is None:
+                    if timeout is not None and time.monotonic()-started>=timeout:raise RuntimeError('模型请求超过处理时限，请缩小依据范围后重试')
                     self.check(jid); time.sleep(.2)
                 if process.returncode:
                     tail=Path(log).read_text(errors='replace')[-1800:]
@@ -58,7 +60,7 @@ class Worker:
             self.busy_jid=job['id']
             try:
                 self.process(job)
-                stage={'analysis':'分析完成','note_expansion':'简记扩写完成','retrieval_index':'检索索引建立完成'}.get(job.get('kind'),'转写完成')
+                stage={'analysis':'分析完成','note_expansion':'简记扩写完成','retrieval_index':'检索索引建立完成','retrieval_answer':'引用问答完成'}.get(job.get('kind'),'转写完成')
                 self.store.execute("UPDATE jobs SET state='completed',stage=?,progress=1 WHERE id=? AND state='running'",(stage,job['id']))
             except Cancelled: pass
             except Exception as e:
@@ -71,6 +73,9 @@ class Worker:
                 while not self.asr_lock.acquire(timeout=.2):self.check(job['id'])
                 acquired=True;self.check(job['id'])
             if self.release_model:self.release_model()
+            if job.get('kind')=='retrieval_answer':
+                from .qa import QA
+                return QA(self.store).process(self,job)
             if job.get('kind')=='retrieval_index':
                 from .retrieval import Retrieval
                 return Retrieval(self.store).build(self,job)

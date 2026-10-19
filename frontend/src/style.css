@@ -1656,6 +1656,8 @@ dialog code {
 
 .search-dialog {
   width: min(960px, 94vw);
+  max-width: 960px;
+  box-sizing: border-box;
 }
 .search-heading {
   display: flex;
@@ -2095,6 +2097,103 @@ dialog code {
 .postmeeting-review {
   margin-top: 14px;
 }
+.cross-meeting-qa {
+  margin-top: 16px;
+  line-height: 1.7;
+}
+.cross-meeting-qa > p,
+.cross-meeting-qa small {
+  color: var(--muted);
+  font-size: 12px;
+}
+.cross-meeting-qa fieldset > label {
+  display: block;
+  margin: 12px 0;
+}
+.cross-meeting-qa textarea,
+.cross-meeting-qa fieldset > label > input {
+  display: block;
+  width: 100%;
+  margin-top: 6px;
+}
+.qa-actions {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  margin: 12px 0;
+}
+.qa-consent {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  padding: 12px;
+  background: #fff8e8;
+  border: 1px solid #ebd9ad;
+  border-radius: 10px;
+  margin: 12px 0;
+  font-size: 13px;
+}
+.qa-consent input {
+  flex: 0 0 auto;
+  margin-top: 5px;
+}
+.qa-run {
+  margin: 20px 0;
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: white;
+}
+.qa-run h3 {
+  margin: 0 0 12px;
+}
+.qa-evidence {
+  margin: 12px 0;
+}
+.qa-evidence summary,
+.qa-history summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+.qa-evidence article {
+  padding: 12px 0;
+  border-bottom: 1px solid var(--line);
+}
+.qa-evidence small {
+  display: block;
+}
+.qa-evidence blockquote,
+.qa-citation blockquote {
+  margin: 8px 0;
+  padding: 8px 12px;
+  border-left: 3px solid #cbd8f6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 13px;
+  color: #56647b;
+  background: #f7f9fc;
+}
+.qa-answer {
+  margin-top: 20px;
+}
+.qa-answer article {
+  border-top: 1px solid var(--line);
+  padding: 14px 0;
+}
+.qa-kind {
+  font-size: 11px;
+  color: #345d9f;
+  background: #edf3ff;
+  padding: 4px 8px;
+  border-radius: 5px;
+}
+.qa-history > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  border-bottom: 1px solid var(--line);
+  padding: 8px 0;
+}
 .workflow > .workflow-next {
   border-top: 0;
   margin-top: 0;
@@ -2220,4 +2319,11 @@ dialog code {
   .recording-recovery-banner {
     margin: 12px 16px;
   }
+}
+
+.cross-meeting-qa fieldset {
+  border: 0;
+  padding: 0;
+  margin: 0;
+  min-width: 0;
 }
