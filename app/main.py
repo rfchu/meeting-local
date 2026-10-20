@@ -24,6 +24,7 @@ from .keep_awake import KeepAwake
 from .recording_health import RecordingHealth
 from .meeting_review import MeetingReview
 from .qa import QA
+from .local_embedding import local_embedding
 from .retrieval import Retrieval
 
 BASE=Path(__file__).resolve().parents[1]
@@ -77,8 +78,9 @@ class MeetingNoteInput(BaseModel):
 class MeetingNotesBatchInput(BaseModel):
     notes: list[MeetingNoteInput]=Field(max_length=1000)
 class RetrievalConfigInput(BaseModel):
-    profile_id: str=Field(min_length=1,max_length=100)
-    model: str=Field(min_length=1,max_length=500)
+    provider: Literal['external','builtin']='external'
+    profile_id: str=Field(default='',max_length=100)
+    model: str=Field(default='',max_length=500)
 class SearchInput(BaseModel):
     query: str=Field(min_length=1,max_length=500)
     mode: Literal['keyword','semantic','hybrid']='keyword'
@@ -178,6 +180,8 @@ def create_app(data_dir=None, start_worker=True):
         await run_in_threadpool(native_capture.close)
         await run_in_threadpool(worker.close)
         await resident.shutdown()
+        local_embedding().cancel.set()
+        local_embedding().release()
     app=FastAPI(title='听记 · Local Meeting',lifespan=lifespan)
     app.state.store=store; app.state.worker=worker
     recordings=RecordingStore(store)
@@ -288,15 +292,36 @@ def create_app(data_dir=None, start_worker=True):
     def qa_delete(qid:str):
         try:qa.delete(qid);return {'ok':True}
         except KeyError:raise HTTPException(404,'问答记录不存在')
+    @app.post('/api/retrieval/builtin/install',status_code=202)
+    def builtin_install():
+        try:return local_embedding().start_install()
+        except ValueError as error:raise HTTPException(409,str(error))
+    @app.post('/api/retrieval/builtin/cancel')
+    def builtin_cancel():
+        local_embedding().cancel.set();return {'ok':True}
+    @app.post('/api/retrieval/builtin/import')
+    def builtin_import(file:UploadFile=File(...)):
+        import tempfile
+        try:
+            with tempfile.TemporaryDirectory() as folder:
+                path=Path(folder)/'model.zip';size=0
+                with path.open('wb') as output:
+                    while block:=file.file.read(1024*1024):
+                        size+=len(block)
+                        if size>26*1024*1024:raise HTTPException(413,'离线模型包超过 26 MiB 上限')
+                        output.write(block)
+                return local_embedding().import_zip(path)
+        except (ValueError,OSError) as error:raise HTTPException(409,str(error))
+        finally:file.file.close()
     @app.put('/api/retrieval/config')
     def retrieval_configure(body:RetrievalConfigInput):
         profile=store.one('SELECT * FROM llm_configs WHERE id=?',(body.profile_id,))
-        if not profile:raise HTTPException(404,'本地模型配置不存在')
+        if body.provider=='external' and not profile:raise HTTPException(404,'本地模型配置不存在')
         if worker.busy_jid or not live_asr_lock.acquire(blocking=False):raise HTTPException(409,'正在处理录音或正式任务，请稍后配置向量模型')
         try:
             if worker.release_model:worker.release_model()
-            return retrieval.configure(profile,body.model.strip())
-        except (RuntimeError,ValueError) as error:raise HTTPException(409,str(error))
+            return retrieval.configure_builtin() if body.provider=='builtin' else retrieval.configure(profile,body.model.strip())
+        except (RuntimeError,ValueError,ImportError) as error:raise HTTPException(409,str(error))
         finally:live_asr_lock.release()
     @app.post('/api/retrieval/build',status_code=201)
     def retrieval_build(body:IndexBuildInput):

@@ -37,6 +37,7 @@ def main():
     parser.add_argument('--port',type=int,default=8766)
     parser.add_argument('--review-demo',action='store_true',help='Seed a synthetic transcript and AI minutes for review acceptance')
     parser.add_argument('--qa-demo',action='store_true',help='Synthetic multi-meeting QA with deterministic replies, never calls a real model')
+    parser.add_argument('--long-demo',type=int,choices=[1000,3000,10000],help='Seed an isolated long transcript for DOM/edit/search acceptance')
     args=parser.parse_args()
     with tempfile.TemporaryDirectory(prefix='tingji-reliability-ui-') as workspace:
         root=Path(workspace)
@@ -75,15 +76,26 @@ def main():
                     'kind':'note' if source['kind'] in ('note','expanded_note') else 'record',
                     'citations':[{'source':source['label'],'quote':source['content']}]} for source in sources[:3]])
             qa_module.generate_answer=fake_answer
+        if args.long_demo:
+            import wave
+            mid=uid();directory=store.directory(mid);directory.mkdir()
+            with wave.open(str(directory/'original'),'wb') as output:
+                output.setnchannels(1);output.setsampwidth(2);output.setframerate(16000);output.writeframes(b'\0\0'*16000*12)
+            store.execute('INSERT INTO meetings(id,title,filename,duration) VALUES(?,?,?,?)',(mid,f'合成长文字稿（{args.long_demo} 段）','synthetic-long.wav',args.long_demo*6))
+            segments=[{'id':f'long-{i}','start':i*6,'end':i*6+5,'speaker':f'发言人 {i%3+1}',
+                'text':f'第 {i+1} 段合成记录：核对项目进度与验收安排。'+('这是较长的合成内容，用于验证动态高度变化。'*(i%5)),
+                'boundary_review':False,'speaker_locked':False} for i in range(args.long_demo)]
+            segments[-1]['text']='终点标记：星河项目最终交付安排仍需复核。'
+            store.save_revision(mid,segments,'manual')
         previous=module.NativeCapture
         try:
             module.NativeCapture=SyntheticCapture
-            app=create_app(root,start_worker=args.qa_demo)
+            app=create_app(root,start_worker=bool(args.qa_demo or args.long_demo))
         finally:module.NativeCapture=previous
-        if args.qa_demo:
+        if args.qa_demo or args.long_demo:
             actual_process=app.state.worker.process
             def only_qa(job):
-                if job.get('kind')!='retrieval_answer':raise ValueError('隔离验收服务仅处理合成问答')
+                if job.get('kind') not in ('retrieval_answer','retrieval_index'):raise ValueError('隔离验收服务仅处理合成问答和索引')
                 return actual_process(job)
             app.state.worker.process=only_qa
         app.state.keep_awake.supported=False

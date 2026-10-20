@@ -1,69 +1,20 @@
-import { memo, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../../api";
 import Modal from "../../components/Modal";
 import type { Meeting, Revision, Segment } from "../../types";
 import { clock, revisionLabel } from "../../utils";
+import TranscriptList from "./TranscriptList";
 import SpeakerReviewDialog from "./SpeakerReviewDialog";
 
 interface Props {
   meeting: Meeting;
+  jumpSegmentId?: string;
   onChange: (segments: Segment[]) => void;
   onSeek: (time: number) => void;
   onSave: () => Promise<void>;
   onRefresh: () => Promise<void>;
   toast: (text: string) => void;
 }
-
-const Row = memo(function Row({
-  segment,
-  onUpdate,
-  onSeek,
-}: {
-  segment: Segment;
-  onUpdate: (segment: Segment) => void;
-  onSeek: (time: number) => void;
-}) {
-  return (
-    <div className="segment" data-id={segment.id}>
-      <button
-        className="time"
-        title={
-          segment.boundary_review
-            ? "分段交界处，请回听确认重复或漏字"
-            : "回听这一段"
-        }
-        onClick={() => onSeek(segment.start)}
-      >
-        {clock(segment.start)}
-        {segment.boundary_review ? " · 核对" : ""}
-      </button>
-      <div>
-        <input
-          className="speaker"
-          aria-label="发言人"
-          value={segment.speaker}
-          onChange={(e) => onUpdate({ ...segment, speaker: e.target.value })}
-        />
-        <label className="speaker-confirmed">
-          <input
-            type="checkbox"
-            checked={!!segment.speaker_locked}
-            onChange={(e) =>
-              onUpdate({ ...segment, speaker_locked: e.target.checked })
-            }
-          />
-          已确认
-        </label>
-        <textarea
-          aria-label={`转写文字 ${clock(segment.start)}`}
-          rows={Math.max(1, Math.ceil(segment.text.length / 42))}
-          value={segment.text}
-          onChange={(e) => onUpdate({ ...segment, text: e.target.value })}
-        />
-      </div>
-    </div>
-  );
-});
 
 function CompareDialog({
   meeting,
@@ -150,6 +101,7 @@ function CompareDialog({
 
 export default function TranscriptView({
   meeting,
+  jumpSegmentId,
   onChange,
   onSeek,
   onSave,
@@ -161,6 +113,7 @@ export default function TranscriptView({
     [compareOpen, setCompareOpen] = useState(false),
     [replaceOpen, setReplaceOpen] = useState(false);
   const [reviewOpen, setReviewOpen] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [speakerFrom, setSpeakerFrom] = useState(""),
     [speakerTo, setSpeakerTo] = useState(""),
     [find, setFind] = useState(""),
@@ -178,14 +131,26 @@ export default function TranscriptView({
     return meeting.segments.filter(
       (item) =>
         !q ||
+        item.id === editingId ||
         item.text.toLowerCase().includes(q) ||
         item.speaker.toLowerCase().includes(q),
     );
   }, [meeting.segments, search]);
-  const update = (segment: Segment) =>
-    onChange(
-      meeting.segments.map((item) => (item.id === segment.id ? segment : item)),
-    );
+  const latest = useRef({ segments: meeting.segments, onChange, onSeek });
+  latest.current = { segments: meeting.segments, onChange, onSeek };
+  const update = useCallback(
+    (segment: Segment) =>
+      latest.current.onChange(
+        latest.current.segments.map((item) =>
+          item.id === segment.id ? segment : item,
+        ),
+      ),
+    [],
+  );
+  const seek = useCallback((time: number) => latest.current.onSeek(time), []);
+  useEffect(() => {
+    if (jumpSegmentId) setSearch("");
+  }, [jumpSegmentId]);
   const mergeShort = () => {
     const merged: Segment[] = [];
     let count = 0;
@@ -285,19 +250,18 @@ export default function TranscriptView({
           ))}
         </select>
       </div>
-      <div id="segments">
-        {shown.map((segment) => (
-          <Row
-            key={segment.id}
-            segment={segment}
-            onUpdate={update}
-            onSeek={onSeek}
-          />
-        ))}
-        {meeting.segments.length > 0 && shown.length === 0 && (
-          <div className="empty">没有匹配的文字</div>
-        )}
-      </div>
+      <TranscriptList
+        key={meeting.id}
+        segments={shown}
+        onEditingChange={setEditingId}
+        total={meeting.segments.length}
+        onUpdate={update}
+        onSeek={seek}
+        jumpSegmentId={jumpSegmentId}
+      />
+      {meeting.segments.length > 0 && shown.length === 0 && (
+        <div className="empty">没有匹配的文字</div>
+      )}
       {!meeting.segments.length && (
         <div className="empty">
           <div>≋</div>

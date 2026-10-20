@@ -799,6 +799,11 @@ export default function App() {
                 {workspace === "transcript" && (
                   <TranscriptView
                     meeting={meeting}
+                    jumpSegmentId={
+                      searchTarget?.meeting_id === meeting.id
+                        ? searchTarget.source_segment_ids[0]
+                        : undefined
+                    }
                     onChange={updateSegments}
                     onSeek={(time) => seekRef.current?.(time)}
                     onSave={saveTranscript}

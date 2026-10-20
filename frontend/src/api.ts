@@ -77,6 +77,17 @@ export const api = {
   searchStatus: () => request<SearchStatus>("/retrieval"),
   configureSearch: (profileId: string, model: string) =>
     request("/retrieval/config", json("PUT", { profile_id: profileId, model })),
+  configureBuiltinSearch: () =>
+    request("/retrieval/config", json("PUT", { provider: "builtin" })),
+  installEmbedding: () =>
+    request("/retrieval/builtin/install", json("POST", {})),
+  cancelEmbeddingInstall: () =>
+    request("/retrieval/builtin/cancel", json("POST", {})),
+  importEmbedding: (file: File) => {
+    const body = new FormData();
+    body.append("file", file);
+    return request("/retrieval/builtin/import", { method: "POST", body });
+  },
   buildSearch: (force: boolean) =>
     request("/retrieval/build", json("POST", { force })),
   searchLibrary: (body: {

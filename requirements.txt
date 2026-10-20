@@ -8,3 +8,5 @@ python-docx>=1.2,<2
 reportlab>=4.4,<5
 
 sqlite-vec==0.1.6
+onnxruntime>=1.23,<2
+tokenizers>=0.22,<1

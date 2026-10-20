@@ -2,6 +2,7 @@
 import hashlib,json,math,re,sqlite3,urllib.request,urllib.error
 from .analysis import OpenAICompatibleProvider
 from .db import encode
+from .local_embedding import local_embedding,MANIFEST,MODEL_ID
 
 UNIT_VERSION='retrieval-units-v2'
 class NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -45,6 +46,10 @@ class Retrieval:
         return json.loads(row['config']) if row else None
     def profile(self,config):
         if config.get("unit_version")!=UNIT_VERSION:raise ValueError("检索单元规则已升级，请重新测试保存向量模型配置，再更新索引")
+        if config.get('provider')=='builtin':
+            if config.get('manifest')!=digest(MANIFEST):raise ValueError('内置模型规则变化，请重新启用并重建索引')
+            if not local_embedding().installed():raise ValueError('请先安装内置中文检索模型')
+            return {'provider_type':'builtin'}
         profile=self.store.one('SELECT * FROM llm_configs WHERE id=?',(config['profile_id'],))
         if not profile or profile['provider_type']!='local':raise ValueError('本地向量模型配置不存在，请重新配置')
         provider=OpenAICompatibleProvider(profile)
@@ -64,6 +69,22 @@ class Retrieval:
             db.execute('INSERT OR REPLACE INTO retrieval_settings(id,config) VALUES(1,?)',(encode(config),))
             db.execute("UPDATE retrieval_units SET embedding=NULL,identity='' WHERE identity!=?",(config['identity'],))
         return config
+    def configure_builtin(self):
+        if self.store.one("SELECT 1 FROM jobs WHERE kind='retrieval_index' AND state IN ('running','queued')"):raise ValueError('索引正在建立，请先完成或取消')
+        runtime=local_embedding();runtime.encode(['会议资料检索配置测试'])
+        config={'provider':'builtin','model':MODEL_ID,'dimension':512,'unit_version':UNIT_VERSION,'manifest':digest(MANIFEST)}
+        config['identity']=digest(config)
+        with self.store.connect() as db:
+            db.execute('BEGIN IMMEDIATE')
+            if db.execute("SELECT 1 FROM jobs WHERE kind='retrieval_index' AND state IN ('running','queued')").fetchone():raise ValueError('索引正在建立，请先完成或取消')
+            db.execute('INSERT OR REPLACE INTO retrieval_settings(id,config) VALUES(1,?)',(encode(config),))
+            db.execute("UPDATE retrieval_units SET embedding=NULL,identity='' WHERE identity!=?",(config['identity'],))
+        return config
+    def vectorize(self,config,texts,query=False):
+        profile=self.profile(config)
+        if config.get('provider')=='builtin':return local_embedding().encode(texts,query=query)
+        prefix=config.get('query_prefix' if query else 'document_prefix','')
+        return embeddings(profile,config['model'],[prefix+text for text in texts],config['dimension'])
     def units(self,db):
         units=[]
         for meeting in db.execute('SELECT * FROM meetings ORDER BY created,id').fetchall():
@@ -134,7 +155,8 @@ class Retrieval:
         if config:
             try:self.profile(config)
             except ValueError as e:profile_error=str(e)
-        return {'config':config,'units':count,'indexed':embedded,'pending':count-embedded,'vec_ready':available,'error':error or profile_error,'job':job}
+            if config.get('provider')=='builtin' and not local_embedding().status()['runtime_ready']:profile_error='内置模型运行依赖未安装，请重新运行 scripts/setup.sh'
+        return {'config':config,'units':count,'indexed':embedded,'pending':count-embedded,'vec_ready':available,'error':error or profile_error,'job':job,'builtin':local_embedding().status()}
     def build(self,worker,job):
         config=json.loads(job['config']);jid=job['id'];profile=self.profile(config)
         if self.config()!=config:raise ValueError('索引模型已变化，请新建任务')
@@ -142,7 +164,7 @@ class Retrieval:
         import sqlite_vec
         for offset in range(0,len(pending),16):
             worker.check(jid);worker.update(jid,f'建立本地索引 {min(offset+16,len(pending))}/{len(pending)}',offset/max(1,len(pending)))
-            batch=pending[offset:offset+16];vectors=embeddings(profile,config['model'],[config.get('document_prefix','')+row['content'] for row in batch],config['dimension'])
+            batch=pending[offset:offset+16];vectors=self.vectorize(config,[row['content'] for row in batch])
             with self.store.connect() as db:
                 db.execute('BEGIN IMMEDIATE');worker.check(jid)
                 if self.config()!=config:raise ValueError('索引配置已变化')
@@ -158,7 +180,7 @@ class Retrieval:
             if not config:raise ValueError('请先配置本地向量模型并建立索引')
             indexed=self.store.one('SELECT count(*) AS n FROM retrieval_units WHERE embedding IS NOT NULL AND identity=?',(config['identity'],))['n']
             if mode=='semantic' and not indexed:raise ValueError('尚无可用语义索引，请先更新索引')
-            if indexed:vector=embeddings(self.profile(config),config['model'],[config.get('query_prefix','')+query],config['dimension'])[0]
+            if indexed:vector=self.vectorize(config,[query],query=True)[0]
         # Final sync also excludes edits/deletions which happened during the embedding request.
         self.sync()
         if vector and self.config()!=config:raise ValueError('模型配置已变化，请重试')

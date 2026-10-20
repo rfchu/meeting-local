@@ -72,6 +72,8 @@ class Worker:
             if self.asr_lock:
                 while not self.asr_lock.acquire(timeout=.2):self.check(job['id'])
                 acquired=True;self.check(job['id'])
+            from .local_embedding import local_embedding
+            local_embedding().release()
             if self.release_model:self.release_model()
             if job.get('kind')=='retrieval_answer':
                 from .qa import QA
