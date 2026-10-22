@@ -108,12 +108,19 @@ class Retrieval:
             flush()
             note_rows=db.execute('SELECT * FROM meeting_notes WHERE meeting_id=?',(mid,)).fetchall()
             notes_by_id={note['id']:note for note in note_rows}
+            from .meeting_flow import dispositions,artifact_current
+            reviewed=dispositions(db,mid,revision)
             for note in note_rows:
                 add('note:'+note['id'],'note',note['raw_text'],[],note['captured_at'],note['captured_at'],note_scope=note['note_scope'])
                 ids=json.loads(note['source_segment_ids'])
                 if note['status']=='accepted' and note['expansion_revision']==revision and ids and set(ids)<=by_id.keys():
                     add('expanded:'+note['id'],'expanded_note',note['accepted_text'],ids,min(by_id[i]['start'] for i in ids),max(by_id[i]['end'] for i in ids),note_scope=note['note_scope'])
+            for nid,item in reviewed.items():
+                ids=item['source_segment_ids']
+                if not item['stale'] and item['decision']=='meeting' and ids and set(ids)<=by_id.keys():
+                    add('reviewed:'+nid,'expanded_note',item['content'],ids,min(by_id[i]['start'] for i in ids),max(by_id[i]['end'] for i in ids),artifact_id=item['review_key'],note_scope='meeting')
             artifact=db.execute("SELECT * FROM artifacts WHERE meeting_id=? AND revision=? AND kind='meeting_minutes' ORDER BY created DESC,rowid DESC LIMIT 1",(mid,revision)).fetchone()
+            if artifact and not artifact_current(db,mid,json.loads(artifact['provenance'] or '{}')):artifact=None
             if artifact:
                 from .notes import fingerprint
                 adopted=json.loads(artifact['provenance'] or '{}').get('adopted_notes',[])

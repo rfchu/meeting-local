@@ -1,3 +1,5 @@
+import MeetingBriefForm, { emptyBrief } from "../meeting/MeetingBriefForm";
+import type { MeetingBrief, MeetingSummary } from "../../types";
 import { useEffect, useRef, useState } from "react";
 import { api } from "../../api";
 import type {
@@ -55,12 +57,16 @@ const supportedMime = () =>
 
 export default function RecordingDialog({
   engineLabel,
+  meetings,
+  flowReady,
   engines,
   onClose,
   onComplete,
   toast,
   onModels,
 }: {
+  meetings: MeetingSummary[];
+  flowReady: boolean;
   onModels: () => void;
   engineLabel: string;
   engines: EngineInfo[];
@@ -71,6 +77,43 @@ export default function RecordingDialog({
   ) => Promise<void>;
   toast: (text: string) => void;
 }) {
+  const closeWithPreparation = () => {
+    if (!flowReady || stateRef.current !== "idle" || !briefReady) {
+      onClose();
+      return;
+    }
+    briefQueue.current = briefQueue.current
+      .catch(() => {})
+      .then(() => api.savePreparation(briefRef.current))
+      .then(() => {
+        onClose();
+      })
+      .catch((e) => toast("会议准备未保存，窗口已保留：" + e.message));
+  };
+  const [brief, setBrief] = useState<MeetingBrief>(emptyBrief);
+  const briefRef = useRef(brief);
+  briefRef.current = brief;
+  const [briefReady, setBriefReady] = useState(false),
+    [briefSaved, setBriefSaved] = useState(true);
+  const briefQueue = useRef(Promise.resolve());
+  useEffect(() => {
+    if (!flowReady) {
+      setBriefReady(true);
+      return;
+    }
+    setBriefReady(false);
+    let live = true;
+    void api
+      .preparation()
+      .then((value) => {
+        if (live) setBrief(value);
+      })
+      .catch((e) => toast("会议准备未载入：" + e.message))
+      .finally(() => live && setBriefReady(true));
+    return () => {
+      live = false;
+    };
+  }, [flowReady]);
   const [preferences] = useState(() => {
     try {
       return readRecordingPreferences(window.localStorage);
@@ -553,6 +596,7 @@ export default function RecordingDialog({
     session.duration = currentSeconds();
     session.updated = Date.now() / 1000;
     session.notes = [...notesRef.current];
+    session.brief = briefRef.current;
     return structuredClone(session);
   };
   const persist = (session: RecordingSession, index?: number, blob?: Blob) => {
@@ -664,6 +708,8 @@ export default function RecordingDialog({
       toast("此会话仍在采集，请先结束录音");
       return;
     }
+    setBrief(session.brief || emptyBrief);
+    briefRef.current = session.brief || emptyBrief;
     setNotes(session.notes);
     notesRef.current = session.notes;
     accruedRef.current = session.duration;
@@ -886,6 +932,7 @@ export default function RecordingDialog({
           captureSource === "macos-both",
           keepAwake,
         );
+        session.brief = briefRef.current;
         sessionRef.current = session;
         setNativeSessionId(session.id);
         await bufferRecording(session);
@@ -935,6 +982,7 @@ export default function RecordingDialog({
         recorder.mimeType || mimeType || "audio/webm",
       );
       await bufferRecording(session);
+      session.brief = briefRef.current;
       sessionRef.current = session;
       recorder.ondataavailable = (event) => {
         if (!event.data.size || !sessionRef.current) return;
@@ -1039,6 +1087,23 @@ export default function RecordingDialog({
     stateRef.current = "recording";
     setState("recording");
   };
+  useEffect(() => {
+    if (!flowReady || !briefReady || state !== "idle") return;
+    setBriefSaved(false);
+    const timer = window.setTimeout(() => {
+      const snapshot = brief;
+      briefQueue.current = briefQueue.current
+        .catch(() => {})
+        .then(() => api.savePreparation(snapshot))
+        .then(() => {
+          if (briefRef.current === snapshot) setBriefSaved(true);
+        })
+        .catch((e) => {
+          toast("会议准备保存失败：" + e.message);
+        });
+    }, 600);
+    return () => window.clearTimeout(timer);
+  }, [brief, briefReady, state, flowReady]);
   const addNote = () => {
     const text = noteText.trim();
     if (!text) return;
@@ -1054,13 +1119,13 @@ export default function RecordingDialog({
     ]);
     setNoteText("");
   };
-  const markNow = () => {
+  const markNow = (type: MeetingNoteType = "note") => {
     if (!["recording", "paused"].includes(stateRef.current)) return;
     setNotes((old) => [
       ...old,
       {
         captured_at: Math.max(0, currentSeconds()),
-        note_type: "note",
+        note_type: type,
         raw_text: "",
         note_scope: "personal",
         is_marker: true,
@@ -1170,7 +1235,7 @@ export default function RecordingDialog({
           !failedChunksRef.current.length &&
           !localSaveFailedRef.current
         )
-          onClose();
+          closeWithPreparation();
       }}
     >
       <div className="workbench-topbar">
@@ -1231,7 +1296,7 @@ export default function RecordingDialog({
                     localSaveFailedRef.current
                   )
                     return toast("还有未落盘的分段，请先重试保存");
-                  onClose();
+                  closeWithPreparation();
                 }}
               >
                 {state === "failed"
@@ -1271,47 +1336,85 @@ export default function RecordingDialog({
             上次选择的音源或模型暂不可用，请调整设置后开始。
           </p>
         )}
+      {state === "idle" && flowReady && (
+        <details className="recording-preparation">
+          <summary>
+            会议准备（可选） · {briefSaved ? "已保存到本机" : "保存中／待保存"}
+          </summary>
+          <MeetingBriefForm
+            value={brief}
+            onChange={setBrief}
+            meetings={meetings}
+            disabled={!briefReady}
+          />
+        </details>
+      )}
       {state === "finished" && (
         <section
           className="recording-finish-panel"
           aria-label="录音结束后的处理选择"
         >
-          <h3>录音和简记已保存</h3>
+          <h3>录音与现场关注已保存</h3>
+          <p>
+            本次留下 {notes.length} 个关注点：
+            {notes.filter((n) => n.note_type === "question").length} 个问题、
+            {notes.filter((n) => n.note_type === "action").length}{" "}
+            个待办线索。进入会后整理后核对用途，再生成纪要。
+          </p>
           <p>{coverageStatus}。选择下一步处理方式：</p>
-          <div className="finish-options">
-            {(
-              [
-                {
-                  mode: "quick",
-                  title: "快速完成",
-                  description: `复用 ${savedEngine === "qwen" ? "千问" : "Whisper"} 实时结果，补齐缺段与尾段；不区分发言人。`,
-                },
-                {
-                  mode: "full",
-                  title: "精细处理",
-                  description: `使用 ${engineLabel} 重识别、时间对齐，按会议设置区分发言人。`,
-                },
-                {
-                  mode: "none",
-                  title: "暂不处理",
-                  description: "保留录音和简记，稍后在会议中启动转写。",
-                },
-              ] as const
-            ).map((choice) => (
-              <button
-                key={choice.mode}
-                className={completionMode === choice.mode ? "selected" : ""}
-                disabled={completing}
-                onClick={() => void processSaved(choice.mode)}
-              >
-                <strong>
-                  {choice.title}
-                  {completionMode === choice.mode ? " · 上次选择" : ""}
-                </strong>
-                <span>{choice.description}</span>
-              </button>
-            ))}
-          </div>
+          <button
+            className="primary"
+            disabled={completing}
+            onClick={() => void processSaved(completionMode)}
+          >
+            进入会后整理
+          </button>
+          <p>
+            将沿用上次选择：
+            {completionMode === "quick"
+              ? "快速完成文字稿"
+              : completionMode === "full"
+                ? "精细处理文字稿"
+                : "先保留录音，暂不转写"}
+            。原音与关注点已经保存。
+          </p>
+          <details>
+            <summary>调整文字稿处理方式</summary>
+            <div className="finish-options">
+              {(
+                [
+                  {
+                    mode: "quick",
+                    title: "快速完成",
+                    description: `复用 ${savedEngine === "qwen" ? "千问" : "Whisper"} 实时结果，补齐缺段与尾段；不区分发言人。`,
+                  },
+                  {
+                    mode: "full",
+                    title: "精细处理",
+                    description: `使用 ${engineLabel} 重识别、时间对齐，按会议设置区分发言人。`,
+                  },
+                  {
+                    mode: "none",
+                    title: "先整理关注点",
+                    description: "保留录音和简记，稍后在会议中启动转写。",
+                  },
+                ] as const
+              ).map((choice) => (
+                <button
+                  key={choice.mode}
+                  className={completionMode === choice.mode ? "selected" : ""}
+                  disabled={completing}
+                  onClick={() => void processSaved(choice.mode)}
+                >
+                  <strong>
+                    {choice.title}
+                    {completionMode === choice.mode ? " · 上次选择" : ""}
+                  </strong>
+                  <span>{choice.description}</span>
+                </button>
+              ))}
+            </div>
+          </details>
           {completing && <p role="status">正在打开会议…</p>}
         </section>
       )}
@@ -1368,7 +1471,7 @@ export default function RecordingDialog({
             </section>
             <section className="live-notes">
               <header>
-                <h3>会议简记</h3>
+                <h3>我的关注</h3>
                 <span>
                   {notes.length ? `${notes.length} 条` : "原文永久保留"}
                 </span>
@@ -1376,10 +1479,41 @@ export default function RecordingDialog({
               <button
                 className="mark-now"
                 disabled={!recording}
-                onClick={markNow}
+                onClick={() => markNow()}
               >
                 ⚑ 标记此刻 <small>Alt+M</small>
               </button>
+              <div className="attention-quick-actions">
+                {(
+                  [
+                    ["highlight", "标重点"],
+                    ["question", "记问题"],
+                    ["action", "记待办"],
+                    ["note", "随手记"],
+                  ] as const
+                ).map(([type, label]) => (
+                  <button
+                    key={type}
+                    disabled={!recording}
+                    onClick={() => {
+                      if (noteText.trim()) {
+                        setNotes((old) => [
+                          ...old,
+                          {
+                            captured_at: Math.max(0, currentSeconds()),
+                            note_type: type,
+                            raw_text: noteText.trim(),
+                            note_scope: "personal",
+                          },
+                        ]);
+                        setNoteText("");
+                      } else markNow(type);
+                    }}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
               <p className="note-purpose-hint">
                 先记关键词或标记时间，会后核对；个人备注默认不进入纪要。
               </p>
@@ -1437,7 +1571,7 @@ export default function RecordingDialog({
                   disabled={!recording || !noteText.trim()}
                   onClick={addNote}
                 >
-                  添加简记
+                  保存关注点
                 </button>
               </div>
               <div className="live-note-list">

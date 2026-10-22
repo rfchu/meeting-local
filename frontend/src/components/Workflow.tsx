@@ -21,7 +21,7 @@ interface Props {
 const labels: Record<ReviewStep, string> = {
   transcript: "文字稿与主题",
   speakers: "发言人",
-  notes: "简记与用途",
+  notes: "现场关注与用途",
   minutes: "纪要发送前检查",
 };
 const hints: Record<ReviewStep, string> = {
@@ -92,6 +92,16 @@ export default function Workflow(props: Props) {
     hint = "文字稿有未保存修改，保存后重新核对受影响的内容。";
     label = "保存文字稿";
     action = onSave;
+  } else if (
+    meeting.flow &&
+    meeting.flow.counts.pending +
+      meeting.flow.counts.stale +
+      meeting.flow.counts.deferred >
+      0
+  ) {
+    hint = `你留下的关注点还有 ${meeting.flow.counts.pending + meeting.flow.counts.stale + meeting.flow.counts.deferred} 个待处理，可先整理，再生成纪要。`;
+    label = "核对现场关注";
+    action = () => onReview("notes");
   } else if (progress.next && progress.next.key !== "minutes") {
     const step = progress.next.key;
     hint = progress.stale
@@ -126,7 +136,7 @@ export default function Workflow(props: Props) {
           {label}
         </button>
       </div>
-      <details className="postmeeting-review" open>
+      <details className="postmeeting-review">
         <summary>
           会后核对清单 · {progress.complete}/4
           {progress.stale ? ` · ${progress.stale} 项待复核` : ""}

@@ -24,6 +24,7 @@ from .keep_awake import KeepAwake
 from .recording_health import RecordingHealth
 from .meeting_review import MeetingReview
 from .qa import QA
+from . import meeting_flow
 from .local_embedding import local_embedding
 from .retrieval import Retrieval
 
@@ -125,9 +126,29 @@ class MeetingNoteUpdate(BaseModel):
     note_scope: Literal['personal','meeting'] | None=None
     is_marker: bool | None=None
     captured_at: float | None=Field(default=None,ge=0,allow_inf_nan=False)
+class MeetingBriefInput(BaseModel):
+    title: str=Field(default='',max_length=200)
+    purpose: str=Field(default='',max_length=1000)
+    agenda: str=Field(default='',max_length=3000)
+    participants: str=Field(default='',max_length=1000)
+    questions: str=Field(default='',max_length=2000)
+    previous_meeting_id: str | None=Field(default=None,max_length=100)
+class AttentionDecisionInput(BaseModel):
+    decision: Literal['meeting','personal','deferred']
+    fingerprint: str=Field(min_length=64,max_length=64)
+    revision: int=Field(ge=0)
+    content: str=Field(default='',max_length=3000)
+    source_segment_ids: list[str]=Field(default_factory=list,max_length=20)
+    confirmed: bool=False
+class ActionTrackInput(BaseModel):
+    content: str=Field(min_length=1,max_length=2000)
+    owner: str=Field(default='',max_length=200)
+    due_date: str=Field(default='',max_length=200)
+    confirmed: bool=False
 class RecordingInput(BaseModel):
     mime_type: Literal['audio/webm;codecs=opus','audio/webm','audio/mp4','audio/mp4;codecs=mp4a.40.2']='audio/webm'
 class RecordingMetadata(MeetingNotesBatchInput):
+    brief: MeetingBriefInput | None=None
     duration: float=Field(default=0,ge=0,allow_inf_nan=False)
     chunk_count: int=Field(default=0,ge=0,le=100000)
 class RecordingFinish(BaseModel):
@@ -151,6 +172,7 @@ class MinutesGenerateInput(BaseModel):
     style: Literal['formal','brief','internal']='formal'
     template_id: str=Field(default='general-meeting',max_length=100)
 class MinutesSaveInput(BaseModel):
+    source_minutes_id: str | None=Field(default=None,max_length=100)
     source_analysis_id: str | None=Field(default=None,max_length=100)
     document: MeetingMinutes
 class MinutesPolishInput(BaseModel):
@@ -228,6 +250,9 @@ def create_app(data_dir=None, start_worker=True):
         artifacts=store.all('SELECT * FROM artifacts WHERE meeting_id=? ORDER BY created DESC,rowid DESC',(row['id'],))
         for a in artifacts:
             a['payload']=json.loads(a['payload']);a['provenance']=json.loads(a['provenance'] or '{}');a['stale']=a['revision'] != row['revision']
+        with store.connect() as db:
+            for artifact in artifacts:
+                if artifact['kind']=='meeting_minutes':artifact['stale']=artifact['stale'] or not meeting_flow.artifact_current(db,row['id'],artifact['provenance'])
         row['artifacts']=artifacts
         notes=store.all('SELECT * FROM meeting_notes WHERE meeting_id=? ORDER BY captured_at,created,rowid',(row['id'],))
         for note in notes:
@@ -241,15 +266,18 @@ def create_app(data_dir=None, start_worker=True):
         from .notes import fingerprint
         todos=store.all('SELECT * FROM note_todos WHERE meeting_id=? ORDER BY created,rowid',(row['id'],))
         by_id={n['id']:n for n in notes}
-        current_minutes=next((a for a in artifacts if a['kind']=='meeting_minutes' and a['revision']==row['revision']),None)
+        current_minutes=next((a for a in artifacts if a['kind']=='meeting_minutes' and a['revision']==row['revision'] and not a['stale']),None)
         for note in notes:
             note['adopted_to_minutes']=bool(current_minutes and any(item.get('note_id')==note['id'] and item.get('note_fingerprint')==fingerprint(note) for item in current_minutes['provenance'].get('adopted_notes',[])))
-        for todo in todos:
-            todo['source_segment_ids']=json.loads(todo['source_segment_ids'])
-            todo['stale']=todo['note_id'] not in by_id or todo['note_fingerprint']!=fingerprint(by_id[todo['note_id']]) or (bool(todo['source_segment_ids']) and todo['revision']!=row['revision'])
+        with store.connect() as db:
+            db.execute('BEGIN')
+            for todo in todos:
+                todo['source_segment_ids']=json.loads(todo['source_segment_ids'])
+                todo['stale']=meeting_flow.todo_stale(db,todo)
         row['note_todos']=todos
         row['audio_tracks']=[name for name in ('system','microphone') if (store.directory(row['id'])/(name+'.wav')).is_file()]
         row['review']=meeting_review.read(row['id'])
+        row['flow']=meeting_flow.flow(store,row['id'])
         return row
 
     @app.put('/api/meetings/{mid}/review/{step}')
@@ -365,7 +393,7 @@ def create_app(data_dir=None, start_worker=True):
             try:analysis=LMStudioProvider().status()
             except ValueError as error:analysis={'ready':False,'models':[],'error':str(error),'base_url':''}
             analysis.update(profiles=[],default_profile_id=None)
-        return {'engines':engine_catalog(),'default_engine':'whisper','engine_ready':engine.ready(),'engine':'whisper.cpp / Metal','model':Path(engine.model).name,'diarization_ready':diar.ready(),'punctuation_ready':LocalPunctuation().ready(),'ffmpeg_ready':bool(shutil.which('ffmpeg')),'data_dir':str(store.root),'offline':True,'analysis':analysis,'qa_ready':True}
+        return {'engines':engine_catalog(),'default_engine':'whisper','engine_ready':engine.ready(),'engine':'whisper.cpp / Metal','model':Path(engine.model).name,'diarization_ready':diar.ready(),'punctuation_ready':LocalPunctuation().ready(),'ffmpeg_ready':bool(shutil.which('ffmpeg')),'data_dir':str(store.root),'offline':True,'analysis':analysis,'qa_ready':True,'meeting_flow_ready':True}
 
     @app.get('/api/minutes-templates')
     def list_minutes_templates():
@@ -525,6 +553,15 @@ def create_app(data_dir=None, start_worker=True):
                 replacement=db.execute('SELECT id FROM llm_configs ORDER BY created,rowid LIMIT 1').fetchone()
                 if replacement:db.execute('UPDATE llm_configs SET is_default=1 WHERE id=?',(replacement['id'],))
         return {'ok':True}
+    @app.get('/api/meeting-preparation')
+    def get_preparation():
+        row=store.one('SELECT payload FROM meeting_preparation WHERE id=1')
+        return json.loads(row['payload']) if row else dict(meeting_flow.EMPTY_BRIEF)
+    @app.put('/api/meeting-preparation')
+    def set_preparation(body:MeetingBriefInput):
+        if body.previous_meeting_id and not store.one('SELECT id FROM meetings WHERE id=?',(body.previous_meeting_id,)):raise HTTPException(409,'关联会议不存在')
+        store.execute('INSERT OR REPLACE INTO meeting_preparation(id,payload) VALUES(1,?)',(encode(body.model_dump()),))
+        return body.model_dump()
     @app.get('/api/meetings')
     def list_meetings():
         rows=store.all('SELECT id,title,filename,created,duration,revision FROM meetings ORDER BY created DESC,rowid DESC')
@@ -622,7 +659,7 @@ def create_app(data_dir=None, start_worker=True):
         except (FileNotFoundError,ValueError) as error:raise HTTPException(409,str(error))
     @app.put('/api/recordings/{rid}/metadata')
     def save_recording_metadata(rid:str,body:RecordingMetadata):
-        try:return recordings.metadata(rid,[note.model_dump() for note in body.notes],body.duration,body.chunk_count)
+        try:return recordings.metadata(rid,[note.model_dump() for note in body.notes],body.duration,body.chunk_count,body.brief.model_dump() if body.brief else None)
         except FileNotFoundError as error:raise HTTPException(404,str(error))
         except ValueError as error:raise HTTPException(409,str(error))
     @app.put('/api/recordings/{rid}/chunks/{index}')
@@ -667,6 +704,26 @@ def create_app(data_dir=None, start_worker=True):
     @app.patch('/api/meetings/{mid}')
     def rename(mid:str,body:RenameInput):
         meeting(mid); store.execute('UPDATE meetings SET title=? WHERE id=?',(body.title,mid)); return {'ok':True}
+    @app.put('/api/meetings/{mid}/brief')
+    def update_brief(mid:str,body:MeetingBriefInput):
+        meeting(mid)
+        try:
+            with store.connect() as db:
+                db.execute('BEGIN IMMEDIATE');meeting_flow.save_brief(db,mid,body.model_dump())
+                if body.title.strip():db.execute('UPDATE meetings SET title=? WHERE id=?',(body.title.strip(),mid))
+            return meeting_flow.flow(store,mid)
+        except ValueError as error:raise HTTPException(409,str(error))
+    @app.put('/api/meetings/{mid}/notes/{nid}/disposition')
+    def attention_disposition(mid:str,nid:str,body:AttentionDecisionInput):
+        try:meeting_flow.review_attention(store,mid,nid,body);return meeting_flow.flow(store,mid)
+        except ValueError as error:raise HTTPException(409,str(error))
+    @app.get('/api/followups')
+    def followups():
+        values=[]
+        for row in store.all("SELECT id,title FROM meetings WHERE EXISTS(SELECT 1 FROM note_todos WHERE meeting_id=meetings.id) ORDER BY created DESC,rowid DESC"):
+            value=decorated(meeting(row['id']))
+            for todo in value['note_todos']:values.append({**todo,'meeting_id':row['id'],'meeting_title':row['title']})
+        return values
     @app.post('/api/meetings/{mid}/speaker-reviews',status_code=201)
     def create_speaker_review(mid:str,body:AnalysisJobInput):
         row=meeting(mid);segments=json.loads(row['segments'])
@@ -749,6 +806,10 @@ def create_app(data_dir=None, start_worker=True):
         from .notes import use_note
         try:return use_note(store,mid,nid,body)
         except ValueError as error:raise HTTPException(409,str(error))
+    @app.post('/api/meetings/{mid}/minutes/{aid}/actions/{index}/track',status_code=201)
+    def track_minutes_action(mid:str,aid:str,index:int,body:ActionTrackInput):
+        try:return meeting_flow.track_action(store,mid,aid,index,body)
+        except ValueError as error:raise HTTPException(409,str(error))
     @app.put('/api/meetings/{mid}/note-todos/{tid}')
     def update_note_todo(mid:str,tid:str,body:TodoUpdate):
         meeting(mid)
@@ -814,7 +875,9 @@ def create_app(data_dir=None, start_worker=True):
     def delete_note(mid:str,nid:str):
         meeting(mid)
         if not store.one('SELECT id FROM meeting_notes WHERE id=? AND meeting_id=?',(nid,mid)):raise HTTPException(404,'简记不存在')
-        store.execute('DELETE FROM meeting_notes WHERE id=? AND meeting_id=?',(nid,mid));return {'ok':True}
+        with store.connect() as db:
+            db.execute('BEGIN IMMEDIATE');db.execute('DELETE FROM attention_reviews WHERE note_id=? AND meeting_id=?',(nid,mid));db.execute('DELETE FROM meeting_notes WHERE id=? AND meeting_id=?',(nid,mid))
+        return {'ok':True}
     @app.delete('/api/meetings/{mid}')
     def delete(mid:str):
         meeting(mid)
@@ -826,7 +889,7 @@ def create_app(data_dir=None, start_worker=True):
                 raise HTTPException(409,'请先取消任务，等待处理停止后删除')
             db.execute('DELETE FROM live_asr_ranges WHERE recording_id=?',(mid,))
             QA.forget_meeting(db,mid)
-            for table in ['meeting_reviews','note_todos','retrieval_units','meeting_notes','artifacts','revisions','jobs','meetings']:
+            for table in ['meeting_briefs','attention_reviews','meeting_reviews','note_todos','retrieval_units','meeting_notes','artifacts','revisions','jobs','meetings']:
                 key='id' if table=='meetings' else 'meeting_id'
                 db.execute(f'DELETE FROM {table} WHERE {key}=?',(mid,))
         shutil.rmtree(store.directory(mid),ignore_errors=True)
@@ -970,7 +1033,10 @@ def create_app(data_dir=None, start_worker=True):
         return artifact
 
     def public_artifact(a):
-        a=dict(a);a['payload']=json.loads(a['payload']);a['provenance']=json.loads(a['provenance'] or '{}');return a
+        a=dict(a);a['payload']=json.loads(a['payload']);a['provenance']=json.loads(a['provenance'] or '{}')
+        if a['kind']=='meeting_minutes':
+            with store.connect() as db:a['stale']=not meeting_flow.artifact_current(db,a['meeting_id'],a['provenance']) or meeting(a['meeting_id'])['revision']!=a['revision']
+        return a
 
     @app.post('/api/meetings/{mid}/minutes',status_code=201)
     def generate_minutes(mid:str,body:MinutesGenerateInput):
@@ -997,8 +1063,21 @@ def create_app(data_dir=None, start_worker=True):
         aid=uid();provenance={'source_analysis_id':body.source_analysis_id,'source_transcript_revision':row['revision'] if body.document.style=='ai' else None,
                               'minutes_version':MINUTES_VERSION,'style':body.document.style,'template_id':body.document.template_id,
                               'template_version':body.document.template_version,'edited':True,'ai_generated':body.document.style=='ai'}
-        store.execute('INSERT INTO artifacts(id,meeting_id,revision,kind,payload,provenance) VALUES(?,?,?,?,?,?)',
-            (aid,mid,row['revision'],'meeting_minutes',encode(body.document.model_dump()),encode(provenance)))
+        with store.connect() as db:
+            db.execute('BEGIN IMMEDIATE')
+            current=db.execute('SELECT revision FROM meetings WHERE id=?',(mid,)).fetchone()
+            if not current or current['revision']!=row['revision']:raise HTTPException(409,'文字稿版本已变化，请刷新后再保存')
+            if body.source_minutes_id:
+                base=db.execute("SELECT * FROM artifacts WHERE id=? AND meeting_id=? AND revision=? AND kind='meeting_minutes'",(body.source_minutes_id,mid,row['revision'])).fetchone()
+                latest=db.execute("SELECT id FROM artifacts WHERE meeting_id=? AND revision=? AND kind='meeting_minutes' ORDER BY created DESC,rowid DESC LIMIT 1",(mid,row['revision'])).fetchone()
+                if not base or not latest or latest['id']!=body.source_minutes_id:raise HTTPException(409,'纪要版本已变化，请刷新后再保存')
+                original=json.loads(base['provenance'])
+                for key in ('flow_context_hash','reviewed_attention'):
+                    if key in original:provenance[key]=original[key]
+                adopted=[n for n in original.get('adopted_notes',[]) if any(item.content==n['content'] and item.source_segment_ids==n['source_segment_ids'] for item in getattr(body.document,n['section']))]
+                if adopted:provenance['adopted_notes']=adopted
+            db.execute('INSERT INTO artifacts(id,meeting_id,revision,kind,payload,provenance) VALUES(?,?,?,?,?,?)',
+                (aid,mid,row['revision'],'meeting_minutes',encode(body.document.model_dump()),encode(provenance)))
         return public_artifact(store.one('SELECT * FROM artifacts WHERE id=?',(aid,)))
 
     @app.post('/api/meetings/{mid}/minutes/ai',status_code=201)
@@ -1007,6 +1086,9 @@ def create_app(data_dir=None, start_worker=True):
         if not segments:raise HTTPException(409,'文字稿为空，无法生成 AI 会议纪要')
         template=minutes_template(body.template_id)
         source_analysis=minutes_source(mid,row) if body.mode=='full' else None
+        try:
+            with store.connect() as db:context,context_hash=meeting_flow.ai_context(db,mid)
+        except ValueError as error:raise HTTPException(409,str(error))
         profile=None
         if body.profile_id:profile=llm_config(body.profile_id)
         elif store.one('SELECT id FROM llm_configs LIMIT 1'):
@@ -1028,16 +1110,23 @@ def create_app(data_dir=None, start_worker=True):
                     raise RuntimeError(f'AI 会议纪要进程失败（{completed.returncode}）：{detail}')
             speakers=list(dict.fromkeys(s['speaker'] for s in segments if s.get('speaker') and s['speaker']!='未分配'))
             result=provider.generate_ai_minutes(model,segments,{'title':row['title'],'date':row['created'][:10],
-                'known_attendees':speakers,'minutes_template':template.model_dump()},work/'result',run)
+                'known_attendees':speakers,'minutes_template':template.model_dump(),**context},work/'result',run)
             document=build_ai_minutes(row['created'],result,template)
             validate_minutes_citations(document,{segment['id'] for segment in segments})
         except (RuntimeError,ValueError,subprocess.TimeoutExpired) as error:raise HTTPException(409,str(error))
         aid=uid();provenance={'minutes_version':MINUTES_VERSION,'style':'ai','template_id':template.id,
             'template_version':template.version,'edited':False,'ai_generated':True,
+            'flow_context_hash':context_hash,'reviewed_attention':context['reviewed_attention'],
             'generation_mode':body.mode,'source_transcript_revision':row['revision'],'provider':provider_name,'provider_type':provider_type,'model':model}
         if source_analysis:provenance['source_analysis_id']=source_analysis['id']
-        store.execute('INSERT INTO artifacts(id,meeting_id,revision,kind,payload,provenance) VALUES(?,?,?,?,?,?)',
-            (aid,mid,row['revision'],'meeting_minutes',encode(document.model_dump()),encode(provenance)))
+        with store.connect() as db:
+            db.execute('BEGIN IMMEDIATE')
+            current=db.execute('SELECT revision FROM meetings WHERE id=?',(mid,)).fetchone()
+            try:current_context_hash=meeting_flow.ai_context(db,mid)[1]
+            except ValueError as error:raise HTTPException(409,str(error))
+            if not current or current['revision']!=row['revision'] or current_context_hash!=context_hash:raise HTTPException(409,'生成期间原文或会议准备／关注点变化，请重新生成')
+            db.execute('INSERT INTO artifacts(id,meeting_id,revision,kind,payload,provenance) VALUES(?,?,?,?,?,?)',
+                (aid,mid,row['revision'],'meeting_minutes',encode(document.model_dump()),encode(provenance)))
         return public_artifact(store.one('SELECT * FROM artifacts WHERE id=?',(aid,)))
 
     @app.post('/api/meetings/{mid}/minutes/polish',status_code=201)
@@ -1045,6 +1134,10 @@ def create_app(data_dir=None, start_worker=True):
         row=meeting(mid)
         source=store.one("SELECT * FROM artifacts WHERE meeting_id=? AND revision=? AND kind='meeting_minutes' ORDER BY created DESC,rowid DESC LIMIT 1",(mid,row['revision']))
         if not source:raise HTTPException(409,'请先生成会议纪要')
+        with store.connect() as db:
+            if not meeting_flow.artifact_current(db,mid,json.loads(source['provenance'] or '{}')):raise HTTPException(409,'纪要来源已变化，请重新生成后再润色')
+            try:polish_context_hash=meeting_flow.ai_context(db,mid)[1]
+            except ValueError as error:raise HTTPException(409,str(error))
         document=MeetingMinutes.model_validate(json.loads(source['payload']))
         segments=json.loads(row['segments']);valid_ids={segment['id'] for segment in segments}
         try:validate_minutes_citations(document,valid_ids)
@@ -1077,8 +1170,19 @@ def create_app(data_dir=None, start_worker=True):
             'minutes_version':MINUTES_VERSION,'style':polished.style,'template_id':polished.template_id,
             'template_version':polished.template_version,'edited':False,'llm_polished':True,
             'provider':provider_name,'provider_type':provider_type,'model':model}
-        store.execute('INSERT INTO artifacts(id,meeting_id,revision,kind,payload,provenance) VALUES(?,?,?,?,?,?)',
-            (aid,mid,row['revision'],'meeting_minutes',encode(polished.model_dump()),encode(provenance)))
+        for key in ('flow_context_hash','reviewed_attention'):
+            if key in source_provenance:provenance[key]=source_provenance[key]
+        adopted=[n for n in source_provenance.get('adopted_notes',[]) if any(item.content==n['content'] and item.source_segment_ids==n['source_segment_ids'] for item in getattr(polished,n['section']))]
+        if adopted:provenance['adopted_notes']=adopted
+        with store.connect() as db:
+            db.execute('BEGIN IMMEDIATE')
+            latest=db.execute("SELECT id FROM artifacts WHERE meeting_id=? AND revision=? AND kind='meeting_minutes' ORDER BY created DESC,rowid DESC LIMIT 1",(mid,row['revision'])).fetchone()
+            current=db.execute('SELECT revision FROM meetings WHERE id=?',(mid,)).fetchone()
+            try:current_context_hash=meeting_flow.ai_context(db,mid)[1]
+            except ValueError as error:raise HTTPException(409,str(error))
+            if not current or current['revision']!=row['revision'] or not latest or latest['id']!=source['id'] or current_context_hash!=polish_context_hash:raise HTTPException(409,'润色期间来源已变化，请重新核对')
+            db.execute('INSERT INTO artifacts(id,meeting_id,revision,kind,payload,provenance) VALUES(?,?,?,?,?,?)',
+                (aid,mid,row['revision'],'meeting_minutes',encode(polished.model_dump()),encode(provenance)))
         return public_artifact(store.one('SELECT * FROM artifacts WHERE id=?',(aid,)))
 
     @app.get('/api/meetings/{mid}/minutes/export/{format}')

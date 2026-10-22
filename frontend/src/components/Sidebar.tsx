@@ -15,6 +15,7 @@ interface Props {
   onSelect: (id: string) => void;
   onUpload: (file: File) => void;
   onRecord: () => void;
+  onFollowups: () => void;
   onModels: () => void;
   onSearch: () => void;
   onEnvironment: () => void;
@@ -27,6 +28,7 @@ export default function Sidebar({
   onSelect,
   onUpload,
   onRecord,
+  onFollowups,
   onModels,
   onSearch,
   onEnvironment,
@@ -68,6 +70,9 @@ export default function Sidebar({
       />
       <button className="wide" onClick={onSearch}>
         ⌕ 搜索与引用问答
+      </button>
+      <button className="wide" onClick={onFollowups}>
+        ☑ 跨会议跟进
       </button>
       <div className="nav-label">
         会议资料库 <span>{meetings.length}</span>

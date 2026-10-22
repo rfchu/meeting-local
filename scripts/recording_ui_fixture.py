@@ -36,6 +36,7 @@ def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--port',type=int,default=8766)
     parser.add_argument('--review-demo',action='store_true',help='Seed a synthetic transcript and AI minutes for review acceptance')
+    parser.add_argument('--flow-demo',action='store_true',help='Synthetic meeting preparation, attention and follow-up flow; no real models')
     parser.add_argument('--qa-demo',action='store_true',help='Synthetic multi-meeting QA with deterministic replies, never calls a real model')
     parser.add_argument('--long-demo',type=int,choices=[1000,3000,10000],help='Seed an isolated long transcript for DOM/edit/search acceptance')
     args=parser.parse_args()
@@ -45,7 +46,7 @@ def main():
         session=recordings.create('audio/webm')
         recordings.metadata(session['id'],[{'captured_at':4,'raw_text':'验证用简记：核对中断后恢复','note_type':'note','note_scope':'personal'}],15,3)
         recordings.chunk(session['id'],0,b'fixture-head');recordings.chunk(session['id'],2,b'fixture-tail')
-        if args.review_demo or args.qa_demo:
+        if args.review_demo or args.qa_demo or args.flow_demo:
             import wave
             from app.minutes import MeetingMinutes
             from app.notes import insert_note
@@ -87,6 +88,30 @@ def main():
                 'boundary_review':False,'speaker_locked':False} for i in range(args.long_demo)]
             segments[-1]['text']='终点标记：星河项目最终交付安排仍需复核。'
             store.save_revision(mid,segments,'manual')
+        if args.flow_demo:
+            from app.meeting_flow import save_brief
+            from app.analysis import AIMinutesResult,AIMinutesBasicInfo,AnalysisItem
+            from app.minutes import MinutesItem
+            class SyntheticMinutesProvider:
+                base_url='http://127.0.0.1:1234/v1'
+                def status(self):return {'ready':True,'models':['synthetic-minutes'],'base_url':self.base_url,'error':''}
+                def resolve_model(self,model=None):return 'synthetic-minutes'
+                def generate_ai_minutes(self,model,segments,metadata,work,run):
+                    return AIMinutesResult(basic_info=AIMinutesBasicInfo(topic='合成交付会',source_segment_ids=['demo-seg']),core_content=[AnalysisItem(content='测试约定周五交付，负责人待确认。',source_segment_ids=['demo-seg'])],action_items=[AnalysisItem(content='核对交付负责人',source_segment_ids=['demo-seg'])],summary=[AnalysisItem(content='继续确认交付安排。',source_segment_ids=['demo-seg'])])
+            module.LMStudioProvider=SyntheticMinutesProvider
+            earlier=uid();folder=store.directory(earlier);folder.mkdir();(folder/'original').write_bytes((directory/'original').read_bytes())
+            store.execute('INSERT INTO meetings(id,title,filename,duration) VALUES(?,?,?,?)',(earlier,'合成上次评审会','previous.wav',12))
+            store.save_revision(earlier,[{'id':'previous-seg','start':0,'end':12,'speaker':'甲','text':'准备交付验收材料。'}],'manual')
+            with store.connect() as db:
+                old=insert_note(db,earlier,{'captured_at':3,'raw_text':'准备验收材料','note_type':'action','note_scope':'personal'})
+                from app.notes import fingerprint
+                n=db.execute('SELECT * FROM meeting_notes WHERE id=?',(old,)).fetchone()
+                db.execute('INSERT INTO note_todos(id,meeting_id,note_id,content,revision,note_fingerprint,owner) VALUES(?,?,?,?,?,?,?)',(uid(),earlier,old,'准备验收材料',1,fingerprint(n),'测试负责人'))
+                save_brief(db,mid,{'title':'合成验收会议','purpose':'核对交付安排','questions':'负责人是否明确？','previous_meeting_id':earlier})
+                insert_note(db,mid,{'captured_at':5,'raw_text':'我的私人担忧，不能直接写进纪要','note_type':'note','note_scope':'personal'})
+                insert_note(db,mid,{'captured_at':7,'raw_text':'负责人到底是谁？','note_type':'question','note_scope':'personal'})
+            document.action_items=[MinutesItem(content='核对交付负责人',source_segment_ids=['demo-seg'])]
+            store.execute("UPDATE artifacts SET payload=?,provenance=? WHERE meeting_id=? AND kind='meeting_minutes'",(encode(document.model_dump()),encode({'edited':True,'ai_generated':True}),mid))
         previous=module.NativeCapture
         try:
             module.NativeCapture=SyntheticCapture

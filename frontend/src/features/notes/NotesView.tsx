@@ -25,14 +25,24 @@ export default function NotesView({
   onPause,
   toast,
   minutesDirty,
+  onMinutes,
 }: {
   meeting: Meeting;
+  onMinutes: () => void;
   minutesDirty: boolean;
   onRefresh: () => Promise<void>;
   onSeek: (time: number) => void;
   onPause: () => void;
   toast: (text: string) => void;
 }) {
+  const [filter, setFilter] = useState("pending");
+  const flow = meeting.flow;
+  const stateOf = (id: string) =>
+    flow?.attention.find((n) => n.note_id === id)?.state || "pending";
+  const pending =
+    (flow?.counts.pending || 0) +
+    (flow?.counts.stale || 0) +
+    (flow?.counts.deferred || 0);
   const [text, setText] = useState(""),
     [type, setType] = useState<MeetingNoteType>("note"),
     [scope, setScope] = useState<"personal" | "meeting">("personal"),
@@ -79,10 +89,35 @@ export default function NotesView({
   return (
     <div className="notes-view">
       <div className="notes-purpose">
-        <h3>把现场关注，留给会后核对</h3>
+        <h3>把现场关注整理成会议成果</h3>
         <p>
-          简记保存你的重点、疑问和个人判断。标签表示记录意图，核对后再用于纪要或待办。
+          共 {meeting.notes.length} 个关注点，{pending} 个待处理，
+          {flow?.counts.meeting || 0} 个已确认可用，{flow?.counts.personal || 0}{" "}
+          个保留个人。已确认内容可参与 AI 纪要整理，原始记录始终保留。
         </p>
+      </div>
+      <div className="attention-summary">
+        <button className="primary" onClick={onMinutes}>
+          前往会议成果 · 整理纪要与跟进
+        </button>
+        <small>
+          已采用到当前纪要 {flow?.counts.adopted || 0} 个；相关原文被引用{" "}
+          {flow?.counts.related || 0}{" "}
+          个。原文有关联不等于关注点已被充分覆盖，请核对纪要。
+        </small>
+        <label>
+          查看关注点
+          <select
+            aria-label="关注点筛选"
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+          >
+            <option value="pending">待处理／待复核</option>
+            <option value="all">全部</option>
+            <option value="meeting">已确认可用</option>
+            <option value="personal">个人保留</option>
+          </select>
+        </label>
       </div>
       <details className="notes-expansion-toolbar">
         <summary>AI 整理设置</summary>
@@ -115,61 +150,68 @@ export default function NotesView({
           )}
         </p>
       )}
-      <label className="note-position">
-        位置（秒）{" "}
-        <input
-          aria-label="补充简记位置"
-          type="number"
-          min={0}
-          value={time}
-          onChange={(e) => setTime(Math.max(0, Number(e.target.value) || 0))}
-        />
-        <button disabled={busy} onClick={() => void add(true)}>
-          ⚑ 标记这个位置
-        </button>
-      </label>
-      <div className="note-compose-options">
-        <select
-          aria-label="补充简记用途"
-          value={scope}
-          onChange={(e) => setScope(e.target.value as typeof scope)}
-        >
-          <option value="personal">个人备注</option>
-          <option value="meeting">会议内容（待核对）</option>
-        </select>
-        <select
-          aria-label="补充简记标签"
-          value={type}
-          onChange={(e) => setType(e.target.value as MeetingNoteType)}
-        >
-          {Object.entries(labels).map(([id, label]) => (
-            <option key={id} value={id}>
-              {label}
-            </option>
-          ))}
-        </select>
-      </div>
-      <div className="notes-compose">
-        <textarea
-          rows={2}
-          placeholder="先记关键词、问题或自己的判断…"
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          onKeyDown={(e) => {
-            if ((e.ctrlKey || e.metaKey) && e.key === "Enter" && text.trim()) {
-              e.preventDefault();
-              void add();
-            }
-          }}
-        />
-        <button
-          className="primary"
-          disabled={busy || !text.trim()}
-          onClick={() => void add()}
-        >
-          添加简记
-        </button>
-      </div>
+      <details className="attention-add">
+        <summary>补充关注点或时间标记</summary>
+        <label className="note-position">
+          位置（秒）{" "}
+          <input
+            aria-label="补充简记位置"
+            type="number"
+            min={0}
+            value={time}
+            onChange={(e) => setTime(Math.max(0, Number(e.target.value) || 0))}
+          />
+          <button disabled={busy} onClick={() => void add(true)}>
+            ⚑ 标记这个位置
+          </button>
+        </label>
+        <div className="note-compose-options">
+          <select
+            aria-label="补充简记用途"
+            value={scope}
+            onChange={(e) => setScope(e.target.value as typeof scope)}
+          >
+            <option value="personal">个人备注</option>
+            <option value="meeting">会议内容（待核对）</option>
+          </select>
+          <select
+            aria-label="补充简记标签"
+            value={type}
+            onChange={(e) => setType(e.target.value as MeetingNoteType)}
+          >
+            {Object.entries(labels).map(([id, label]) => (
+              <option key={id} value={id}>
+                {label}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="notes-compose">
+          <textarea
+            rows={2}
+            placeholder="先记关键词、问题或自己的判断…"
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            onKeyDown={(e) => {
+              if (
+                (e.ctrlKey || e.metaKey) &&
+                e.key === "Enter" &&
+                text.trim()
+              ) {
+                e.preventDefault();
+                void add();
+              }
+            }}
+          />
+          <button
+            className="primary"
+            disabled={busy || !text.trim()}
+            onClick={() => void add()}
+          >
+            添加简记
+          </button>
+        </div>
+      </details>
       {!meeting.notes.length && (
         <div className="empty">
           <h3>还没有简记</h3>
@@ -177,33 +219,54 @@ export default function NotesView({
         </div>
       )}
       <div className="notes-list">
-        {meeting.notes.map((note) => (
-          <NoteCard
-            key={note.id}
-            note={note}
-            disabled={busy}
-            onSeek={onSeek}
-            onReview={() => setSelected(note.id)}
-            onSave={(draft) =>
-              run(() =>
-                api.updateNote(meeting.id, note.id, {
-                  raw_text: draft.raw_text,
-                  note_type: draft.note_type,
-                  note_scope: draft.note_scope,
-                  is_marker: !draft.raw_text.trim() && !!draft.is_marker,
-                  captured_at: draft.captured_at,
-                }),
-              )
-            }
-            onDelete={() => {
-              if (confirm("删除这条简记？已转出的纪要和待办会保留。"))
-                void run(() => api.deleteNote(meeting.id, note.id));
-            }}
-          />
-        ))}
+        {meeting.notes
+          .filter(
+            (note) =>
+              filter === "all" ||
+              (filter === "pending"
+                ? ["pending", "stale", "deferred"].includes(stateOf(note.id))
+                : stateOf(note.id) === filter),
+          )
+          .map((note) => (
+            <NoteCard
+              key={note.id}
+              note={note}
+              disposition={stateOf(note.id)}
+              resolvedContent={
+                flow?.attention.find((n) => n.note_id === note.id)?.review
+                  ?.decision === "meeting" &&
+                !flow?.attention.find((n) => n.note_id === note.id)?.review
+                  ?.stale
+                  ? flow?.attention.find((n) => n.note_id === note.id)?.review
+                      ?.content
+                  : undefined
+              }
+              disabled={busy}
+              onSeek={onSeek}
+              onReview={() => setSelected(note.id)}
+              onSave={(draft) =>
+                run(() =>
+                  api.updateNote(meeting.id, note.id, {
+                    raw_text: draft.raw_text,
+                    note_type: draft.note_type,
+                    note_scope: draft.note_scope,
+                    is_marker: !draft.raw_text.trim() && !!draft.is_marker,
+                    captured_at: draft.captured_at,
+                  }),
+                )
+              }
+              onDelete={() => {
+                if (confirm("删除这条简记？已转出的纪要和待办会保留。"))
+                  void run(() => api.deleteNote(meeting.id, note.id));
+              }}
+            />
+          ))}
       </div>
-      <section className="note-todos">
-        <h3>由简记转出的待办</h3>
+      <details className="note-todos">
+        <summary>
+          已转出的跟进项 · {(meeting.note_todos || []).length}
+          （也可在会议成果中管理）
+        </summary>
         <p>负责人、期限由你填写；个人跟进不会自动进入对外纪要。</p>
         {!(meeting.note_todos || []).length && (
           <p>核对简记后，点击“转为待办”创建。</p>
@@ -217,7 +280,7 @@ export default function NotesView({
             }
           />
         ))}
-      </section>
+      </details>
       {selectedNote && (
         <ReviewPanel
           note={selectedNote}
@@ -236,6 +299,8 @@ export default function NotesView({
 }
 function NoteCard({
   note,
+  disposition,
+  resolvedContent,
   disabled,
   onSeek,
   onReview,
@@ -243,6 +308,8 @@ function NoteCard({
   onDelete,
 }: {
   note: MeetingNote;
+  disposition: string;
+  resolvedContent?: string;
   disabled: boolean;
   onSeek: (time: number) => void;
   onReview: () => void;
@@ -268,6 +335,17 @@ function NoteCard({
   return (
     <article className={`note-card note-${draft.note_type}`}>
       <div className="note-meta">
+        <span className="attention-state">
+          {
+            {
+              pending: "待核对",
+              meeting: "已确认可用于会议成果",
+              personal: "个人保留",
+              deferred: "稍后处理",
+              stale: "内容变化，待复核",
+            }[disposition]
+          }
+        </span>
         <button className="note-time" onClick={() => onSeek(note.captured_at)}>
           {clock(note.captured_at)}
         </button>
@@ -288,51 +366,64 @@ function NoteCard({
           删除
         </button>
       </div>
-      <div className="note-compose-options">
-        <select
-          aria-label="简记用途"
-          value={draft.note_scope || "personal"}
-          onChange={(e) =>
-            setDraft({
-              ...draft,
-              note_scope: e.target.value as "personal" | "meeting",
-            })
-          }
-        >
-          <option value="personal">个人备注</option>
-          <option value="meeting">会议内容（待核对）</option>
-        </select>
-        <select
-          aria-label="简记标签"
-          value={draft.note_type}
-          onChange={(e) =>
-            setDraft({ ...draft, note_type: e.target.value as MeetingNoteType })
-          }
-        >
-          {Object.entries(labels).map(([id, label]) => (
-            <option key={id} value={id}>
-              {label}
-            </option>
-          ))}
-        </select>
-      </div>
-      <textarea
-        aria-label="原始简记"
-        rows={2}
-        placeholder="回听此刻，补充当时想记录的内容…"
-        value={draft.raw_text}
-        onChange={(e) => setDraft({ ...draft, raw_text: e.target.value })}
-      />
-      {dirty && (
-        <button
-          className="primary"
-          disabled={disabled || (!draft.raw_text.trim() && !draft.is_marker)}
-          onClick={() => void onSave(draft)}
-        >
-          保存修改
-        </button>
-      )}{" "}
-      <button disabled={disabled || dirty} onClick={onReview}>
+      <p className="attention-content">
+        {resolvedContent || note.raw_text || "仅标记了时间，回听后补充内容。"}
+      </p>
+      <details>
+        <summary>编辑原始记录 · {labels[note.note_type]}</summary>
+        <div className="note-compose-options">
+          <select
+            aria-label="简记用途"
+            value={draft.note_scope || "personal"}
+            onChange={(e) =>
+              setDraft({
+                ...draft,
+                note_scope: e.target.value as "personal" | "meeting",
+              })
+            }
+          >
+            <option value="personal">个人备注</option>
+            <option value="meeting">会议内容（待核对）</option>
+          </select>
+          <select
+            aria-label="简记标签"
+            value={draft.note_type}
+            onChange={(e) =>
+              setDraft({
+                ...draft,
+                note_type: e.target.value as MeetingNoteType,
+              })
+            }
+          >
+            {Object.entries(labels).map(([id, label]) => (
+              <option key={id} value={id}>
+                {label}
+              </option>
+            ))}
+          </select>
+        </div>
+        <textarea
+          aria-label="原始简记"
+          rows={2}
+          placeholder="回听此刻，补充当时想记录的内容…"
+          value={draft.raw_text}
+          onChange={(e) => setDraft({ ...draft, raw_text: e.target.value })}
+        />
+        {dirty && (
+          <button
+            className="primary"
+            disabled={disabled || (!draft.raw_text.trim() && !draft.is_marker)}
+            onClick={() => void onSave(draft)}
+          >
+            保存修改
+          </button>
+        )}{" "}
+      </details>
+      <button
+        className="primary"
+        disabled={disabled || dirty}
+        onClick={onReview}
+      >
         核对与整理
       </button>
       {note.accepted_text && (
@@ -365,12 +456,17 @@ function ReviewPanel({
   onClose: () => void;
   toast: (text: string) => void;
 }) {
+  const disposition = meeting.flow?.attention.find(
+    (n) => n.note_id === note.id,
+  )?.review;
   const [context, setContext] = useState<NoteReview | null>(null),
     [ids, setIds] = useState<string[]>([]),
     [content, setContent] = useState(
-      note.accepted_text && !note.expansion_stale
-        ? note.accepted_text
-        : note.raw_text,
+      disposition?.decision === "meeting" && !disposition.stale
+        ? disposition.content
+        : note.accepted_text && !note.expansion_stale
+          ? note.accepted_text
+          : note.raw_text,
     ),
     [confirmed, setConfirmed] = useState(false),
     [busy, setBusy] = useState(false),
@@ -404,9 +500,10 @@ function ReviewPanel({
           setIds(
             note.expansion_stale
               ? []
-              : note.source_segment_ids.filter((id) =>
-                  value.segments.some((s) => s.id === id),
-                ),
+              : (disposition?.decision === "meeting" && !disposition.stale
+                  ? disposition.source_segment_ids
+                  : note.source_segment_ids
+                ).filter((id) => value.segments.some((s) => s.id === id)),
           );
         }
       })
@@ -460,7 +557,7 @@ function ReviewPanel({
       ariaLabel="简记核对与整理"
     >
       <div className="search-heading">
-        <h2>简记核对与整理</h2>
+        <h2>核对关注点 · 原声、表述与去向</h2>
         <button
           onClick={() => {
             onPause();
@@ -595,6 +692,77 @@ function ReviewPanel({
             />{" "}
             我已核对内容及所选依据，确认本次用途。
           </label>
+          {meeting.flow && (
+            <div className="attention-decisions">
+              <button
+                className="primary"
+                disabled={
+                  busy ||
+                  !context ||
+                  !confirmed ||
+                  !content.trim() ||
+                  !ids.length
+                }
+                onClick={() =>
+                  void run(
+                    () =>
+                      api.attentionDecision(meeting.id, note.id, {
+                        decision: "meeting",
+                        fingerprint: context!.fingerprint,
+                        revision: context!.revision,
+                        content,
+                        source_segment_ids: ids,
+                        confirmed,
+                      }),
+                    "已确认可用于会议成果；下次生成 AI 纪要会使用核对后的表述与原文依据。",
+                  )
+                }
+              >
+                确认纳入会议成果
+              </button>
+              <button
+                disabled={busy || !context}
+                onClick={() =>
+                  void run(
+                    () =>
+                      api.attentionDecision(meeting.id, note.id, {
+                        decision: "personal",
+                        fingerprint: context!.fingerprint,
+                        revision: context!.revision,
+                        content: "",
+                        source_segment_ids: [],
+                        confirmed: true,
+                      }),
+                    "已保留为个人备注，不进入 AI 纪要。已有导出和转出内容请另行核对。",
+                  )
+                }
+              >
+                保留个人备注
+              </button>
+              <button
+                disabled={busy || !context}
+                onClick={() =>
+                  void run(
+                    () =>
+                      api.attentionDecision(meeting.id, note.id, {
+                        decision: "deferred",
+                        fingerprint: context!.fingerprint,
+                        revision: context!.revision,
+                        content: "",
+                        source_segment_ids: [],
+                        confirmed: true,
+                      }),
+                    "已标记稍后处理。",
+                  )
+                }
+              >
+                暂不处理
+              </button>
+            </div>
+          )}
+          <small>
+            “纳入会议成果”保存可用内容，不要求先生成纪要，也不会自动发送。个人备注与暂不处理不会提供给纪要模型。
+          </small>
           <button
             className="primary"
             disabled={busy || !context || !confirmed || !content.trim()}
@@ -620,8 +788,9 @@ function ReviewPanel({
             <option value="open_questions">待确认问题</option>
           </select>
           <p>
-            {note.note_scope !== "meeting"
-              ? "个人备注不能直接采用；如属于会议内容，请先关闭面板修改用途。"
+            {note.note_scope !== "meeting" &&
+            !(disposition?.decision === "meeting" && !disposition.stale)
+              ? "请先在此面板确认纳入会议成果，再采用到纪要。"
               : !minutes || minutesDirty
                 ? "请先生成当前版本纪要，再采用。"
                 : "采用将保存为新版本，不覆盖历史纪要。"}
@@ -633,7 +802,8 @@ function ReviewPanel({
               !confirmed ||
               !ids.length ||
               !content.trim() ||
-              note.note_scope !== "meeting" ||
+              (note.note_scope !== "meeting" &&
+                !(disposition?.decision === "meeting" && !disposition.stale)) ||
               !minutes ||
               minutesDirty
             }
@@ -649,7 +819,7 @@ function ReviewPanel({
     </Modal>
   );
 }
-function TodoCard({
+export function TodoCard({
   todo,
   onSave,
 }: {

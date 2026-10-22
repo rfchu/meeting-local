@@ -1,4 +1,4 @@
-import type { NoteReview } from "./types";
+import type { MeetingBrief, MeetingFlow, NoteTodo, NoteReview } from "./types";
 import type { SearchHit, SearchStatus } from "./features/SearchDialog";
 import type { QARun, QAPrepare } from "./features/qaTypes";
 import {
@@ -215,11 +215,58 @@ export const api = {
       "/recordings",
       json("POST", { mime_type: mimeType }),
     ),
+  preparation: () =>
+    request<MeetingBrief>("/meeting-preparation", {
+      signal: AbortSignal.timeout(10000),
+    }),
+  savePreparation: (brief: MeetingBrief) =>
+    request<MeetingBrief>("/meeting-preparation", {
+      ...json("PUT", brief),
+      signal: AbortSignal.timeout(10000),
+    }),
+  saveBrief: (mid: string, brief: MeetingBrief) =>
+    request<MeetingFlow>(`/meetings/${mid}/brief`, json("PUT", brief)),
+  attentionDecision: (
+    mid: string,
+    nid: string,
+    body: {
+      decision: "meeting" | "personal" | "deferred";
+      content: string;
+      source_segment_ids: string[];
+      fingerprint: string;
+      revision: number;
+      confirmed: boolean;
+    },
+  ) =>
+    request<MeetingFlow>(
+      `/meetings/${mid}/notes/${nid}/disposition`,
+      json("PUT", body),
+    ),
+  trackMinutesAction: (
+    mid: string,
+    aid: string,
+    index: number,
+    body: {
+      content: string;
+      owner: string;
+      due_date: string;
+      confirmed: boolean;
+    },
+  ) =>
+    request<{ reused: boolean }>(
+      `/meetings/${mid}/minutes/${aid}/actions/${index}/track`,
+      json("POST", body),
+    ),
+  followups: () =>
+    request<(NoteTodo & { meeting_id: string; meeting_title: string })[]>(
+      "/followups",
+    ),
   recordingMetadata: (session: RecordingSession) =>
     request<RecordingSession>(`/recordings/${session.id}/metadata`, {
       ...json("PUT", {
         duration: session.duration,
         notes: session.notes,
+        brief: session.brief,
         chunk_count: session.chunk_count,
       }),
       signal: AbortSignal.timeout(10000),
@@ -411,10 +458,15 @@ export const api = {
     id: string,
     sourceAnalysisId: string | null,
     document: MeetingMinutes,
+    sourceMinutesId?: string,
   ) =>
     request<Artifact<MeetingMinutes>>(
       `/meetings/${id}/minutes`,
-      json("PUT", { source_analysis_id: sourceAnalysisId, document }),
+      json("PUT", {
+        source_analysis_id: sourceAnalysisId,
+        source_minutes_id: sourceMinutesId,
+        document,
+      }),
     ),
   configs: () => request<LLMConfig[]>("/llm-configs"),
   saveConfig: (body: LLMConfigInput) =>

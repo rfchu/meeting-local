@@ -1,4 +1,5 @@
-export type Workspace = "transcript" | "notes" | "analysis" | "minutes";
+export type Workspace =
+  "prepare" | "transcript" | "notes" | "analysis" | "minutes";
 export type JobState =
   "queued" | "running" | "completed" | "failed" | "cancelled";
 export type MinutesStyle = "formal" | "brief" | "internal" | "ai";
@@ -32,6 +33,34 @@ export interface Revision {
 }
 export type MeetingNoteType =
   "note" | "highlight" | "question" | "decision" | "action";
+export interface MeetingBrief {
+  title: string;
+  purpose: string;
+  agenda: string;
+  participants: string;
+  questions: string;
+  previous_meeting_id: string | null;
+}
+export interface AttentionDisposition {
+  decision: "meeting" | "personal" | "deferred";
+  content: string;
+  source_segment_ids: string[];
+  stale: boolean;
+  review_key: string;
+}
+export interface MeetingFlow {
+  brief: MeetingBrief;
+  counts: Record<string, number>;
+  attention: {
+    note_id: string;
+    state: string;
+    adopted: boolean;
+    related: boolean;
+    review: AttentionDisposition | null;
+  }[];
+  has_current_minutes: boolean;
+  previous: { id: string; title: string; todos: NoteTodo[] } | null;
+}
 export interface MeetingNoteInput {
   note_scope?: "personal" | "meeting";
   is_marker?: boolean;
@@ -64,6 +93,9 @@ export interface NoteExpansion {
   evidence: { segment_id: string; quote: string }[];
 }
 export interface NoteTodo {
+  source_kind?: "note" | "minutes";
+  source_artifact_id?: string;
+  source_index?: number;
   id: string;
   note_id: string;
   content: string;
@@ -85,6 +117,7 @@ export interface LiveDraftSegment {
   text: string;
 }
 export interface RecordingSession {
+  brief?: MeetingBrief;
   id: string;
   mime_type: string;
   created: number;
@@ -255,6 +288,7 @@ export interface MeetingSummary {
 }
 
 export interface Meeting extends MeetingSummary {
+  flow?: MeetingFlow;
   review?: MeetingReview;
   segments: Segment[];
   jobs: Job[];
@@ -303,6 +337,7 @@ export interface LLMConfig {
 }
 export interface Environment {
   qa_ready?: boolean;
+  meeting_flow_ready?: boolean;
   engines: EngineInfo[];
   default_engine: string;
   diarization_ready: boolean;

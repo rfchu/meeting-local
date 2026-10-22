@@ -1,3 +1,6 @@
+import FollowupsDialog from "./features/meeting/FollowupsDialog";
+import MeetingPreparation from "./features/meeting/MeetingPreparation";
+import MeetingOutcomes from "./features/meeting/MeetingOutcomes";
 import {
   transcriptionOptions,
   type CompletionMode,
@@ -64,7 +67,7 @@ export default function App() {
   const [minutesDraft, setMinutesDraft] = useState<MeetingMinutes | null>(null),
     [minutesDirty, setMinutesDirty] = useState(false),
     [savingMinutes, setSavingMinutes] = useState(false);
-  const [minutesStyle, setMinutesStyle] = useState<MinutesStyle>("formal"),
+  const [minutesStyle, setMinutesStyle] = useState<MinutesStyle>("ai"),
     [minutesTemplateId, setMinutesTemplateId] = useState("general-meeting"),
     [minutesMode, setMinutesMode] = useState<"quick" | "full">("quick"),
     [showCitations, setShowCitations] = useState(false);
@@ -87,6 +90,7 @@ export default function App() {
   });
   const [reviewBusy, setReviewBusy] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
+  const [followupsOpen, setFollowupsOpen] = useState(false);
   const [searchTarget, setSearchTarget] = useState<SearchHit | null>(null);
   const [engine, setEngine] = useState("whisper"),
     [diarization, setDiarization] = useState(false),
@@ -235,6 +239,7 @@ export default function App() {
         target.id,
         String(source || "") || null,
         clone(minutesDraft),
+        latestMinutes(target)?.id,
       );
       setMeeting((old) =>
         old?.id === target.id
@@ -265,10 +270,10 @@ export default function App() {
       const artifact = latestMinutes(value);
       setMinutesDraft(artifact ? clone(artifact.payload) : null);
       setMinutesDirty(false);
-      setMinutesStyle(artifact?.payload.style || "formal");
+      setMinutesStyle(artifact?.payload.style || "ai");
       setMinutesTemplateId(artifact?.payload.template_id || "general-meeting");
       setShowCitations(artifact?.payload.style === "internal");
-      setWorkspace("transcript");
+      setWorkspace(latestMinutes(value) ? "minutes" : "notes");
       setFullPending(false);
       meetingRef.current = value;
       const job = latestJob(value, "transcription");
@@ -303,6 +308,7 @@ export default function App() {
           return {
             ...old,
             review: fresh.review,
+            flow: fresh.flow,
             notes: fresh.notes,
             note_todos: fresh.note_todos,
             jobs: fresh.jobs,
@@ -587,6 +593,11 @@ export default function App() {
         onRecord={() => setRecordingOpen(true)}
         onModels={() => setModelsOpen(true)}
         onSearch={() => setSearchOpen(true)}
+        onFollowups={() =>
+          environment?.meeting_flow_ready
+            ? setFollowupsOpen(true)
+            : toast("跨会议跟进需在录音和任务结束后更新服务，现有内容已保留。")
+        }
         onEnvironment={() => setEnvironmentOpen(true)}
       />
       <main>
@@ -763,13 +774,12 @@ export default function App() {
                   <div className="tabs">
                     {(
                       [
-                        ["transcript", "会议文字稿"],
+                        ["prepare", "会议准备"],
                         [
                           "notes",
-                          `会议简记${meeting.notes.length ? ` · ${meeting.notes.length}` : ""}`,
+                          `会后整理${meeting.notes.length ? ` · ${meeting.notes.length}` : ""}`,
                         ],
-                        ["analysis", "会议分析"],
-                        ["minutes", "会议纪要"],
+                        ["minutes", "会议成果"],
                       ] as [Workspace, string][]
                     ).map(([key, label]) => (
                       <button
@@ -780,6 +790,31 @@ export default function App() {
                         {label}
                       </button>
                     ))}
+                    <details className="meeting-source-tools">
+                      <summary>
+                        {workspace === "transcript"
+                          ? "文字稿"
+                          : workspace === "analysis"
+                            ? "深入分析"
+                            : "原文与分析"}
+                      </summary>
+                      <button
+                        onClick={(e) => {
+                          setWorkspace("transcript");
+                          e.currentTarget.closest("details")!.open = false;
+                        }}
+                      >
+                        打开文字稿
+                      </button>
+                      <button
+                        onClick={(e) => {
+                          setWorkspace("analysis");
+                          e.currentTarget.closest("details")!.open = false;
+                        }}
+                      >
+                        打开深入分析
+                      </button>
+                    </details>
                   </div>
                   {workspace === "transcript" && (
                     <button
@@ -796,6 +831,18 @@ export default function App() {
                     </button>
                   )}
                 </div>
+                {workspace === "prepare" && (
+                  <MeetingPreparation
+                    key={meeting.id}
+                    meeting={meeting}
+                    meetings={listQuery.data || []}
+                    onRefresh={async () => {
+                      setMeeting(await api.meeting(meeting.id));
+                    }}
+                    onOpen={(id) => void openMeeting(id)}
+                    toast={toast}
+                  />
+                )}
                 {workspace === "transcript" && (
                   <TranscriptView
                     meeting={meeting}
@@ -845,40 +892,55 @@ export default function App() {
                       }
                     }}
                     minutesDirty={minutesDirty}
+                    onMinutes={() => setWorkspace("minutes")}
                     onPause={() => pausePlaybackRef.current?.()}
                     onSeek={(time) => seekRef.current?.(time)}
                     toast={toast}
                   />
                 )}
                 {workspace === "minutes" && (
-                  <MinutesView
-                    meeting={meeting}
-                    environment={environment}
-                    draft={minutesDraft}
-                    dirty={minutesDirty}
-                    transcriptDirty={transcriptDirty}
-                    style={minutesStyle}
-                    templates={(templatesQuery.data || []) as MinutesTemplate[]}
-                    templateId={minutesTemplateId}
-                    mode={minutesMode}
-                    model={minutesModel}
-                    showCitations={showCitations}
-                    generating={generating || fullPending}
-                    onStyle={(value) => void changeMinutesStyle(value)}
-                    onTemplate={(value) => void changeMinutesTemplate(value)}
-                    onMode={setMinutesMode}
-                    onModel={setMinutesModel}
-                    onCitations={setShowCitations}
-                    onGenerate={() => void startMinutes()}
-                    onDraft={(value) => {
-                      minutesGeneration.current++;
-                      setMinutesDraft(value);
-                      setMinutesDirty(true);
-                    }}
-                    onSave={() => void saveMinutes()}
-                    onPreview={() => void openMinutesPreview()}
-                    onSeek={(time) => seekRef.current?.(time)}
-                  />
+                  <>
+                    <MeetingOutcomes
+                      onSeek={(time) => seekRef.current?.(time)}
+                      minutesDirty={minutesDirty}
+                      meeting={meeting}
+                      onNotes={() => setWorkspace("notes")}
+                      onRefresh={async () =>
+                        setMeeting(await api.meeting(meeting.id))
+                      }
+                      toast={toast}
+                    />
+                    <MinutesView
+                      meeting={meeting}
+                      environment={environment}
+                      draft={minutesDraft}
+                      dirty={minutesDirty}
+                      transcriptDirty={transcriptDirty}
+                      style={minutesStyle}
+                      templates={
+                        (templatesQuery.data || []) as MinutesTemplate[]
+                      }
+                      templateId={minutesTemplateId}
+                      mode={minutesMode}
+                      model={minutesModel}
+                      showCitations={showCitations}
+                      generating={generating || fullPending}
+                      onStyle={(value) => void changeMinutesStyle(value)}
+                      onTemplate={(value) => void changeMinutesTemplate(value)}
+                      onMode={setMinutesMode}
+                      onModel={setMinutesModel}
+                      onCitations={setShowCitations}
+                      onGenerate={() => void startMinutes()}
+                      onDraft={(value) => {
+                        minutesGeneration.current++;
+                        setMinutesDraft(value);
+                        setMinutesDirty(true);
+                      }}
+                      onSave={() => void saveMinutes()}
+                      onPreview={() => void openMinutesPreview()}
+                      onSeek={(time) => seekRef.current?.(time)}
+                    />
+                  </>
                 )}
               </div>
               <div className="info-panel">
@@ -1000,8 +1062,19 @@ export default function App() {
           onExport={(format) => void exportMinutes(format)}
         />
       )}
+      {followupsOpen && (
+        <FollowupsDialog
+          onClose={() => setFollowupsOpen(false)}
+          onOpen={async (id) => {
+            await openMeeting(id);
+            setWorkspace("minutes");
+          }}
+        />
+      )}
       {recordingOpen && (
         <RecordingDialog
+          flowReady={environment?.meeting_flow_ready === true}
+          meetings={listQuery.data || []}
           engineLabel={engineLabel(engine)}
           engines={environment?.engines || []}
           onClose={() => {

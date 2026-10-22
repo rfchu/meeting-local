@@ -21,15 +21,19 @@ class MeetingReview:
         by_id={n['id']:n for n in notes}
         adopted_inputs=[(item.get('note_id'),by_id.get(item.get('note_id'))) for item in adopted]
         records={r['step']:dict(r) for r in db.execute('SELECT * FROM meeting_reviews WHERE meeting_id=?',(mid,))}
+        attention=[dict(n) for n in db.execute('SELECT * FROM attention_reviews WHERE meeting_id=? ORDER BY note_id',(mid,))]
+        from .meeting_flow import brief
         inputs={'transcript':[revision,row['title'],segments],
                 'speakers':[revision,[(s.get('id'),s.get('speaker'),s.get('speaker_locked')) for s in segments]],
-                'notes':[revision,notes], 'minutes':[revision,row['title'],dict(minutes) if minutes else None,adopted_inputs]}
+                'notes':[revision,notes,attention], 'minutes':[revision,row['title'],dict(minutes) if minutes else None,adopted_inputs,attention,brief(db,mid)]}
+        from .meeting_flow import artifact_current
+        minutes_invalid=bool(minutes and not artifact_current(db,mid,json.loads(minutes['provenance'])))
         steps={}
         for step in STEPS:
             fingerprint=hashlib.sha256(json.dumps(inputs[step],sort_keys=True,ensure_ascii=False,separators=(',',':')).encode()).hexdigest()
             previous=records.get(step)
             if step=='notes' and not notes:state='not_needed'
-            elif not revision or not segments or (step=='minutes' and not minutes):state='blocked'
+            elif not revision or not segments or (step=='minutes' and (not minutes or minutes_invalid)):state='blocked'
             elif not previous:state='pending'
             elif previous['fingerprint']!=fingerprint:state='stale'
             else:state='done'
@@ -37,7 +41,7 @@ class MeetingReview:
                          'decision':previous['decision'] if previous else None}
         return {'revision':revision,'title':row['title'],'minutes_id':minutes['id'] if minutes else None,'steps':steps,'notes_count':len(notes),
                 'speaker_count':len({s.get('speaker','') for s in segments}),
-                'has_current_minutes':bool(minutes)}
+                'has_current_minutes':bool(minutes and not minutes_invalid)}
 
     def read(self,mid):
         with self.store.connect() as db:

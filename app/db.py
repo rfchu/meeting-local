@@ -84,6 +84,9 @@ class Store:
                 status TEXT NOT NULL DEFAULT 'pending',owner TEXT NOT NULL DEFAULT '',due_date TEXT NOT NULL DEFAULT '',
                 revision INTEGER NOT NULL,note_fingerprint TEXT NOT NULL,source_segment_ids TEXT NOT NULL DEFAULT '[]',
                 note_scope TEXT NOT NULL DEFAULT 'personal',created TEXT DEFAULT CURRENT_TIMESTAMP,updated TEXT DEFAULT CURRENT_TIMESTAMP)''')
+            todo_columns={row['name'] for row in db.execute('PRAGMA table_info(note_todos)')}
+            for name,definition in [('source_kind',"TEXT NOT NULL DEFAULT 'note'"),('source_artifact_id',"TEXT NOT NULL DEFAULT ''"),('source_index',"INTEGER NOT NULL DEFAULT -1"),('attention_review_key',"TEXT NOT NULL DEFAULT ''")]:
+                if name not in todo_columns:db.execute(f'ALTER TABLE note_todos ADD COLUMN {name} {definition}')
             config_columns={row['name'] for row in db.execute('PRAGMA table_info(llm_configs)')}
             if 'context_window' not in config_columns:
                 db.execute('ALTER TABLE llm_configs ADD COLUMN context_window INTEGER NOT NULL DEFAULT 32768')
@@ -99,7 +102,16 @@ class Store:
                     version=excluded.version,builtin=excluded.builtin,definition=excluded.definition,
                     updated=CURRENT_TIMESTAMP''',
                     (template.id,template.name,template.description,template.category,template.version,1,definition))
-            db.execute('PRAGMA user_version=12')
+            db.executescript("""CREATE TABLE IF NOT EXISTS meeting_preparation (id INTEGER PRIMARY KEY CHECK(id=1),payload TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS meeting_briefs (
+                meeting_id TEXT PRIMARY KEY,payload TEXT NOT NULL,updated TEXT DEFAULT CURRENT_TIMESTAMP);
+                CREATE TABLE IF NOT EXISTS attention_reviews (
+                note_id TEXT PRIMARY KEY,meeting_id TEXT NOT NULL,decision TEXT NOT NULL,content TEXT NOT NULL,
+                source_segment_ids TEXT NOT NULL,revision INTEGER NOT NULL,note_fingerprint TEXT NOT NULL,review_key TEXT NOT NULL,
+                updated TEXT DEFAULT CURRENT_TIMESTAMP);
+                CREATE INDEX IF NOT EXISTS attention_reviews_meeting ON attention_reviews(meeting_id);
+                CREATE INDEX IF NOT EXISTS note_todos_meeting ON note_todos(meeting_id);""")
+            db.execute('PRAGMA user_version=13')
         os.chmod(self.path,0o600)
     @contextmanager
     def connect(self):

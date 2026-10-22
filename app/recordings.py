@@ -55,10 +55,11 @@ class RecordingStore:
                     rows.append(value)
             return sorted(rows,key=lambda row:row['created'],reverse=True)
 
-    def metadata(self,rid,notes,duration,chunk_count):
+    def metadata(self,rid,notes,duration,chunk_count,brief=None):
         with self.lock:
             value=self.read(rid)
             if self.store.one('SELECT id FROM meetings WHERE id=?',(rid,)):return value
+            if brief is not None:value['brief']=brief
             value.update(notes=notes,duration=duration,chunk_count=chunk_count,updated=time.time())
             self.write(self.folder(rid)/'session.json',value);return value
 
@@ -102,6 +103,8 @@ class RecordingStore:
                 db.execute('BEGIN IMMEDIATE')
                 if not db.execute('SELECT id FROM meetings WHERE id=?',(rid,)).fetchone():
                     db.execute('INSERT INTO meetings(id,title,filename,duration) VALUES(?,?,?,?)',(rid,Path(filename).stem,filename,session['duration']))
+                    from .meeting_flow import publish_preparation
+                    publish_preparation(db,rid,session.get('brief'))
                     for note in session['notes']:
                         from .notes import insert_note
                         insert_note(db,rid,note)

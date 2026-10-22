@@ -34,13 +34,20 @@ def use_note(store,mid,nid,body):
         ids=list(dict.fromkeys(body.source_segment_ids))
         if not set(ids)<=nearby:raise ValueError('引用不属于当前附近原文，请重新核对')
         key=hashlib.sha256(encode([nid,body.fingerprint,body.revision,body.kind,body.section if body.kind=='minutes' else None,text,ids if body.kind=='minutes' else []]).encode()).hexdigest()
+        from .meeting_flow import dispositions
+        disposition=dispositions(db,mid,meeting['revision']).get(nid)
+        verified=bool(disposition and not disposition['stale'] and disposition['decision']=='meeting' and disposition['content']==text and disposition['source_segment_ids']==ids)
         if body.kind=='todo':
             existing=db.execute('SELECT id FROM note_todos WHERE id=?',(key,)).fetchone()
             if existing:return {'id':key,'reused':True}
             db.execute('INSERT INTO note_todos(id,meeting_id,note_id,content,revision,note_fingerprint,source_segment_ids,note_scope) VALUES(?,?,?,?,?,?,?,?)',
-                (key,mid,nid,text,body.revision,body.fingerprint,encode(ids),note['note_scope']))
+                (key,mid,nid,text,body.revision,body.fingerprint,encode(ids),'meeting' if verified else note['note_scope']))
+            if verified:db.execute('UPDATE note_todos SET attention_review_key=? WHERE id=?',(disposition['review_key'],key))
             return {'id':key,'reused':False}
-        if note['note_scope']!='meeting':raise ValueError('个人备注不能直接采用到纪要，请先改为会议内容并核对')
+        from .meeting_flow import dispositions
+        approved=dispositions(db,mid,meeting['revision']).get(nid)
+        approved=approved if approved and not approved['stale'] and approved['decision']=='meeting' and approved['content']==text and approved['source_segment_ids']==ids else None
+        if note['note_scope']!='meeting' and not approved:raise ValueError('个人备注不能直接采用到纪要，请先改为会议内容并核对')
         if not body.revision or not ids:raise ValueError('采用到纪要需要当前文字稿及至少一条原文依据')
         artifact=db.execute("SELECT * FROM artifacts WHERE meeting_id=? AND revision=? AND kind='meeting_minutes' ORDER BY created DESC,rowid DESC LIMIT 1",(mid,meeting['revision'])).fetchone()
         if not artifact:raise ValueError('请先生成当前版本的会议纪要，再采用简记')
@@ -52,7 +59,7 @@ def use_note(store,mid,nid,body):
         getattr(document,body.section).append(MinutesItem(content=text,source_segment_ids=ids))
         document=MeetingMinutes.model_validate(document.model_dump())
         validate_minutes_citations(document,{s['id'] for s in json.loads(meeting['segments'])})
-        adopted.append({'key':key,'note_id':nid,'note_fingerprint':body.fingerprint,'section':body.section,'source_segment_ids':ids,'content':text})
+        adopted.append({'key':key,'note_id':nid,'note_fingerprint':body.fingerprint,'section':body.section,'source_segment_ids':ids,'content':text,'attention_review_key':approved['review_key'] if approved else None})
         provenance.update(edited=True,adopted_notes=adopted,base_minutes_id=artifact['id'])
         aid=uid();db.execute('INSERT INTO artifacts(id,meeting_id,revision,kind,payload,provenance) VALUES(?,?,?,?,?,?)',
             (aid,mid,meeting['revision'],'meeting_minutes',encode(document.model_dump()),encode(provenance)))

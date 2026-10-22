@@ -121,12 +121,14 @@ export default function MinutesView(props: Props) {
       ? "文字稿正在修改；保存后当前会议纪要将过期，请重新生成。"
       : artifact && artifact.revision !== meeting.revision
         ? `该纪要基于文字稿 v${artifact.revision}，当前为 v${meeting.revision}，请重新生成纪要。`
-        : current &&
-            current.payload.style !== "ai" &&
-            analysis &&
-            current.provenance?.source_analysis_id !== analysis.id
-          ? "会议分析已经更新，建议重新生成纪要；当前人工编辑内容仍会保留。"
-          : "";
+        : artifact?.stale
+          ? "会议准备、关注点或原文依据已变化，此纪要需重新核对或生成。"
+          : current &&
+              current.payload.style !== "ai" &&
+              analysis &&
+              current.provenance?.source_analysis_id !== analysis.id
+            ? "会议分析已经更新，建议重新生成纪要；当前人工编辑内容仍会保留。"
+            : "";
   const update = <K extends keyof MeetingMinutes>(
     key: K,
     value: MeetingMinutes[K],
@@ -202,6 +204,13 @@ export default function MinutesView(props: Props) {
             <option value="ai">AI 会议纪要 · 全文整理</option>
           </select>
         </label>
+        {style === "ai" && (
+          <p className="minutes-attention-hint">
+            本次将使用文字稿、已保存的会议准备，以及{" "}
+            {meeting.flow?.counts.meeting || 0}{" "}
+            个已核对关注点。个人备注和暂不处理的记录不会提供给模型；选择云端模型时，以上内容会发送到所选服务。相关原文被引用不等于关注点已充分覆盖，请在生成后核对。
+          </p>
+        )}
         {style === "ai" && (
           <label>
             生成方式

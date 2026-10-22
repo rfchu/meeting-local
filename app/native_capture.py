@@ -208,6 +208,8 @@ class NativeCapture:
                 db.execute('BEGIN IMMEDIATE')
                 if not db.execute('SELECT id FROM meetings WHERE id=?',(rid,)).fetchone():
                     db.execute('INSERT INTO meetings(id,title,filename,duration) VALUES(?,?,?,?)',(rid,Path(filename).stem,filename,duration))
+                    from .meeting_flow import publish_preparation
+                    publish_preparation(db,rid,session.get('brief'))
                     from .db import uid
                     for note in session['notes']:
                         from .notes import insert_note

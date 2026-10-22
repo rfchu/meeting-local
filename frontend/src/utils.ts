@@ -50,11 +50,13 @@ export const currentAnalysis = (meeting: Meeting | null) =>
 export const latestAnalysis = (meeting: Meeting | null) =>
   meeting?.artifacts.find((item) => item.kind === "meeting_analysis") as
     Artifact<MeetingAnalysis> | undefined;
-export const currentMinutes = (meeting: Meeting | null) =>
-  meeting?.artifacts.find(
+export const currentMinutes = (meeting: Meeting | null) => {
+  const value = meeting?.artifacts.find(
     (item) =>
       item.kind === "meeting_minutes" && item.revision === meeting.revision,
   ) as Artifact<MeetingMinutes> | undefined;
+  return value?.stale ? undefined : value;
+};
 export const latestMinutes = (meeting: Meeting | null) =>
   (currentMinutes(meeting) ||
     meeting?.artifacts.find((item) => item.kind === "meeting_minutes")) as
