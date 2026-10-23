@@ -136,6 +136,7 @@ class LocalPunctuation:
 
 def attach_speakers(segments, turns):
     for s in segments:
+        if s.get('timestamp_precision')=='chunk':s['speaker']='未分配';continue
         scores={}
         for t in turns:
             overlap=max(0,min(s['end'],t['end'])-max(s['start'],t['start']))
@@ -181,3 +182,11 @@ def merge_overlapping_chunks(chunks):
                 s['boundary_review']=True
             merged.append(s)
     return sorted(merged,key=lambda s:s['start'])
+
+
+def checkpoint_identity_matches(engine,previous,current):
+    if previous==current:return True
+    if engine!='qwen':return False
+    software={str(BASE/p) for p in ('scripts/qwen_transcribe.py','scripts/qwen_live_server.py','app/alignment.py')}
+    def model_files(items):return [item for item in items if item.get('path') not in software]
+    return bool(model_files(previous)) and model_files(previous)==model_files(current)

@@ -37,6 +37,8 @@ class Segment(BaseModel):
     text: str=Field(max_length=20000)
     speaker: str=Field(default='未分配',max_length=100)
     boundary_review: bool=False
+    timestamp_precision: Literal['chunk','aligned'] | None=None
+    alignment_warning: str=Field(default='',max_length=300)
     speaker_locked: bool=False
 class RevisionInput(BaseModel):
     revision: int
@@ -966,6 +968,9 @@ def create_app(data_dir=None, start_worker=True):
     def save(mid:str,body:RevisionInput):
         row=meeting(mid)
         values=[x.model_dump() for x in body.segments]
+        for value in values:
+            for key in ('timestamp_precision','alignment_warning'):
+                if not value.get(key):value.pop(key,None)
         if len({x['id'] for x in values})!=len(values): raise HTTPException(400,'片段 ID 重复')
         if any(x['end']<x['start'] or (row['duration'] and x['end']>row['duration']+1) for x in values): raise HTTPException(400,'时间戳超出录音范围')
         if any(values[i]['start']>values[i+1]['start'] for i in range(len(values)-1)): raise HTTPException(400,'片段必须按时间排序')

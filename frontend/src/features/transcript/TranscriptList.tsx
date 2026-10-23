@@ -71,6 +71,11 @@ const Row = memo(function Row({
           />
           已确认
         </label>
+        {segment.alignment_warning && (
+          <p role="note" className="error">
+            时间待校准：{segment.alignment_warning}
+          </p>
+        )}
         <textarea
           ref={textRef}
           aria-label={`转写文字 ${clock(segment.start)}`}

@@ -768,6 +768,86 @@ export default function App() {
                 <pre id="jobError">{transcriptionJob.error}</pre>
               </div>
             )}
+            {candidateArtifacts.map((item) => (
+              <section className="transcription-recovery" key={item.id}>
+                {item.provenance.incomplete === true && (
+                  <strong>
+                    {item.provenance.completion_mode === "quick"
+                      ? "快速文字稿"
+                      : "精细转写"}{" "}
+                    · 未完成恢复稿
+                  </strong>
+                )}
+                <p>
+                  {item.provenance.incomplete
+                    ? "转写未完成，已完成部分已保留为恢复稿，不会覆盖当前文稿。可从检查点重试。"
+                    : "重新转写期间文稿有修改，识别结果已作为候选稿保留。"}
+                </p>
+                {item.provenance.incomplete === true && (
+                  <details>
+                    <summary>查看已保留文字与缺段</summary>
+                    <p>
+                      以下为未完成稿，请勿视为整场完整文字稿。对齐异常的段落只保留块级时间。
+                    </p>
+                    {Array.isArray(item.provenance.missing_ranges) &&
+                      item.provenance.missing_ranges.map(
+                        (range: { start: number; end: number }, i: number) => (
+                          <p key={i}>
+                            待识别：{clock(range.start)}–{clock(range.end)}
+                          </p>
+                        ),
+                      )}
+                    <textarea
+                      readOnly
+                      aria-label="未完成文字恢复稿"
+                      rows={12}
+                      value={
+                        Array.isArray(item.payload)
+                          ? (item.payload as Segment[])
+                              .map(
+                                (s) =>
+                                  `[${clock(s.start)}–${clock(s.end)}]${s.alignment_warning ? "（时间待校准）" : ""} ${s.text}`,
+                              )
+                              .join("\n")
+                          : ""
+                      }
+                    />
+                  </details>
+                )}
+                <button
+                  onClick={() => {
+                    const link = document.createElement("a");
+                    link.href = URL.createObjectURL(
+                      new Blob(
+                        [
+                          JSON.stringify(
+                            item.provenance.incomplete
+                              ? {
+                                  segments: item.payload,
+                                  provenance: item.provenance,
+                                }
+                              : item.payload,
+                            null,
+                            2,
+                          ),
+                        ],
+                        {
+                          type: "application/json",
+                        },
+                      ),
+                    );
+                    link.download = item.provenance.incomplete
+                      ? "未完成恢复稿.json"
+                      : "候选转写.json";
+                    link.click();
+                  }}
+                >
+                  {item.provenance.incomplete
+                    ? "导出未完成恢复稿"
+                    : "查看候选稿"}
+                </button>
+              </section>
+            ))}
             <Workflow
               meeting={meeting}
               transcriptDirty={transcriptDirty}
@@ -985,25 +1065,6 @@ export default function App() {
                     点击时间戳回听原音；直接编辑文字即可自动保存。发言人名称可逐段修改或批量合并。
                   </p>
                 </div>
-                {candidateArtifacts.map((item) => (
-                  <div key={item.id}>
-                    <p>重新转写期间文稿有修改，识别结果已作为候选稿保留。</p>
-                    <button
-                      onClick={() => {
-                        const link = document.createElement("a");
-                        link.href = URL.createObjectURL(
-                          new Blob([JSON.stringify(item.payload, null, 2)], {
-                            type: "application/json",
-                          }),
-                        );
-                        link.download = "候选转写.json";
-                        link.click();
-                      }}
-                    >
-                      查看候选稿
-                    </button>
-                  </div>
-                ))}
               </div>
             </div>
             <Player

@@ -41,3 +41,13 @@ def aligned_segments(text,items,duration,max_chars=48,max_seconds=15):
                              'text':content.strip(),'speaker':'未分配'})
             group=[]
     return segments
+
+
+def aligned_or_chunk(text,items,duration):
+    """Keep decoded text when alignment is unusable, without inventing word times."""
+    try:return aligned_segments(text,items,duration),None
+    except (ValueError,TypeError,KeyError,OverflowError) as error:
+        if not math.isfinite(duration) or duration<=0:raise ValueError('音频时长无效')
+        segments=[{'start':0,'end':duration,'text':text.strip(),'speaker':'未分配',
+                   'timestamp_precision':'chunk','alignment_warning':'对齐失败，仅保留音频块范围；请回听校准'}] if text.strip() else []
+        return segments,str(error)

@@ -11,6 +11,8 @@ export interface Segment {
   text: string;
   speaker: string;
   boundary_review: boolean;
+  timestamp_precision?: "chunk" | "aligned" | null;
+  alignment_warning?: string;
   speaker_locked?: boolean;
 }
 

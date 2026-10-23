@@ -2516,3 +2516,18 @@ dialog code {
 .note-card > .primary {
   margin-top: 8px;
 }
+
+.transcription-recovery {
+  padding: 18px 22px;
+  margin: 16px 0;
+  border: 1px solid #e2c98d;
+  border-radius: 14px;
+  background: #fffbf1;
+}
+.transcription-recovery textarea {
+  width: 100%;
+  min-height: 220px;
+  resize: vertical;
+  line-height: 1.8;
+  margin: 12px 0;
+}

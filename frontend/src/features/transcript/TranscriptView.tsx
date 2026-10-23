@@ -163,6 +163,8 @@ export default function TranscriptView({
           (previous.text.trim().length <= 18 || item.text.trim().length <= 18);
       if (
         previous &&
+        !previous.alignment_warning &&
+        !item.alignment_warning &&
         !previous.speaker_locked &&
         !item.speaker_locked &&
         previous.speaker === item.speaker &&

@@ -36,6 +36,7 @@ def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--port',type=int,default=8766)
     parser.add_argument('--review-demo',action='store_true',help='Seed a synthetic transcript and AI minutes for review acceptance')
+    parser.add_argument('--recovery-demo',action='store_true',help='Synthetic failed ASR and saved recovery text')
     parser.add_argument('--flow-demo',action='store_true',help='Synthetic meeting preparation, attention and follow-up flow; no real models')
     parser.add_argument('--qa-demo',action='store_true',help='Synthetic multi-meeting QA with deterministic replies, never calls a real model')
     parser.add_argument('--long-demo',type=int,choices=[1000,3000,10000],help='Seed an isolated long transcript for DOM/edit/search acceptance')
@@ -46,7 +47,7 @@ def main():
         session=recordings.create('audio/webm')
         recordings.metadata(session['id'],[{'captured_at':4,'raw_text':'验证用简记：核对中断后恢复','note_type':'note','note_scope':'personal'}],15,3)
         recordings.chunk(session['id'],0,b'fixture-head');recordings.chunk(session['id'],2,b'fixture-tail')
-        if args.review_demo or args.qa_demo or args.flow_demo:
+        if args.review_demo or args.qa_demo or args.flow_demo or args.recovery_demo:
             import wave
             from app.minutes import MeetingMinutes
             from app.notes import insert_note
@@ -112,6 +113,12 @@ def main():
                 insert_note(db,mid,{'captured_at':7,'raw_text':'负责人到底是谁？','note_type':'question','note_scope':'personal'})
             document.action_items=[MinutesItem(content='核对交付负责人',source_segment_ids=['demo-seg'])]
             store.execute("UPDATE artifacts SET payload=?,provenance=? WHERE meeting_id=? AND kind='meeting_minutes'",(encode(document.model_dump()),encode({'edited':True,'ai_generated':True}),mid))
+        if args.recovery_demo:
+            jid=uid()
+            store.execute('INSERT INTO jobs(id,meeting_id,state,stage,error,config) VALUES(?,?,?,?,?,?)',(jid,mid,'failed','处理失败','合成异常：补识别片段未完成',encode({'engine':'qwen','completion_mode':'full','pipeline_version':2})))
+            recovered=[{'id':'recovery-seg','start':0,'end':8,'text':'这是一段已保留的合成会议文字，对齐异常并不会使这段文字消失。','speaker':'未分配','timestamp_precision':'chunk','alignment_warning':'对齐失败，仅保留音频块范围；请回听校准'}]
+            store.execute('INSERT INTO artifacts(id,meeting_id,revision,kind,payload,provenance) VALUES(?,?,?,?,?,?)',(uid(),mid,1,'transcript_candidate',encode(recovered),encode({'incomplete':True,'job':jid,'missing_ranges':[{'start':8,'end':12}]})))
+            store.save_revision(mid,recovered,'synthetic-recovery')
         previous=module.NativeCapture
         try:
             module.NativeCapture=SyntheticCapture

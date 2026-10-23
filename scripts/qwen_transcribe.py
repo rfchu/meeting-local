@@ -1,5 +1,5 @@
 """Fully local Qwen ASR + forced alignment in a disposable MLX process."""
-import argparse,gc,json,os,sys,time
+import argparse,gc,hashlib,json,os,sys,time
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT))
@@ -7,11 +7,12 @@ os.environ['HF_HUB_OFFLINE']='1'
 os.environ['TRANSFORMERS_OFFLINE']='1'
 os.environ['HF_HUB_DISABLE_TELEMETRY']='1'
 os.environ['HF_HOME']=str(ROOT/'models/hf-cache')
-from app.alignment import aligned_segments
+from app.alignment import aligned_or_chunk
 
 
 MAX_TOKENS=4096
-MIN_RETRY_SECONDS=20
+MIN_RETRY_SECONDS=2
+MAX_RETRY_DEPTH=7
 
 
 def quiet_split(samples,rate):
@@ -30,12 +31,13 @@ def quiet_split(samples,rate):
 
 def transcribe_adaptive(model,samples,rate,max_tokens=MAX_TOKENS,depth=0):
     """Retry a capped decode as smaller audio pieces using the loaded model."""
+    if not len(samples) or not samples.any():return '',[{'depth':depth,'duration':len(samples)/rate,'generation_tokens':0,'capped':False,'silent':True}]
     result=model.generate(samples,language='Chinese',max_tokens=max_tokens,temperature=0.0,verbose=False)
     tokens=int(getattr(result,'generation_tokens',0) or 0)
     duration=len(samples)/rate
     attempt={'depth':depth,'duration':duration,'generation_tokens':tokens,'capped':tokens>=max_tokens}
     if tokens<max_tokens:return result.text.strip(),[attempt]
-    if duration<=MIN_RETRY_SECONDS:
+    if duration<=MIN_RETRY_SECONDS or depth>=MAX_RETRY_DEPTH:
         raise RuntimeError('千问在短音频上仍达到输出长度上限，请检查该处是否为噪声或异常音频')
     cut=quiet_split(samples,rate)
     if cut<=0 or cut>=len(samples):raise RuntimeError('千问无法为超长输出找到可靠的重试分割点')
@@ -81,10 +83,10 @@ def main():
     if duration>280:raise RuntimeError('千问对齐单块音频过长，请使用 120 秒分段')
     started=time.monotonic()
     mx.random.seed(0)
+    output=Path(args.output);audio_hash=hashlib.sha256(Path(args.audio).read_bytes()).hexdigest()
     model=load(str(Path(args.model).resolve()))
     text,attempts=transcribe_streamed(model,samples,rate) if args.stream_events else transcribe_adaptive(model,samples,rate)
-    output=Path(args.output)
-    raw={'engine':'qwen','model':Path(args.model).name,'text':text,'duration':duration,'asr_attempts':attempts}
+    raw={'engine':'qwen','model':Path(args.model).name,'text':text,'duration':duration,'asr_attempts':attempts,'audio_hash':audio_hash,'alignment':[]}
     output.with_suffix('.raw.json').write_text(json.dumps(raw,ensure_ascii=False,indent=2))
     del model;gc.collect();mx.clear_cache()
     items=[]
@@ -95,8 +97,10 @@ def main():
         del aligner,alignment;gc.collect();mx.clear_cache()
     raw['alignment']=items
     output.with_suffix('.raw.json').write_text(json.dumps(raw,ensure_ascii=False,indent=2))
-    segments=([{'start':0,'end':duration,'text':text,'speaker':'未分配'}] if text else []) if args.draft else aligned_segments(text,items,duration)
-    raw['timestamp_mode']='chunk' if args.draft else 'forced_alignment'
+    if args.draft:segments=[{'start':0,'end':duration,'text':text,'speaker':'未分配'}] if text else [];warning=None
+    else:segments,warning=aligned_or_chunk(text,items,duration)
+    raw['timestamp_mode']='chunk' if args.draft or warning else 'forced_alignment'
+    if warning:raw['alignment_warning']=warning
     payload={**raw,'segments':segments,'elapsed_seconds':time.monotonic()-started}
     temp=output.with_suffix('.tmp');temp.write_text(json.dumps(payload,ensure_ascii=False,indent=2));temp.replace(output)
     print(json.dumps({'engine':'qwen','segments':len(segments),'seconds':payload['elapsed_seconds'],'peak_memory_gb':mx.get_peak_memory()/1e9}),flush=True)

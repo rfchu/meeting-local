@@ -2,7 +2,7 @@ import fcntl, hashlib, json, math, os, subprocess, threading, time
 from pathlib import Path
 from .db import uid, encode
 from .live_results import plan_ranges, RATE
-from .providers import WhisperCpp, get_asr_provider, LocalDiarization, LocalPunctuation, attach_speakers, merge_overlapping_chunks
+from .providers import WhisperCpp, get_asr_provider, LocalDiarization, LocalPunctuation, attach_speakers, merge_overlapping_chunks, checkpoint_identity_matches
 from .analysis import LMStudioProvider,OpenAICompatibleProvider,MeetingAnalysis,chunk_segments,save_meeting_analysis,validate_citations,TEMPLATE_VERSION
 
 class Cancelled(Exception): pass
@@ -84,6 +84,14 @@ class Worker:
             if job.get('kind')=='note_expansion':return self.process_note_expansion(job)
             if job.get('kind')=='analysis':return self.process_analysis(job)
             return self.process_transcription(job)
+        except Cancelled:raise
+        except Exception:
+            if job.get('kind') in (None,'transcription'):
+                try:
+                    from .transcription_recovery import preserve_partial
+                    preserve_partial(self.store,job)
+                except Exception:pass # Recovery must not mask the original inference error.
+            raise
         finally:
             if acquired:self.asr_lock.release()
 
@@ -158,7 +166,7 @@ class Worker:
         folder=self.store.directory(mid); work=folder/jid; work.mkdir(exist_ok=True)
         log=work/'worker.log'; run=lambda args:self.run(jid,args,log)
         provider=get_asr_provider(config.get('engine','whisper'))
-        if config.get('engine_identity') and config['engine_identity']!=provider.identity():
+        if config.get('engine_identity') and not checkpoint_identity_matches(provider.engine_id,config['engine_identity'],provider.identity()):
             raise RuntimeError('识别模型或引擎已变更，请新建转写任务，不能复用旧检查点')
         meeting=self.store.one('SELECT * FROM meetings WHERE id=?',(mid,))
         source=folder/'original'; audio=work/'audio.wav'
@@ -186,7 +194,11 @@ class Worker:
                     start=max(0,i*chunk_seconds-2); end=min(duration,(i+1)*chunk_seconds+2)
                     chunk=work/f'chunk-{i}.wav'
                     run(['ffmpeg','-v','error','-y','-ss',str(start),'-i',str(audio),'-t',str(end-start),'-c:a','pcm_s16le',str(chunk)])
-                    part=provider.transcribe(chunk,work/f'chunk-{i}',run)
+                    part=None
+                    if provider.engine_id=='qwen':
+                        from .transcription_recovery import recover_raw_alignment
+                        part=recover_raw_alignment(work/f'chunk-{i}.qwen.raw.json',provider.model,end-start)
+                    if part is None:part=provider.transcribe(chunk,work/f'chunk-{i}',run)
                     owned=[]
                     for s in part:
                         s['start']+=start; s['end']=min(duration,s['end']+start)
@@ -224,7 +236,10 @@ class Worker:
                 rev=current+1; payload=encode(segments)
                 db.execute('INSERT INTO revisions(meeting_id,revision,segments,source) VALUES(?,?,?,?)',(mid,rev,payload,source_meta))
                 db.execute('UPDATE meetings SET revision=?,segments=? WHERE id=?',(rev,payload,mid))
-                db.execute("UPDATE jobs SET state='completed',stage=?,progress=1 WHERE id=?",('快速文字稿完成，可再精细处理' if config.get('completion_mode')=='quick' else '转写完成',jid))
+                warning_count=sum(bool(s.get('alignment_warning')) for s in segments)
+                stage='快速文字稿完成，可再精细处理' if config.get('completion_mode')=='quick' else ('转写完成，部分时间待校准' if warning_count else '转写完成')
+                db.execute("UPDATE jobs SET state='completed',stage=?,progress=1 WHERE id=?",(stage,jid))
+            db.execute("DELETE FROM artifacts WHERE id=? AND meeting_id=? AND kind='transcript_candidate'",(hashlib.sha256(('transcription-progress:'+jid).encode()).hexdigest()[:32],mid))
 
     def fast_transcription(self,config,duration,audio,work,provider,run,jid):
         import wave
