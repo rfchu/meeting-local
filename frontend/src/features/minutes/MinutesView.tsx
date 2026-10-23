@@ -109,8 +109,10 @@ export default function MinutesView(props: Props) {
     mode,
     model,
     showCitations,
-    generating,
+    generating: locallyGenerating,
   } = props;
+  const generation = meeting.minutes_generation;
+  const generating = locallyGenerating || generation?.state === "running";
   const analysis = currentAnalysis(meeting),
     artifact = latestMinutes(meeting),
     current = currentMinutes(meeting),
@@ -176,6 +178,17 @@ export default function MinutesView(props: Props) {
       }));
   return (
     <div id="minutesView">
+      {generation?.state === "running" && (
+        <p role="status">
+          AI 纪要正在整理文字稿，已等待 {generation.elapsed_seconds}{" "}
+          秒。完整结果返回后会自动保存；刷新页面可继续查看状态。
+        </p>
+      )}
+      {generation?.state === "failed" && (
+        <p role="alert" className="error">
+          上次 AI 纪要生成失败：{generation.error}
+        </p>
+      )}
       <div className="minutes-toolbar">
         <label>
           纪要模板

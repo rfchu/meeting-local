@@ -257,7 +257,13 @@ export default function App() {
       );
       setMeeting((old) =>
         old?.id === target.id
-          ? { ...old, artifacts: [artifact, ...old.artifacts] }
+          ? {
+              ...old,
+              artifacts: [
+                artifact,
+                ...old.artifacts.filter((a) => a.id !== artifact.id),
+              ],
+            }
           : old,
       );
       if (minutesGeneration.current === generation) setMinutesDirty(false);
@@ -310,6 +316,20 @@ export default function App() {
     const poll = window.setInterval(async () => {
       try {
         const fresh = await api.meeting(meeting.id);
+        const generated = latestMinutes(fresh);
+        if (
+          !minutesDirty &&
+          !savingMinutes &&
+          meetingRef.current?.id === fresh.id &&
+          generated &&
+          generated.id !== latestMinutes(meetingRef.current)?.id
+        ) {
+          setMinutesDraft(clone(generated.payload));
+          setMinutesStyle(generated.payload.style);
+          setMinutesTemplateId(
+            generated.payload.template_id || "general-meeting",
+          );
+        }
         setMeeting((old) => {
           if (!old || old.id !== fresh.id) return old;
           if (!transcriptDirty && fresh.revision !== old.revision) {
@@ -322,6 +342,7 @@ export default function App() {
             ...old,
             review: fresh.review,
             flow: fresh.flow,
+            minutes_generation: fresh.minutes_generation,
             notes: fresh.notes,
             note_todos: fresh.note_todos,
             jobs: fresh.jobs,
@@ -335,7 +356,7 @@ export default function App() {
       }
     }, 2500);
     return () => window.clearInterval(poll);
-  }, [meeting?.id, transcriptDirty]);
+  }, [meeting?.id, transcriptDirty, minutesDirty, savingMinutes]);
 
   const upload = async (file: File) => {
     setUploading(true);
@@ -478,9 +499,20 @@ export default function App() {
           );
         setMeeting((old) =>
           old?.id === target.id
-            ? { ...old, artifacts: [artifact, ...old.artifacts] }
+            ? {
+                ...old,
+                minutes_generation: null,
+                artifacts: [
+                  artifact,
+                  ...old.artifacts.filter((a) => a.id !== artifact.id),
+                ],
+              }
             : old,
         );
+        if (meetingRef.current?.id !== target.id) {
+          toast("会议纪要已保存到原会议");
+          return;
+        }
         setMinutesDraft(clone(artifact.payload));
         setMinutesDirty(false);
         setMinutesStyle(artifact.payload.style);

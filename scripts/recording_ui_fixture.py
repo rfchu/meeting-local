@@ -36,6 +36,7 @@ def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--port',type=int,default=8766)
     parser.add_argument('--review-demo',action='store_true',help='Seed a synthetic transcript and AI minutes for review acceptance')
+    parser.add_argument('--minutes-demo',action='store_true',help='Seed persistent AI minutes generation failure for UI acceptance')
     parser.add_argument('--recovery-demo',action='store_true',help='Synthetic failed ASR and saved recovery text')
     parser.add_argument('--flow-demo',action='store_true',help='Synthetic meeting preparation, attention and follow-up flow; no real models')
     parser.add_argument('--qa-demo',action='store_true',help='Synthetic multi-meeting QA with deterministic replies, never calls a real model')
@@ -98,6 +99,9 @@ def main():
                 def status(self):return {'ready':True,'models':['synthetic-minutes'],'base_url':self.base_url,'error':''}
                 def resolve_model(self,model=None):return 'synthetic-minutes'
                 def generate_ai_minutes(self,model,segments,metadata,work,run):
+                    if args.minutes_demo:
+                        import time
+                        time.sleep(5) # Allow refreshing a pending synthetic request during acceptance.
                     return AIMinutesResult(basic_info=AIMinutesBasicInfo(topic='合成交付会',source_segment_ids=['demo-seg']),core_content=[AnalysisItem(content='测试约定周五交付，负责人待确认。',source_segment_ids=['demo-seg'])],action_items=[AnalysisItem(content='核对交付负责人',source_segment_ids=['demo-seg'])],summary=[AnalysisItem(content='继续确认交付安排。',source_segment_ids=['demo-seg'])])
             module.LMStudioProvider=SyntheticMinutesProvider
             earlier=uid();folder=store.directory(earlier);folder.mkdir();(folder/'original').write_bytes((directory/'original').read_bytes())
@@ -119,6 +123,9 @@ def main():
             recovered=[{'id':'recovery-seg','start':0,'end':8,'text':'这是一段已保留的合成会议文字，对齐异常并不会使这段文字消失。','speaker':'未分配','timestamp_precision':'chunk','alignment_warning':'对齐失败，仅保留音频块范围；请回听校准'}]
             store.execute('INSERT INTO artifacts(id,meeting_id,revision,kind,payload,provenance) VALUES(?,?,?,?,?,?)',(uid(),mid,1,'transcript_candidate',encode(recovered),encode({'incomplete':True,'job':jid,'missing_ranges':[{'start':8,'end':12}]})))
             store.save_revision(mid,recovered,'synthetic-recovery')
+        if args.minutes_demo:
+            import time
+            (directory/'minutes-generation.json').write_text(encode({'id':'synthetic-generation','state':'failed','revision':1,'started_at':time.time()-90,'finished_at':time.time(),'error':'合成验收：模型输出被截断，未保存为完整纪要。'}))
         previous=module.NativeCapture
         try:
             module.NativeCapture=SyntheticCapture

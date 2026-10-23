@@ -289,7 +289,16 @@ export interface MeetingSummary {
   job?: Job;
 }
 
+export interface MinutesGenerationStatus {
+  id: string;
+  state: "running" | "completed" | "failed";
+  revision: number;
+  elapsed_seconds: number;
+  error: string;
+  artifact_id?: string;
+}
 export interface Meeting extends MeetingSummary {
+  minutes_generation?: MinutesGenerationStatus | null;
   flow?: MeetingFlow;
   review?: MeetingReview;
   segments: Segment[];

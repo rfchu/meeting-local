@@ -85,11 +85,36 @@ def request_compatible(url,headers,payload):
             if error.code!=400:raise
     raise last
 
-def complete_json(url,headers,payload,attempts=3):
+def native_minutes_requester():
+    """Native LM Studio can disable reasoning; unsupported servers retain compatibility."""
+    supported=True
+    def request(url,headers,payload):
+        nonlocal supported
+        if supported:
+            root=url.removesuffix('/chat/completions').removesuffix('/v1')
+            system='\n'.join(m['content'] for m in payload['messages'] if m['role']=='system')
+            schema=payload.get('response_format',{}).get('json_schema',{}).get('schema')
+            if schema:system+='\n只返回满足以下结构的完整 JSON：'+json.dumps(schema,ensure_ascii=False)
+            native={'model':payload['model'],'system_prompt':system,
+                    'input':'\n'.join(m['content'] for m in payload['messages'] if m['role']!='system'),
+                    'temperature':payload.get('temperature',0),'max_output_tokens':payload.get('max_tokens',12288),
+                    'reasoning':'off','store':False,'integrations':[]}
+            try:response=request_once(root+'/api/v1/chat',headers,native)
+            except urllib.error.HTTPError as error:
+                if error.code not in (400,404,405,422):raise
+                supported=False
+            else:
+                content='\n'.join(item.get('content','') for item in response.get('output',[]) if item.get('type')=='message')
+                return {'choices':[{'finish_reason':'stop','message':{'content':content}}]}
+        return request_compatible(url,headers,payload)
+    return request
+
+
+def complete_json(url,headers,payload,attempts=3,requester=None):
     current=dict(payload);diagnostics=[]
     schema_name=payload.get('response_format',{}).get('json_schema',{}).get('name','meeting_analysis')
     for attempt in range(attempts):
-        response=request_compatible(url,headers,current)
+        response=(requester or request_compatible)(url,headers,current)
         choice=(response.get('choices') or [{}])[0]
         candidates=message_candidates(response)
         try:return validate_shape(extract_json(response),schema_name)
@@ -115,7 +140,8 @@ def main():
     headers={'Content-Type':'application/json'}
     if token:headers['Authorization']='Bearer '+token
     payload=json.loads(Path(args.request).read_text())
-    try:result=complete_json(args.base_url.rstrip('/')+'/chat/completions',headers,payload)
+    requester=native_minutes_requester() if local and os.getenv('MEETING_LMSTUDIO_REASONING_OFF')=='1' else None
+    try:result=complete_json(args.base_url.rstrip('/')+'/chat/completions',headers,payload,requester=requester)
     except urllib.error.HTTPError as error:
         if error.code in (401,403):raise RuntimeError('模型服务 API Key 无效') from error
         raise

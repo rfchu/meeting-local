@@ -24,6 +24,7 @@ from .keep_awake import KeepAwake
 from .recording_health import RecordingHealth
 from .meeting_review import MeetingReview
 from .qa import QA
+from .minutes_generation import MinutesGeneration
 from . import meeting_flow
 from .local_embedding import local_embedding
 from .retrieval import Retrieval
@@ -187,6 +188,7 @@ class AIMinutesGenerateInput(MinutesPolishInput):
 
 def create_app(data_dir=None, start_worker=True):
     store=Store(data_dir or os.getenv('MEETING_DATA',str(BASE/'data')))
+    minutes_generation=MinutesGeneration(store)
     worker=Worker(store)
     retrieval=Retrieval(store)
     @asynccontextmanager
@@ -280,6 +282,7 @@ def create_app(data_dir=None, start_worker=True):
         row['audio_tracks']=[name for name in ('system','microphone') if (store.directory(row['id'])/(name+'.wav')).is_file()]
         row['review']=meeting_review.read(row['id'])
         row['flow']=meeting_flow.flow(store,row['id'])
+        row['minutes_generation']=minutes_generation.status(row['id'])
         return row
 
     @app.put('/api/meetings/{mid}/review/{step}')
@@ -1086,6 +1089,7 @@ def create_app(data_dir=None, start_worker=True):
         return public_artifact(store.one('SELECT * FROM artifacts WHERE id=?',(aid,)))
 
     @app.post('/api/meetings/{mid}/minutes/ai',status_code=201)
+    @minutes_generation.track
     def generate_ai_minutes(mid:str,body:AIMinutesGenerateInput):
         row=meeting(mid);segments=json.loads(row['segments'])
         if not segments:raise HTTPException(409,'文字稿为空，无法生成 AI 会议纪要')
@@ -1109,7 +1113,8 @@ def create_app(data_dir=None, start_worker=True):
             def run(args,extra_env=None):
                 env=os.environ.copy()
                 if extra_env:env.update(extra_env)
-                completed=subprocess.run(args,capture_output=True,env=env,timeout=660)
+                try:completed=subprocess.run(args,capture_output=True,env=env,timeout=660)
+                except subprocess.TimeoutExpired:raise RuntimeError('AI 纪要生成超过 11 分钟，模型未返回完整结果；请检查模型思考模式或缩小输入后重试')
                 if completed.returncode:
                     detail=(completed.stderr or completed.stdout).decode(errors='replace')[-1800:]
                     raise RuntimeError(f'AI 会议纪要进程失败（{completed.returncode}）：{detail}')

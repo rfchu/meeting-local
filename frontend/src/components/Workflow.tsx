@@ -85,6 +85,14 @@ export default function Workflow(props: Props) {
   if (busy) {
     hint = busy.stage;
     label = "处理中…";
+  } else if (meeting.minutes_generation?.state === "running") {
+    hint = `AI 纪要正在整理文字稿，已等待 ${meeting.minutes_generation.elapsed_seconds} 秒，完整返回后自动保存。`;
+    label = "查看生成状态";
+    action = onMinutes;
+  } else if (meeting.minutes_generation?.state === "failed") {
+    hint = "上次 AI 纪要未生成成功，失败原因已保留；已有文稿和纪要不受影响。";
+    label = "查看原因与重试";
+    action = onMinutes;
   } else if (!progress.hasTranscript) {
     hint = "下一步：将已保存的原音转为文字稿，再开始会后核对。";
     label = "开始转写";
