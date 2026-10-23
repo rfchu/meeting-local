@@ -1,3 +1,5 @@
+import { useModelChoice } from "../../preferences/useModelChoice";
+import { resolveModelChoice } from "../../preferences/modelChoices";
 import { useEffect, useState } from "react";
 import { api } from "../../api";
 import type {
@@ -48,7 +50,7 @@ export default function NotesView({
     [scope, setScope] = useState<"personal" | "meeting">("personal"),
     [time, setTime] = useState(0);
   const [profiles, setProfiles] = useState<LLMConfig[]>([]),
-    [profileId, setProfileId] = useState(""),
+    [profileId, setProfileId] = useModelChoice("notes"),
     [busy, setBusy] = useState(false),
     [selected, setSelected] = useState<string | null>(null);
   useEffect(() => {
@@ -56,7 +58,13 @@ export default function NotesView({
       .environment()
       .then((env) => {
         setProfiles(env.analysis.profiles);
-        setProfileId(env.analysis.default_profile_id || "");
+        setProfileId(
+          resolveModelChoice(
+            profileId,
+            env.analysis.profiles.map((p) => p.id),
+            env.analysis.default_profile_id || "",
+          ),
+        );
       })
       .catch((error) => toast((error as Error).message));
   }, []);

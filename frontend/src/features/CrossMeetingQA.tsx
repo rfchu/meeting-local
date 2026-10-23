@@ -1,3 +1,5 @@
+import { useModelChoice } from "../preferences/useModelChoice";
+import { resolveModelChoice } from "../preferences/modelChoices";
 import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import type { LLMConfig, MeetingSummary } from "../types";
@@ -17,7 +19,7 @@ export default function CrossMeetingQA({
   const [question, setQuestion] = useState(""),
     [query, setQuery] = useState("");
   const [profiles, setProfiles] = useState<LLMConfig[]>([]),
-    [profileId, setProfileId] = useState("");
+    [profileId, setProfileId] = useModelChoice("qa");
   const [mode, setMode] = useState("keyword"),
     [meetingId, setMeetingId] = useState(""),
     [kind, setKind] = useState("transcript");
@@ -39,7 +41,11 @@ export default function CrossMeetingQA({
         if (!live) return;
         setProfiles(env.analysis.profiles);
         setProfileId(
-          env.analysis.default_profile_id || env.analysis.profiles[0]?.id || "",
+          resolveModelChoice(
+            profileId,
+            env.analysis.profiles.map((p) => p.id),
+            env.analysis.default_profile_id || "",
+          ),
         );
         setHistory(rows);
       })

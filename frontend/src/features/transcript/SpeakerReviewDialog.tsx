@@ -1,3 +1,5 @@
+import { useModelChoice } from "../../preferences/useModelChoice";
+import { resolveModelChoice } from "../../preferences/modelChoices";
 import { useEffect, useRef, useState } from "react";
 import { api } from "../../api";
 import Modal from "../../components/Modal";
@@ -23,7 +25,7 @@ export default function SpeakerReviewDialog({
   toast: (text: string) => void;
 }) {
   const [profiles, setProfiles] = useState<LLMConfig[]>([]),
-    [profile, setProfile] = useState(""),
+    [profile, setProfile] = useModelChoice("speakers"),
     [review, setReview] = useState<Artifact<SpeakerReviewResult> | null>(
       () =>
         (meeting.artifacts.find(
@@ -38,7 +40,16 @@ export default function SpeakerReviewDialog({
   useEffect(() => {
     void api
       .configs()
-      .then(setProfiles)
+      .then((configs) => {
+        setProfiles(configs);
+        setProfile(
+          resolveModelChoice(
+            profile,
+            configs.map((p) => p.id),
+            configs.find((p) => p.is_default)?.id,
+          ),
+        );
+      })
       .catch((error) => toast(error.message));
   }, []);
   const defaultProfile = profiles.find((p) => p.is_default) || profiles[0];
@@ -115,7 +126,16 @@ export default function SpeakerReviewDialog({
           onFocus={() =>
             void api
               .configs()
-              .then(setProfiles)
+              .then((configs) => {
+                setProfiles(configs);
+                setProfile(
+                  resolveModelChoice(
+                    profile,
+                    configs.map((p) => p.id),
+                    configs.find((p) => p.is_default)?.id,
+                  ),
+                );
+              })
               .catch((error) => toast(error.message))
           }
           onChange={(e) => setProfile(e.target.value)}

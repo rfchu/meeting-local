@@ -1,3 +1,5 @@
+import { useModelChoice } from "./preferences/useModelChoice";
+import { resolveModelChoice } from "./preferences/modelChoices";
 import FollowupsDialog from "./features/meeting/FollowupsDialog";
 import MeetingPreparation from "./features/meeting/MeetingPreparation";
 import MeetingOutcomes from "./features/meeting/MeetingOutcomes";
@@ -71,8 +73,8 @@ export default function App() {
     [minutesTemplateId, setMinutesTemplateId] = useState("general-meeting"),
     [minutesMode, setMinutesMode] = useState<"quick" | "full">("quick"),
     [showCitations, setShowCitations] = useState(false);
-  const [analysisModel, setAnalysisModel] = useState(""),
-    [minutesModel, setMinutesModel] = useState(""),
+  const [analysisModel, setAnalysisModel] = useModelChoice("analysis"),
+    [minutesModel, setMinutesModel] = useModelChoice("minutes"),
     [generating, setGenerating] = useState(false),
     [fullPending, setFullPending] = useState(false);
   const [uploading, setUploading] = useState(false),
@@ -92,7 +94,7 @@ export default function App() {
   const [searchOpen, setSearchOpen] = useState(false);
   const [followupsOpen, setFollowupsOpen] = useState(false);
   const [searchTarget, setSearchTarget] = useState<SearchHit | null>(null);
-  const [engine, setEngine] = useState("whisper"),
+  const [engine, setEngine] = useModelChoice("transcription"),
     [diarization, setDiarization] = useState(false),
     [numSpeakers, setNumSpeakers] = useState(0);
   const pausePlaybackRef = useRef<(() => void) | null>(null);
@@ -113,10 +115,22 @@ export default function App() {
     if (!env) return;
     const value =
       env.analysis.default_profile_id || env.analysis.models[0] || "";
-    setAnalysisModel((old) => old || value);
-    setMinutesModel((old) => old || value);
+    const choices = env.analysis.profiles.length
+      ? env.analysis.profiles.map((p) => p.id)
+      : env.analysis.models;
+    if (choices.length) {
+      setAnalysisModel(resolveModelChoice(analysisModel, choices, value));
+      setMinutesModel(resolveModelChoice(minutesModel, choices, value));
+    }
+    setEngine(
+      resolveModelChoice(
+        engine,
+        env.engines.map((item) => item.id),
+        env.default_engine || "whisper",
+      ),
+    );
     if (env.diarization_ready && !meeting) setDiarization(true);
-  }, [envQuery.data, meeting]);
+  }, [envQuery.data, meeting, analysisModel, minutesModel, engine]);
   useEffect(() => {
     const handler = (event: BeforeUnloadEvent) => {
       if (transcriptDirty || savingTranscript || minutesDirty || savingMinutes)
@@ -279,11 +293,10 @@ export default function App() {
       const job = latestJob(value, "transcription");
       try {
         const config = JSON.parse(job?.config || "{}");
-        setEngine(config.engine || "whisper");
         setDiarization(!!config.diarization);
         setNumSpeakers(config.num_speakers || 0);
       } catch {
-        setEngine("whisper");
+        /* Historical jobs do not override the last selected model. */
       }
       return value;
     } catch (error) {
