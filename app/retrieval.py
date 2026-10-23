@@ -1,4 +1,5 @@
 """Local, versioned retrieval units and sqlite-vec cosine search."""
+from . import minutes_versions
 import hashlib,json,math,re,sqlite3,urllib.request,urllib.error
 from .analysis import OpenAICompatibleProvider
 from .db import encode
@@ -119,7 +120,7 @@ class Retrieval:
                 ids=item['source_segment_ids']
                 if not item['stale'] and item['decision']=='meeting' and ids and set(ids)<=by_id.keys():
                     add('reviewed:'+nid,'expanded_note',item['content'],ids,min(by_id[i]['start'] for i in ids),max(by_id[i]['end'] for i in ids),artifact_id=item['review_key'],note_scope='meeting')
-            artifact=db.execute("SELECT * FROM artifacts WHERE meeting_id=? AND revision=? AND kind='meeting_minutes' ORDER BY created DESC,rowid DESC LIMIT 1",(mid,revision)).fetchone()
+            artifact=minutes_versions.selected(db,mid,revision)
             if artifact and not artifact_current(db,mid,json.loads(artifact['provenance'] or '{}')):artifact=None
             if artifact:
                 from .notes import fingerprint
@@ -128,7 +129,7 @@ class Retrieval:
             # Only user-saved minutes participate; raw AI candidates are not trusted retrieval facts.
             if artifact and json.loads(artifact['provenance']).get('edited'):
                 document=json.loads(artifact['payload'])
-                for section in ('overview','conclusions','decisions','action_items','open_questions'):
+                for section in ('overview','conclusions','decisions','action_items','open_questions','summary'):
                     for index,item in enumerate(document.get(section,[])):
                         ids=item.get('source_segment_ids',[])
                         if not ids or not set(ids)<=by_id.keys():continue

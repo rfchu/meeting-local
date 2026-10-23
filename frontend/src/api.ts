@@ -454,6 +454,23 @@ export const api = {
       `/meetings/${id}/minutes/ai`,
       json("POST", body),
     ),
+  composeMinutes: (
+    id: string,
+    body: import("./features/minutes/composition").MinutesOptions & {
+      also_analyze?: boolean;
+      profile_id?: string;
+      model?: string;
+      source_minutes_id?: string;
+    },
+  ) =>
+    request<{
+      artifact?: Artifact<MeetingMinutes>;
+      job_id?: string;
+      analysis_job_id?: string;
+      warning?: string;
+    }>(`/meetings/${id}/minutes/compose`, json("POST", body)),
+  adoptMinutes: (id: string, artifactId: string) =>
+    request(`/meetings/${id}/minutes/${artifactId}/adopt`, json("POST")),
   saveMinutes: (
     id: string,
     sourceAnalysisId: string | null,
@@ -465,6 +482,7 @@ export const api = {
       json("PUT", {
         source_analysis_id: sourceAnalysisId,
         source_minutes_id: sourceMinutesId,
+        allow_branch: true,
         document,
       }),
     ),

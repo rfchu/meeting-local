@@ -102,7 +102,7 @@ def main():
                     if args.minutes_demo:
                         import time
                         time.sleep(5) # Allow refreshing a pending synthetic request during acceptance.
-                    return AIMinutesResult(basic_info=AIMinutesBasicInfo(topic='合成交付会',source_segment_ids=['demo-seg']),core_content=[AnalysisItem(content='测试约定周五交付，负责人待确认。',source_segment_ids=['demo-seg'])],action_items=[AnalysisItem(content='核对交付负责人',source_segment_ids=['demo-seg'])],summary=[AnalysisItem(content='继续确认交付安排。',source_segment_ids=['demo-seg'])])
+                    return AIMinutesResult(basic_info=AIMinutesBasicInfo(topic='合成交付会',source_segment_ids=['demo-seg']),overview=[AnalysisItem(content='本次围绕交付安排进行核对。',source_segment_ids=['demo-seg'])],decisions=[AnalysisItem(content='按周五交付安排推进。',source_segment_ids=['demo-seg'])],open_questions=[AnalysisItem(content='交付负责人仍待确认。',source_segment_ids=['demo-seg'])],core_content=[AnalysisItem(content='测试约定周五交付，负责人待确认。',source_segment_ids=['demo-seg'])],action_items=[AnalysisItem(content='核对交付负责人',source_segment_ids=['demo-seg'])],summary=[AnalysisItem(content='继续确认交付安排。',source_segment_ids=['demo-seg'])])
             module.LMStudioProvider=SyntheticMinutesProvider
             earlier=uid();folder=store.directory(earlier);folder.mkdir();(folder/'original').write_bytes((directory/'original').read_bytes())
             store.execute('INSERT INTO meetings(id,title,filename,duration) VALUES(?,?,?,?)',(earlier,'合成上次评审会','previous.wav',12))

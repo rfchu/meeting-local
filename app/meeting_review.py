@@ -1,4 +1,5 @@
 """Human review checkpoints bound to immutable input fingerprints."""
+from . import minutes_versions
 import hashlib
 import json
 
@@ -16,7 +17,7 @@ class MeetingReview:
         notes=[dict(n) for n in db.execute('''SELECT id,raw_text,note_type,note_scope,is_marker,captured_at,
             expanded_text,accepted_text,status,source_segment_ids,expansion_revision FROM meeting_notes
             WHERE meeting_id=? ORDER BY id''',(mid,))]
-        minutes=db.execute("SELECT id,payload,provenance FROM artifacts WHERE meeting_id=? AND kind='meeting_minutes' AND revision=? ORDER BY created DESC,rowid DESC LIMIT 1",(mid,revision)).fetchone()
+        minutes=minutes_versions.selected(db,mid,revision)
         adopted=json.loads(minutes['provenance'] or '{}').get('adopted_notes',[]) if minutes else []
         by_id={n['id']:n for n in notes}
         adopted_inputs=[(item.get('note_id'),by_id.get(item.get('note_id'))) for item in adopted]
@@ -25,7 +26,7 @@ class MeetingReview:
         from .meeting_flow import brief
         inputs={'transcript':[revision,row['title'],segments],
                 'speakers':[revision,[(s.get('id'),s.get('speaker'),s.get('speaker_locked')) for s in segments]],
-                'notes':[revision,notes,attention], 'minutes':[revision,row['title'],dict(minutes) if minutes else None,adopted_inputs,attention,brief(db,mid)]}
+                'notes':[revision,notes,attention], 'minutes':[revision,row['title'],{key:minutes[key] for key in ('id','payload','provenance')} if minutes else None,adopted_inputs,attention,brief(db,mid)]}
         from .meeting_flow import artifact_current
         minutes_invalid=bool(minutes and not artifact_current(db,mid,json.loads(minutes['provenance'])))
         steps={}

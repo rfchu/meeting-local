@@ -1,3 +1,9 @@
+import {
+  readMinutesOptions,
+  persistMinutesOptions,
+  type MinutesOptions,
+} from "./features/minutes/composition";
+import MinutesCompare from "./features/minutes/MinutesCompare";
 import { useModelChoice } from "./preferences/useModelChoice";
 import { resolveModelChoice } from "./preferences/modelChoices";
 import FollowupsDialog from "./features/meeting/FollowupsDialog";
@@ -12,6 +18,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, download } from "./api";
 import type {
   Meeting,
+  Artifact,
   ReviewStep,
   MeetingMinutes,
   MinutesTemplate,
@@ -69,14 +76,50 @@ export default function App() {
   const [minutesDraft, setMinutesDraft] = useState<MeetingMinutes | null>(null),
     [minutesDirty, setMinutesDirty] = useState(false),
     [savingMinutes, setSavingMinutes] = useState(false);
-  const [minutesStyle, setMinutesStyle] = useState<MinutesStyle>("ai"),
-    [minutesTemplateId, setMinutesTemplateId] = useState("general-meeting"),
-    [minutesMode, setMinutesMode] = useState<"quick" | "full">("quick"),
-    [showCitations, setShowCitations] = useState(false);
+  const [minutesOptions, setMinutesOptions] =
+    useState<MinutesOptions>(readMinutesOptions);
+  useEffect(() => {
+    const templates = templatesQuery.data;
+    if (
+      templates?.length &&
+      !templates.some((t) => t.id === minutesOptions.template_id)
+    ) {
+      const next = { ...minutesOptions, template_id: templates[0].id };
+      setMinutesOptions(next);
+      persistMinutesOptions(next);
+    }
+  }, [templatesQuery.data, minutesOptions]);
+  const [withAnalysis, setWithAnalysis] = useState(false);
+  const [selectedMinutesId, setSelectedMinutesId] = useState<string | null>(
+    null,
+  );
+  const selectedMinutesRef = useRef<string | null>(null);
+  const minutesDraftRef = useRef<{
+    draft: MeetingMinutes | null;
+    dirty: boolean;
+  }>({ draft: null, dirty: false });
+  const minutesSaveTask = useRef<Promise<
+    Artifact<MeetingMinutes> | undefined
+  > | null>(null);
+  const [compareIds, setCompareIds] = useState<[string, string] | null>(null);
+  const [showCitations, setShowCitations] = useState(false);
+  const changeMinutesOptions = (value: MinutesOptions) => {
+    setMinutesOptions(value);
+    persistMinutesOptions(value);
+  };
+  const displayMinutes = (artifact: Artifact<MeetingMinutes> | null) => {
+    selectedMinutesRef.current = artifact?.id || null;
+    setSelectedMinutesId(artifact?.id || null);
+    minutesDraftRef.current = {
+      draft: artifact ? clone(artifact.payload) : null,
+      dirty: false,
+    };
+    setMinutesDraft(minutesDraftRef.current.draft);
+    setMinutesDirty(false);
+  };
   const [analysisModel, setAnalysisModel] = useModelChoice("analysis"),
     [minutesModel, setMinutesModel] = useModelChoice("minutes"),
-    [generating, setGenerating] = useState(false),
-    [fullPending, setFullPending] = useState(false);
+    [generating, setGenerating] = useState(false);
   const [uploading, setUploading] = useState(false),
     [toastText, setToastText] = useState(""),
     [renameOpen, setRenameOpen] = useState(false),
@@ -239,44 +282,87 @@ export default function App() {
     return () => window.clearTimeout(timer);
   }, [transcriptDirty, meeting?.segments, saveTranscript]);
 
-  const saveMinutes = useCallback(async () => {
-    const target = meetingRef.current;
-    if (!target || !minutesDraft || !minutesDirty || savingMinutes) return;
-    const generation = minutesGeneration.current;
-    setSavingMinutes(true);
-    try {
-      const source =
-        latestMinutes(target)?.provenance?.source_analysis_id ||
-        currentAnalysis(target)?.id ||
-        null;
-      const artifact = await api.saveMinutes(
-        target.id,
-        String(source || "") || null,
-        clone(minutesDraft),
-        latestMinutes(target)?.id,
-      );
-      setMeeting((old) =>
-        old?.id === target.id
-          ? {
-              ...old,
-              artifacts: [
-                artifact,
-                ...old.artifacts.filter((a) => a.id !== artifact.id),
-              ],
-            }
-          : old,
-      );
-      if (minutesGeneration.current === generation) setMinutesDirty(false);
-    } catch (error) {
-      toast(`纪要保存失败：${(error as Error).message}`);
-      throw error;
-    } finally {
-      setSavingMinutes(false);
-    }
-  }, [minutesDirty, minutesDraft, savingMinutes, toast]);
+  const saveMinutes = useCallback(
+    async function persist(): Promise<Artifact<MeetingMinutes> | undefined> {
+      if (minutesSaveTask.current) {
+        const saved = await minutesSaveTask.current;
+        return minutesDraftRef.current.dirty ? persist() : saved;
+      }
+      const target = meetingRef.current;
+      const snapshot = minutesDraftRef.current;
+      if (!target || !snapshot.draft || !snapshot.dirty) return;
+      const document = snapshot.draft;
+      const generation = minutesGeneration.current;
+      setSavingMinutes(true);
+      const task = (async () => {
+        try {
+          const baseId = selectedMinutesRef.current;
+          const base = target.artifacts.find((a) => a.id === baseId);
+          const source =
+            base?.provenance?.source_analysis_id ||
+            currentAnalysis(target)?.id ||
+            null;
+          const artifact = await api.saveMinutes(
+            target.id,
+            String(source || "") || null,
+            clone(document),
+            baseId || undefined,
+          );
+          setMeeting((old) =>
+            old?.id === target.id
+              ? {
+                  ...old,
+                  active_minutes_id:
+                    old.active_minutes_id === baseId &&
+                    !artifact.provenance.draft
+                      ? artifact.id
+                      : old.active_minutes_id,
+                  artifacts: [
+                    artifact,
+                    ...old.artifacts.filter((a) => a.id !== artifact.id),
+                  ],
+                }
+              : old,
+          );
+          if (
+            meetingRef.current?.id === target.id &&
+            selectedMinutesRef.current === baseId
+          ) {
+            selectedMinutesRef.current = artifact.id;
+            setSelectedMinutesId(artifact.id);
+          }
+          if (minutesGeneration.current === generation) {
+            minutesDraftRef.current = {
+              ...minutesDraftRef.current,
+              dirty: false,
+            };
+            setMinutesDirty(false);
+          }
+          return artifact;
+        } catch (error) {
+          toast(`纪要保存失败：${(error as Error).message}`);
+          throw error;
+        } finally {
+          setSavingMinutes(false);
+        }
+      })();
+      minutesSaveTask.current = task;
+      let saved;
+      try {
+        saved = await task;
+      } finally {
+        minutesSaveTask.current = null;
+      }
+      return minutesDraftRef.current.dirty ? persist() : saved;
+    },
+    [toast],
+  );
   useEffect(() => {
     if (!minutesDirty) return;
-    const timer = window.setTimeout(() => void saveMinutes(), 900);
+    const timer = window.setTimeout(
+      () => void saveMinutes().catch(() => {}),
+      900,
+    );
     return () => window.clearTimeout(timer);
   }, [minutesDirty, minutesDraft, saveMinutes]);
 
@@ -288,13 +374,12 @@ export default function App() {
       setMeeting(value);
       setTranscriptDirty(false);
       const artifact = latestMinutes(value);
-      setMinutesDraft(artifact ? clone(artifact.payload) : null);
-      setMinutesDirty(false);
-      setMinutesStyle(artifact?.payload.style || "ai");
-      setMinutesTemplateId(artifact?.payload.template_id || "general-meeting");
+      displayMinutes(artifact || null);
+      if (!artifact && minutesOptions.method === "current")
+        setMinutesOptions((old) => ({ ...old, method: "ai" }));
       setShowCitations(artifact?.payload.style === "internal");
       setWorkspace(latestMinutes(value) ? "minutes" : "notes");
-      setFullPending(false);
+
       meetingRef.current = value;
       const job = latestJob(value, "transcription");
       try {
@@ -316,32 +401,28 @@ export default function App() {
     const poll = window.setInterval(async () => {
       try {
         const fresh = await api.meeting(meeting.id);
-        const generated = latestMinutes(fresh);
+        const generated = latestMinutes(fresh),
+          previous = latestMinutes(meetingRef.current);
         if (
           !minutesDirty &&
           !savingMinutes &&
           meetingRef.current?.id === fresh.id &&
           generated &&
-          generated.id !== latestMinutes(meetingRef.current)?.id
-        ) {
-          setMinutesDraft(clone(generated.payload));
-          setMinutesStyle(generated.payload.style);
-          setMinutesTemplateId(
-            generated.payload.template_id || "general-meeting",
-          );
-        }
+          (!selectedMinutesRef.current ||
+            (selectedMinutesRef.current === previous?.id &&
+              generated.id !== previous?.id))
+        )
+          displayMinutes(generated);
         setMeeting((old) => {
           if (!old || old.id !== fresh.id) return old;
           if (!transcriptDirty && fresh.revision !== old.revision) {
-            const artifact = latestMinutes(fresh);
-            setMinutesDraft(artifact ? clone(artifact.payload) : null);
-            setMinutesDirty(false);
             return fresh;
           }
           return {
             ...old,
             review: fresh.review,
             flow: fresh.flow,
+            active_minutes_id: fresh.active_minutes_id,
             minutes_generation: fresh.minutes_generation,
             notes: fresh.notes,
             note_todos: fresh.note_todos,
@@ -462,158 +543,104 @@ export default function App() {
       toast((error as Error).message);
     }
   };
-  const generateMinutes = useCallback(
-    async (
-      forceMode?: "quick" | "full",
-      forceStyle?: MinutesStyle,
-      skipSave = false,
-      forceTemplateId?: string,
-    ) => {
+  const startMinutes = async () => {
+    const target = meetingRef.current;
+    if (!target || generating) return;
+    const options = { ...minutesOptions };
+    const profile = environment?.analysis.profiles.find(
+      (p) => p.id === minutesModel,
+    );
+    if (
+      profile?.provider_type === "cloud" &&
+      (options.method !== "analysis" || !currentAnalysis(target)) &&
+      !window.confirm(
+        options.method === "current"
+          ? "当前纪要及其原文依据将发送到所选云端模型，是否继续？"
+          : "文字稿和本次整理资料将发送到所选云端模型，是否继续？",
+      )
+    )
+      return;
+    try {
+      await saveTranscript();
+      await saveMinutes();
+      setGenerating(true);
+      const response = await api.composeMinutes(target.id, {
+        ...options,
+        also_analyze: withAnalysis && options.method === "ai",
+        ...(environment?.analysis.profiles.length
+          ? { profile_id: minutesModel }
+          : { model: minutesModel }),
+        source_minutes_id: selectedMinutesRef.current || undefined,
+      });
+      const fresh = await api.meeting(target.id);
+      if (meetingRef.current?.id === target.id) {
+        setMeeting(fresh);
+        if (!selectedMinutesRef.current && response.artifact)
+          displayMinutes(response.artifact);
+      }
+      toast(
+        response.job_id
+          ? "已开始分析，完成后将自动保存纪要草稿；刷新页面不会丢失后续步骤"
+          : response.artifact?.id === fresh.active_minutes_id
+            ? "会议纪要已生成，可核对编辑后导出"
+            : "新草稿已保存；当前采用稿保持不变，可查看、对比后采用",
+      );
+      if (response.warning) toast(response.warning);
+      else if (response.analysis_job_id)
+        toast("纪要已保存，独立会议分析已排队；可在原文与分析中查看");
+    } catch (error) {
+      toast((error as Error).message);
+    } finally {
+      setGenerating(false);
+    }
+  };
+  const selectMinutes = async (id: string) => {
+    try {
+      await saveMinutes();
       const target = meetingRef.current;
       if (!target) return;
-      const mode = forceMode || minutesMode,
-        selectedStyle = forceStyle || minutesStyle,
-        selectedTemplateId = forceTemplateId || minutesTemplateId;
-      try {
-        if (!skipSave) await saveMinutes();
-        setGenerating(true);
-        let artifact;
-        if (selectedStyle === "ai") {
-          if (!minutesModel) throw new Error("请先选择纪要生成模型");
-          const profiles = envQuery.data?.analysis.profiles || [];
-          artifact = await api.generateAiMinutes(
-            target.id,
-            profiles.length
-              ? {
-                  profile_id: minutesModel,
-                  mode,
-                  template_id: selectedTemplateId,
-                }
-              : { model: minutesModel, mode, template_id: selectedTemplateId },
-          );
-        } else
-          artifact = await api.generateMinutes(
-            target.id,
-            selectedStyle,
-            selectedTemplateId,
-          );
-        setMeeting((old) =>
-          old?.id === target.id
-            ? {
-                ...old,
-                minutes_generation: null,
-                artifacts: [
-                  artifact,
-                  ...old.artifacts.filter((a) => a.id !== artifact.id),
-                ],
-              }
-            : old,
-        );
-        if (meetingRef.current?.id !== target.id) {
-          toast("会议纪要已保存到原会议");
-          return;
-        }
-        setMinutesDraft(clone(artifact.payload));
-        setMinutesDirty(false);
-        setMinutesStyle(artifact.payload.style);
-        setMinutesTemplateId(artifact.payload.template_id || "general-meeting");
-        setWorkspace("minutes");
-        toast(
-          selectedStyle === "ai"
-            ? mode === "full"
-              ? "完整处理完成：会议分析和 AI 纪要均已生成"
-              : "AI 会议纪要已直接基于当前文字稿生成"
-            : "会议纪要已生成，可直接编辑后导出",
-        );
-      } catch (error) {
-        toast((error as Error).message);
-      } finally {
-        setGenerating(false);
-      }
-    },
-    [
-      envQuery.data?.analysis.profiles,
-      minutesMode,
-      minutesModel,
-      minutesStyle,
-      minutesTemplateId,
-      saveMinutes,
-      toast,
-    ],
-  );
-  const startMinutes = async () => {
-    if (!meeting) return;
-    if (
-      minutesStyle === "ai" &&
-      minutesMode === "full" &&
-      !currentAnalysis(meeting)
-    ) {
-      setFullPending(true);
-      await generateAnalysis();
-      toast("完整处理已开始：会议分析完成后将自动生成 AI 纪要");
-      return;
+      const artifact = target.artifacts.find((a) => a.id === id) as
+        Artifact<MeetingMinutes> | undefined;
+      if (artifact) displayMinutes(artifact);
+    } catch {
+      /* Keep the unsaved version visible. */
     }
-    await generateMinutes();
   };
-  const changeMinutesStyle = async (value: MinutesStyle) => {
-    if (!meeting) return;
-    await saveMinutes();
-    setMinutesStyle(value);
-    if (value === "internal") setShowCitations(true);
-    const matching = meeting.artifacts.find(
-      (item) =>
-        item.kind === "meeting_minutes" &&
-        item.revision === meeting.revision &&
-        (item.payload as MeetingMinutes).style === value &&
-        ((item.payload as MeetingMinutes).template_id || "general-meeting") ===
-          minutesTemplateId,
-    );
-    setMinutesDraft(
-      matching ? clone(matching.payload as MeetingMinutes) : null,
-    );
-    setMinutesDirty(false);
-    if (value !== "ai" && currentAnalysis(meeting))
-      await generateMinutes(undefined, value, true);
-  };
-  const changeMinutesTemplate = async (value: string) => {
-    if (!meeting) return;
-    await saveMinutes();
-    setMinutesTemplateId(value);
-    const matching = meeting.artifacts.find(
-      (item) =>
-        item.kind === "meeting_minutes" &&
-        item.revision === meeting.revision &&
-        (item.payload as MeetingMinutes).style === minutesStyle &&
-        ((item.payload as MeetingMinutes).template_id || "general-meeting") ===
-          value,
-    );
-    setMinutesDraft(
-      matching ? clone(matching.payload as MeetingMinutes) : null,
-    );
-    setMinutesDirty(false);
-    if (minutesStyle !== "ai" && currentAnalysis(meeting))
-      await generateMinutes(undefined, minutesStyle, true, value);
-  };
-  useEffect(() => {
-    if (
-      fullPending &&
-      meeting &&
-      currentAnalysis(meeting) &&
-      !isRunning(latestJob(meeting, "analysis")) &&
-      !generating
-    ) {
-      setFullPending(false);
-      setMinutesStyle("ai");
-      setWorkspace("minutes");
-      void generateMinutes("full");
+  const compareMinutes = async (left: string, right: string) => {
+    try {
+      const displayed = selectedMinutesRef.current;
+      const saved = await saveMinutes();
+      setCompareIds([
+        left === displayed && saved ? saved.id : left,
+        right === displayed && saved ? saved.id : right,
+      ]);
+    } catch {
+      /* Saving already reported the error. */
     }
-  }, [fullPending, meeting, generating, generateMinutes]);
-
-  const exportMinutes = async (format: "docx" | "pdf") => {
+  };
+  const adoptMinutes = async (id = selectedMinutesRef.current) => {
+    if (!meeting || !id) return;
+    try {
+      const displayed = selectedMinutesRef.current === id;
+      const saved = await saveMinutes();
+      const aid = displayed && saved ? saved.id : id;
+      await api.adoptMinutes(meeting.id, aid);
+      const fresh = await api.meeting(meeting.id);
+      setMeeting(fresh);
+      const adopted = fresh.artifacts.find((a) => a.id === aid);
+      if (adopted) displayMinutes(adopted as Artifact<MeetingMinutes>);
+      setCompareIds(null);
+      toast("已采用此版本，会议成果与跟进使用该版本；旧版本仍保留");
+    } catch (error) {
+      toast((error as Error).message);
+    }
+  };
+  const exportMinutes = async (format: "docx" | "pdf" | "md") => {
     await saveMinutes();
-    download(
-      `/meetings/${meeting!.id}/minutes/export/${format}?include_citations=${showCitations}`,
-    );
+    if (meeting && selectedMinutesRef.current)
+      download(
+        `/meetings/${meeting.id}/minutes/export/${format}?include_citations=${showCitations}&artifact_id=${encodeURIComponent(selectedMinutesRef.current)}`,
+      );
   };
   const openMinutesPreview = async () => {
     await saveMinutes();
@@ -1011,9 +1038,7 @@ export default function App() {
                       setMeeting(fresh);
                       if (!minutesDirty) {
                         const artifact = latestMinutes(fresh);
-                        setMinutesDraft(
-                          artifact ? clone(artifact.payload) : null,
-                        );
+                        displayMinutes(artifact || null);
                       }
                     }}
                     minutesDirty={minutesDirty}
@@ -1041,23 +1066,29 @@ export default function App() {
                       draft={minutesDraft}
                       dirty={minutesDirty}
                       transcriptDirty={transcriptDirty}
-                      style={minutesStyle}
+                      options={minutesOptions}
+                      withAnalysis={withAnalysis}
+                      selectedId={selectedMinutesId}
                       templates={
                         (templatesQuery.data || []) as MinutesTemplate[]
                       }
-                      templateId={minutesTemplateId}
-                      mode={minutesMode}
                       model={minutesModel}
                       showCitations={showCitations}
-                      generating={generating || fullPending}
-                      onStyle={(value) => void changeMinutesStyle(value)}
-                      onTemplate={(value) => void changeMinutesTemplate(value)}
-                      onMode={setMinutesMode}
+                      generating={generating}
+                      onOptions={changeMinutesOptions}
+                      onWithAnalysis={setWithAnalysis}
+                      onSelect={(id) => void selectMinutes(id)}
+                      onAdopt={() => void adoptMinutes()}
+                      onCompare={(left, right) =>
+                        void compareMinutes(left, right)
+                      }
+                      onExport={(format) => void exportMinutes(format)}
                       onModel={setMinutesModel}
                       onCitations={setShowCitations}
                       onGenerate={() => void startMinutes()}
                       onDraft={(value) => {
                         minutesGeneration.current++;
+                        minutesDraftRef.current = { draft: value, dirty: true };
                         setMinutesDraft(value);
                         setMinutesDirty(true);
                       }}
@@ -1160,9 +1191,27 @@ export default function App() {
           toast={toast}
         />
       )}
+      {compareIds &&
+        meeting &&
+        (() => {
+          const left = meeting.artifacts.find((a) => a.id === compareIds[0]) as
+            Artifact<MeetingMinutes> | undefined;
+          const right = meeting.artifacts.find(
+            (a) => a.id === compareIds[1],
+          ) as Artifact<MeetingMinutes> | undefined;
+          return left && right ? (
+            <MinutesCompare
+              left={left}
+              right={right}
+              onClose={() => setCompareIds(null)}
+              onAdopt={() => void adoptMinutes(right.id)}
+            />
+          ) : null;
+        })()}
       {previewOpen && minutesDraft && (
         <MinutesPreview
           meetingId={meeting!.id}
+          artifactId={selectedMinutesId}
           includeCitations={showCitations}
           onClose={() => setPreviewOpen(false)}
           onExport={(format) => void exportMinutes(format)}

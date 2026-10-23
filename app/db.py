@@ -111,7 +111,8 @@ class Store:
                 updated TEXT DEFAULT CURRENT_TIMESTAMP);
                 CREATE INDEX IF NOT EXISTS attention_reviews_meeting ON attention_reviews(meeting_id);
                 CREATE INDEX IF NOT EXISTS note_todos_meeting ON note_todos(meeting_id);""")
-            db.execute('PRAGMA user_version=13')
+            db.execute('CREATE TABLE IF NOT EXISTS minutes_selection (meeting_id TEXT PRIMARY KEY, artifact_id TEXT NOT NULL)')
+            db.execute('PRAGMA user_version=14')
         os.chmod(self.path,0o600)
     @contextmanager
     def connect(self):

@@ -1,4 +1,5 @@
 """Meeting preparation, human attention decisions, and explicit outcome provenance."""
+from . import minutes_versions
 import hashlib,json
 from .db import encode
 from .notes import fingerprint
@@ -59,8 +60,13 @@ def ai_context(db,mid):
     payload={'preparation':brief(db,mid),'reviewed_attention':approved}
     return payload,hashlib.sha256(encode(payload).encode()).hexdigest()
 
-def artifact_current(db,mid,provenance):
+def artifact_current(db,mid,provenance,_seen=None):
     try:
+        seen=set(_seen or ())
+        for aid in provenance.get('source_minutes_dependencies',[]):
+            if aid in seen or len(seen)>100:return False
+            parent=db.execute("SELECT provenance FROM artifacts WHERE id=? AND meeting_id=? AND kind='meeting_minutes'",(aid,mid)).fetchone()
+            if not parent or not artifact_current(db,mid,json.loads(parent['provenance']),seen|{aid}):return False
         if provenance.get('flow_context_hash') and ai_context(db,mid)[1]!=provenance['flow_context_hash']:return False
         revision=db.execute('SELECT revision FROM meetings WHERE id=?',(mid,)).fetchone()[0]
         reviews=dispositions(db,mid,revision)
@@ -93,10 +99,10 @@ def flow(store,mid):
         row=db.execute('SELECT revision FROM meetings WHERE id=?',(mid,)).fetchone()
         if not row:raise ValueError('会议不存在')
         reviews=dispositions(db,mid,row['revision']);notes=db.execute('SELECT id,note_type FROM meeting_notes WHERE meeting_id=? ORDER BY captured_at,created,rowid',(mid,)).fetchall()
-        artifact=db.execute("SELECT payload,provenance FROM artifacts WHERE meeting_id=? AND kind='meeting_minutes' AND revision=? ORDER BY created DESC,rowid DESC LIMIT 1",(mid,row['revision'])).fetchone()
+        artifact=minutes_versions.selected(db,mid,row['revision'])
         doc=json.loads(artifact['payload']) if artifact else {};provenance=json.loads(artifact['provenance']) if artifact else {}
         valid_artifact=bool(artifact and artifact_current(db,mid,provenance))
-        cited={sid for name in ('overview','conclusions','decisions','action_items','open_questions') for item in doc.get(name,[]) for sid in item.get('source_segment_ids',[])} if valid_artifact else set()
+        cited={sid for name in ('overview','conclusions','decisions','action_items','open_questions','summary') for item in doc.get(name,[]) for sid in item.get('source_segment_ids',[])} if valid_artifact else set()
         entries=[];counts={'pending':0,'meeting':0,'personal':0,'deferred':0,'stale':0,'adopted':0,'related':0}
         for note in notes:
             review=reviews.get(note['id']);state='stale' if review and review['stale'] else review['decision'] if review else 'pending';counts[state]+=1
@@ -128,7 +134,7 @@ def track_action(store,mid,aid,index,body):
         db.execute('BEGIN IMMEDIATE')
         row=db.execute('SELECT * FROM meetings WHERE id=?',(mid,)).fetchone()
         source=db.execute("SELECT * FROM artifacts WHERE id=? AND meeting_id=? AND kind='meeting_minutes'",(aid,mid)).fetchone()
-        latest=db.execute("SELECT id FROM artifacts WHERE meeting_id=? AND revision=? AND kind='meeting_minutes' ORDER BY created DESC,rowid DESC LIMIT 1",(mid,row['revision'] if row else -1)).fetchone()
+        latest=minutes_versions.selected(db,mid,row['revision'] if row else -1)
         if not row or not source or source['revision']!=row['revision'] or not latest or latest['id']!=aid or not artifact_current(db,mid,json.loads(source['provenance'])):raise ValueError('纪要或原文已变化，请重新核对')
         actions=json.loads(source['payload']).get('action_items',[])
         if not 0<=index<len(actions):raise ValueError('行动项不存在')

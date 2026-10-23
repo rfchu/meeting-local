@@ -25,13 +25,14 @@ from .minutes_templates import MinutesTemplate, builtin_template, template_snaps
 
 
 MINUTES_VERSION = "meeting-minutes-v2"
-MINUTES_SECTIONS = ("overview", "conclusions", "decisions", "action_items", "open_questions")
+MINUTES_SECTIONS = ("overview", "conclusions", "decisions", "action_items", "open_questions", "summary")
 MINUTES_LABELS = {
     "overview": "会议概述",
     "conclusions": "核心结论",
     "decisions": "已定事项",
     "action_items": "行动项",
     "open_questions": "待确认问题",
+    "summary": "会议总结",
 }
 
 
@@ -61,6 +62,8 @@ class MeetingMinutes(BaseModel):
     decisions: list[MinutesItem] = Field(default_factory=list, max_length=50)
     action_items: list[MinutesItem] = Field(default_factory=list, max_length=100)
     open_questions: list[MinutesItem] = Field(default_factory=list, max_length=50)
+
+    summary: list[MinutesItem] = Field(default_factory=list, max_length=50)
 
     def all_items(self):
         for section in MINUTES_SECTIONS:
@@ -226,7 +229,7 @@ def _style_layout(value):
         return ({"overview":"会议结果","decisions":"关键决策","action_items":"行动清单","open_questions":"待确认"},
                 ("overview","decisions","action_items","open_questions"))
     if style == "internal":
-        return ({"overview":"会议摘要","conclusions":"讨论要点","decisions":"决策与依据","action_items":"行动跟踪","open_questions":"风险、依赖与待确认"},
+        return ({"overview":"会议摘要","conclusions":"讨论要点","decisions":"决策与依据","action_items":"行动跟踪","open_questions":"风险、依赖与待确认","summary":"会议总结"},
                 MINUTES_SECTIONS)
     return ({"overview":"会议成果","decisions":"决策事项","action_items":"行动计划","open_questions":"风险与待确认"},
             ("overview","decisions","action_items","open_questions"))

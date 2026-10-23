@@ -1,6 +1,8 @@
+import type { MinutesOptions } from "./composition";
 import { Fragment } from "react";
 import { download } from "../../api";
 import type {
+  Artifact,
   Environment,
   Meeting,
   MeetingMinutes,
@@ -27,6 +29,8 @@ const layouts: Record<
         | "decisions"
         | "action_items"
         | "open_questions"
+        | "summary"
+        | "summary"
       >,
       string,
     ][];
@@ -77,16 +81,19 @@ interface Props {
   draft: MeetingMinutes | null;
   dirty: boolean;
   transcriptDirty: boolean;
-  style: MinutesStyle;
+  options: MinutesOptions;
   templates: MinutesTemplate[];
-  templateId: string;
-  mode: "quick" | "full";
+  withAnalysis: boolean;
+  selectedId: string | null;
   model: string;
   showCitations: boolean;
   generating: boolean;
-  onStyle: (value: MinutesStyle) => void;
-  onTemplate: (value: string) => void;
-  onMode: (value: "quick" | "full") => void;
+  onOptions: (value: MinutesOptions) => void;
+  onWithAnalysis: (value: boolean) => void;
+  onSelect: (id: string) => void;
+  onAdopt: () => void;
+  onCompare: (left: string, right: string) => void;
+  onExport: (format: "docx" | "pdf" | "md") => void;
   onModel: (value: string) => void;
   onCitations: (value: boolean) => void;
   onGenerate: () => void;
@@ -103,21 +110,51 @@ export default function MinutesView(props: Props) {
     draft,
     dirty,
     transcriptDirty,
-    style,
+    options,
     templates,
-    templateId,
-    mode,
+    withAnalysis,
+    selectedId,
     model,
     showCitations,
     generating: locallyGenerating,
   } = props;
   const generation = meeting.minutes_generation;
-  const generating = locallyGenerating || generation?.state === "running";
+  const analysisFollowup = meeting.jobs.find(
+    (job) =>
+      ["queued", "running"].includes(job.state) &&
+      job.kind === "analysis" &&
+      JSON.parse(job.config || "{}").minutes_followup,
+  );
+  const generating =
+    locallyGenerating || generation?.state === "running" || !!analysisFollowup;
+  const versions = meeting.artifacts.filter(
+    (a) => a.kind === "meeting_minutes",
+  ) as Artifact<MeetingMinutes>[];
+  const artifact = versions.find((a) => a.id === selectedId);
+  const current =
+    artifact && !artifact.stale && artifact.revision === meeting.revision
+      ? artifact
+      : undefined;
+  const readOnly = !!artifact && !current;
+  const generatedOptions = artifact?.provenance.composition as
+    MinutesOptions | undefined;
   const analysis = currentAnalysis(meeting),
-    artifact = latestMinutes(meeting),
-    current = currentMinutes(meeting),
     profiles = environment?.analysis.profiles || [],
     models = environment?.analysis.models || [];
+  const templateId = options.template_id,
+    style = draft?.style || "ai";
+  const previousFollowup = meeting.jobs.find(
+    (job) =>
+      job.kind === "analysis" &&
+      JSON.parse(job.config || "{}").minutes_followup,
+  );
+  const newDraft = versions.find(
+    (a) =>
+      a.provenance.draft &&
+      a.id !== meeting.active_minutes_id &&
+      a.id !== selectedId &&
+      !versions.some((child) => child.provenance.parent_minutes_id === a.id),
+  );
   const notice =
     transcriptDirty && artifact
       ? "文字稿正在修改；保存后当前会议纪要将过期，请重新生成。"
@@ -143,6 +180,7 @@ export default function MinutesView(props: Props) {
       | "decisions"
       | "action_items"
       | "open_questions"
+      | "summary"
     >,
     index: number,
     patch: Partial<MinutesItem>,
@@ -189,135 +227,290 @@ export default function MinutesView(props: Props) {
           上次 AI 纪要生成失败：{generation.error}
         </p>
       )}
-      <div className="minutes-toolbar">
-        <label>
-          纪要模板
-          <select
-            aria-label="纪要模板"
-            value={templateId}
-            onChange={(e) => props.onTemplate(e.target.value)}
-          >
-            {templates.map((item) => (
-              <option value={item.id} key={item.id}>
-                {item.name} · {item.category}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label>
-          生成方式
-          <select
-            aria-label="纪要样式"
-            value={style}
-            onChange={(e) => props.onStyle(e.target.value as MinutesStyle)}
-          >
-            <option value="formal">正式版 · 对外发送</option>
-            <option value="brief">精简版 · 一页摘要</option>
-            <option value="internal">内部工作版 · 完整依据</option>
-            <option value="ai">AI 会议纪要 · 全文整理</option>
-          </select>
-        </label>
-        {style === "ai" && (
-          <p className="minutes-attention-hint">
-            本次将使用文字稿、已保存的会议准备，以及{" "}
-            {meeting.flow?.counts.meeting || 0}{" "}
-            个已核对关注点。个人备注和暂不处理的记录不会提供给模型；选择云端模型时，以上内容会发送到所选服务。相关原文被引用不等于关注点已充分覆盖，请在生成后核对。
+      {previousFollowup &&
+        ["failed", "cancelled"].includes(previousFollowup.state) && (
+          <p role="alert" className="error">
+            上次根据分析成稿
+            {previousFollowup.state === "cancelled" ? "已取消" : "失败"}：
+            {previousFollowup.error || previousFollowup.stage}
+            。可点击生成按钮重新处理。
           </p>
         )}
-        {style === "ai" && (
+      {analysisFollowup && (
+        <p role="status">
+          会议分析后将自动生成纪要草稿：{analysisFollowup.stage}
+          。刷新页面仍可继续查看。
+        </p>
+      )}
+      <section
+        className="minutes-generation-settings"
+        aria-label="生成纪要设置"
+      >
+        <div className="minutes-toolbar">
           <label>
-            生成方式
+            会议模板
             <select
-              aria-label="AI 纪要生成方式"
-              value={mode}
-              onChange={(e) => props.onMode(e.target.value as "quick" | "full")}
+              aria-label="纪要模板"
+              value={options.template_id}
+              onChange={(e) =>
+                props.onOptions({ ...options, template_id: e.target.value })
+              }
             >
-              <option value="quick">快速生成 · 直接整理全文</option>
-              <option value="full">完整处理 · 先分析再生成</option>
+              {templates.map((item) => (
+                <option key={item.id} value={item.id}>
+                  {item.name}
+                </option>
+              ))}
             </select>
           </label>
-        )}
-        <button
-          className="primary"
-          disabled={generating || (style === "ai" ? !model : !analysis)}
-          onClick={props.onGenerate}
-        >
-          {generating
-            ? "正在生成…"
-            : style === "ai"
-              ? current?.payload.style === "ai"
-                ? "重新生成 AI 会议纪要"
-                : "生成 AI 会议纪要"
-              : current
-                ? "重新生成会议纪要"
-                : "生成会议纪要"}
-        </button>
-        {style === "ai" && (
           <label>
-            纪要生成模型
+            内容详略
+            <select
+              aria-label="内容详略"
+              disabled={options.method === "analysis"}
+              value={options.detail_level}
+              onChange={(e) =>
+                props.onOptions({
+                  ...options,
+                  detail_level: e.target
+                    .value as MinutesOptions["detail_level"],
+                })
+              }
+            >
+              <option value="brief">精简</option>
+              <option value="standard">标准</option>
+              <option value="detailed">详细</option>
+            </select>
+          </label>
+          <label>
+            发送用途
+            <select
+              aria-label="发送用途"
+              disabled={options.method === "analysis"}
+              value={options.audience}
+              onChange={(e) =>
+                props.onOptions({
+                  ...options,
+                  audience: e.target.value as MinutesOptions["audience"],
+                })
+              }
+            >
+              <option value="external">对外发送</option>
+              <option value="internal">内部工作</option>
+            </select>
+          </label>
+          <button
+            className="primary"
+            disabled={
+              generating ||
+              !meeting.segments.length ||
+              ((options.method !== "analysis" || !analysis) && !model) ||
+              (options.method === "current" && !current)
+            }
+            onClick={props.onGenerate}
+          >
+            {generating
+              ? "正在生成…"
+              : options.method === "analysis" && !analysis
+                ? "分析并生成纪要"
+                : draft
+                  ? "生成新草稿"
+                  : "生成会议纪要"}
+          </button>
+        </div>
+        <p>
+          这些设置仅用于下一份草稿，切换不会改动当前纪要。新稿生成后可对比、采用；旧版本始终保留。
+        </p>
+        <details className="minutes-advanced">
+          <summary>
+            高级设置 ·{" "}
+            {options.method === "ai"
+              ? "AI 整理全文"
+              : options.method === "analysis"
+                ? "根据分析成稿"
+                : "从当前纪要派生"}{" "}
+            ·{" "}
+            {profiles.find((p) => p.id === model)?.name ||
+              model ||
+              "尚未配置模型"}
+          </summary>
+          <label>
+            生成方法
+            <select
+              aria-label="纪要生成方法"
+              value={options.method}
+              onChange={(e) =>
+                props.onOptions({
+                  ...options,
+                  method: e.target.value as MinutesOptions["method"],
+                })
+              }
+            >
+              <option value="ai">AI 整理全文（推荐）</option>
+              <option value="analysis">根据会议分析快速成稿</option>
+              <option value="current" disabled={!current}>
+                基于当前显示的纪要整理
+              </option>
+            </select>
+          </label>
+          <label>
+            使用模型
             <select
               aria-label="纪要生成模型"
               value={model}
               onChange={(e) => props.onModel(e.target.value)}
             >
               {profiles.length ? (
-                profiles.map((item) => (
-                  <option value={item.id} key={item.id}>
-                    {item.name} · {item.model}
+                profiles.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name} · {p.provider_type === "cloud" ? "云端" : "本地"}
                   </option>
                 ))
               ) : models.length ? (
-                models.map((item) => <option key={item}>{item}</option>)
+                models.map((m) => <option key={m}>{m}</option>)
               ) : (
                 <option value="">请先配置模型</option>
               )}
             </select>
           </label>
+          {options.method === "ai" && (
+            <label>
+              <input
+                type="checkbox"
+                checked={withAnalysis}
+                onChange={(e) => props.onWithAnalysis(e.target.checked)}
+              />
+              同时生成会议分析，作为独立复盘资料
+            </label>
+          )}
+          <p>
+            {options.method === "analysis"
+              ? analysis
+                ? "将复用当前文字稿的分析，不再次调用模型。只按模板编排，详略和用途设置仅对 AI 整理生效；可成稿后再从本稿整理精简版。"
+                : "尚无当前版本分析。点击主按钮后先分析，再自动保存纪要草稿，无需跳转。"
+              : options.method === "current"
+                ? "以当前纪要为唯一内容范围整理叙述，保留全部决策、待办、负责人、期限和人工补充；篇幅过长时允许多页。"
+                : "使用完整文字稿、会议准备和已核对关注点；个人保留或暂不处理的简记不进入模型。"}
+          </p>
+          <p>
+            云端模型会接收本次整理资料，操作前会确认。对外发送前仍需人工核对事实及个人信息。
+          </p>
+        </details>
+      </section>
+      {newDraft && (
+        <div className="analysis-notice">
+          新草稿已保存，当前采用稿未改变。
+          <button onClick={() => props.onSelect(newDraft.id)}>
+            查看新草稿
+          </button>
+          {artifact && (
+            <button onClick={() => props.onCompare(artifact.id, newDraft.id)}>
+              对比版本
+            </button>
+          )}
+        </div>
+      )}
+      <div className="minutes-toolbar minutes-version-toolbar">
+        <label>
+          当前显示版本
+          <select
+            aria-label="纪要版本"
+            value={selectedId || ""}
+            onChange={(e) => props.onSelect(e.target.value)}
+          >
+            {!selectedId && <option value="">尚未选择</option>}
+            {versions.map((a, i) => (
+              <option key={a.id} value={a.id}>
+                版本 {versions.length - i} ·{" "}
+                {a.id === meeting.active_minutes_id ? "当前采用" : "历史／草稿"}{" "}
+                · 文字稿 v{a.revision}
+                {a.stale ? " · 已过期" : ""}
+              </option>
+            ))}
+          </select>
+        </label>
+        {artifact && artifact.id !== meeting.active_minutes_id && (
+          <button
+            className="primary"
+            disabled={!current || generating}
+            onClick={props.onAdopt}
+          >
+            采用此版本
+          </button>
         )}
-        <button disabled={!draft || !dirty} onClick={props.onSave}>
-          {dirty ? "保存修改" : "已保存"}
+        <button disabled={!draft || !dirty || readOnly} onClick={props.onSave}>
+          {dirty ? "保存为新版本" : "已保存"}
+        </button>
+        {artifact &&
+          meeting.active_minutes_id &&
+          artifact.id !== meeting.active_minutes_id && (
+            <button
+              onClick={() =>
+                props.onCompare(meeting.active_minutes_id!, artifact.id)
+              }
+            >
+              与采用稿对比
+            </button>
+          )}
+        <button
+          disabled={!current || dirty}
+          onClick={() => {
+            if (draft) {
+              props.onOptions({
+                ...options,
+                method: "current",
+                detail_level: "brief",
+              });
+            }
+          }}
+        >
+          从本稿整理精简版
         </button>
         <button disabled={!draft} onClick={props.onPreview}>
           导出预览
         </button>
-        <label className="minutes-check">
+        <label>
           <input
             type="checkbox"
             checked={showCitations}
             onChange={(e) => props.onCitations(e.target.checked)}
-          />{" "}
+          />
           显示原文引用
         </label>
         <select
-          id="minutesExport"
           aria-label="导出会议纪要"
           value=""
+          disabled={!draft}
           onChange={(e) => {
             if (e.target.value)
-              download(
-                `/meetings/${meeting.id}/minutes/export/${e.target.value}?include_citations=${showCitations}`,
-              );
+              props.onExport(e.target.value as "docx" | "pdf" | "md");
           }}
         >
-          <option value="">导出纪要 ↓</option>
+          <option value="">导出当前显示版本 ↓</option>
           <option value="docx">Word 文档</option>
           <option value="pdf">PDF 文档</option>
           <option value="md">Markdown</option>
         </select>
       </div>
+      {readOnly && (
+        <p className="analysis-notice">
+          这个版本的来源已变化，仅供查看和导出；请根据当前原文生成新草稿，旧稿仍保留。
+        </p>
+      )}
       {notice && <div className="analysis-notice">{notice}</div>}
       {!draft ? (
         <div className="empty">
           <div>▤</div>
           <h3>还没有会议纪要</h3>
           <p>
-            {analysis
-              ? "选择样式后生成适合审核和对外发送的纪要。"
-              : "AI 快速模式可直接从文字稿生成；其他样式需要先完成会议分析。"}
+            选择模板后点击“生成会议纪要”。默认直接整理全文，无需先生成分析。
           </p>
         </div>
       ) : (
-        <div className={`minutes-document minutes-${draft.style}`}>
+        <fieldset
+          disabled={readOnly}
+          className={`minutes-document minutes-${draft.style}`}
+        >
           <div className="minutes-style-badge">
             {template?.name ||
               (draft.style === "formal"
@@ -327,6 +520,19 @@ export default function MinutesView(props: Props) {
                   : draft.style === "internal"
                     ? "内部工作纪要"
                     : "AI 会议纪要 · 全文整理")}
+            {generatedOptions && (
+              <span>
+                {" "}
+                ·{" "}
+                {generatedOptions.method === "analysis"
+                  ? "规则编排"
+                  : generatedOptions.detail_level === "brief"
+                    ? "精简"
+                    : generatedOptions.detail_level === "detailed"
+                      ? "详细"
+                      : "标准"}
+              </span>
+            )}
           </div>
           <input
             className="minutes-title"
@@ -541,7 +747,7 @@ export default function MinutesView(props: Props) {
             {template?.description || fallback.hint}{" "}
             发送前请确认参会人、负责人和时间。
           </p>
-        </div>
+        </fieldset>
       )}
     </div>
   );

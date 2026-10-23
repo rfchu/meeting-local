@@ -1,4 +1,5 @@
 """Manual note intent, bookmarks and explicitly confirmed downstream use."""
+from . import minutes_versions
 import hashlib,json
 from .db import uid,encode
 from .note_expansion import nearby_segments
@@ -49,7 +50,7 @@ def use_note(store,mid,nid,body):
         approved=approved if approved and not approved['stale'] and approved['decision']=='meeting' and approved['content']==text and approved['source_segment_ids']==ids else None
         if note['note_scope']!='meeting' and not approved:raise ValueError('个人备注不能直接采用到纪要，请先改为会议内容并核对')
         if not body.revision or not ids:raise ValueError('采用到纪要需要当前文字稿及至少一条原文依据')
-        artifact=db.execute("SELECT * FROM artifacts WHERE meeting_id=? AND revision=? AND kind='meeting_minutes' ORDER BY created DESC,rowid DESC LIMIT 1",(mid,meeting['revision'])).fetchone()
+        artifact=minutes_versions.selected(db,mid,meeting['revision'])
         if not artifact:raise ValueError('请先生成当前版本的会议纪要，再采用简记')
         provenance=json.loads(artifact['provenance']);adopted=provenance.get('adopted_notes',[])
         if any(item.get('key')==key for item in adopted):return {'id':artifact['id'],'reused':True}
@@ -63,4 +64,5 @@ def use_note(store,mid,nid,body):
         provenance.update(edited=True,adopted_notes=adopted,base_minutes_id=artifact['id'])
         aid=uid();db.execute('INSERT INTO artifacts(id,meeting_id,revision,kind,payload,provenance) VALUES(?,?,?,?,?,?)',
             (aid,mid,meeting['revision'],'meeting_minutes',encode(document.model_dump()),encode(provenance)))
+        minutes_versions.follow_edit(db,mid,artifact['id'],aid)
         return {'id':aid,'reused':False}

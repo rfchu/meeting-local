@@ -409,16 +409,18 @@ export function ModelConfigDialog({
 
 export function MinutesPreview({
   meetingId,
+  artifactId,
   includeCitations,
   onClose,
   onExport,
 }: {
   meetingId: string;
+  artifactId?: string | null;
   includeCitations: boolean;
   onClose: () => void;
   onExport: (format: "docx" | "pdf") => void;
 }) {
-  const previewUrl = `/api/meetings/${meetingId}/minutes/export/pdf?include_citations=${includeCitations}&inline=true`;
+  const previewUrl = `/api/meetings/${meetingId}/minutes/export/pdf?include_citations=${includeCitations}&inline=true${artifactId ? `&artifact_id=${encodeURIComponent(artifactId)}` : ""}`;
   return (
     <Modal id="minutesPreviewDialog" onClose={onClose}>
       <div className="preview-header">

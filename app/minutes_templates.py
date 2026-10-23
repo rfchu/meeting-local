@@ -10,7 +10,7 @@ TEMPLATE_VERSION = 1
 class MinutesTemplateSection(BaseModel):
     id: str = Field(min_length=1, max_length=100)
     title: str = Field(min_length=1, max_length=100)
-    source: str = Field(pattern="^(overview|conclusions|decisions|action_items|open_questions)$")
+    source: str = Field(pattern="^(overview|conclusions|decisions|action_items|open_questions|summary)$")
     kind: str = Field(default="list", pattern="^(list|decision_table|action_table)$")
     required: bool = False
     evidence_required: bool = True

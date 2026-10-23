@@ -212,7 +212,12 @@ export interface MinutesItem extends AnalysisItem {
   status?: string | null;
 }
 export type MinutesSectionSource =
-  "overview" | "conclusions" | "decisions" | "action_items" | "open_questions";
+  | "overview"
+  | "conclusions"
+  | "decisions"
+  | "action_items"
+  | "open_questions"
+  | "summary";
 export interface MinutesTemplateSection {
   id: string;
   title: string;
@@ -250,6 +255,7 @@ export interface MeetingMinutes {
   decisions: MinutesItem[];
   action_items: MinutesItem[];
   open_questions: MinutesItem[];
+  summary: MinutesItem[];
 }
 
 export interface Artifact<T = unknown> {
@@ -298,6 +304,7 @@ export interface MinutesGenerationStatus {
   artifact_id?: string;
 }
 export interface Meeting extends MeetingSummary {
+  active_minutes_id?: string | null;
   minutes_generation?: MinutesGenerationStatus | null;
   flow?: MeetingFlow;
   review?: MeetingReview;

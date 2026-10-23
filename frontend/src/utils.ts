@@ -53,13 +53,21 @@ export const latestAnalysis = (meeting: Meeting | null) =>
 export const currentMinutes = (meeting: Meeting | null) => {
   const value = meeting?.artifacts.find(
     (item) =>
-      item.kind === "meeting_minutes" && item.revision === meeting.revision,
+      item.kind === "meeting_minutes" &&
+      item.revision === meeting.revision &&
+      (!meeting.active_minutes_id || item.id === meeting.active_minutes_id),
   ) as Artifact<MeetingMinutes> | undefined;
   return value?.stale ? undefined : value;
 };
 export const latestMinutes = (meeting: Meeting | null) =>
-  (currentMinutes(meeting) ||
-    meeting?.artifacts.find((item) => item.kind === "meeting_minutes")) as
+  (meeting?.active_minutes_id
+    ? meeting.artifacts.find(
+        (item) =>
+          item.id === meeting.active_minutes_id &&
+          item.kind === "meeting_minutes",
+      )
+    : currentMinutes(meeting) ||
+      meeting?.artifacts.find((item) => item.kind === "meeting_minutes")) as
     Artifact<MeetingMinutes> | undefined;
 export const isRunning = (job?: Job) =>
   !!job && (job.state === "queued" || job.state === "running");
