@@ -1,3 +1,8 @@
+import {
+  hasMinutesFollowup,
+  pendingMinutesDrafts,
+  minutesVersionDescription,
+} from "./presentation";
 import type { MinutesOptions } from "./composition";
 import { Fragment } from "react";
 import { download } from "../../api";
@@ -123,7 +128,7 @@ export default function MinutesView(props: Props) {
     (job) =>
       ["queued", "running"].includes(job.state) &&
       job.kind === "analysis" &&
-      JSON.parse(job.config || "{}").minutes_followup,
+      hasMinutesFollowup(job.config),
   );
   const generating =
     locallyGenerating || generation?.state === "running" || !!analysisFollowup;
@@ -144,16 +149,10 @@ export default function MinutesView(props: Props) {
   const templateId = options.template_id,
     style = draft?.style || "ai";
   const previousFollowup = meeting.jobs.find(
-    (job) =>
-      job.kind === "analysis" &&
-      JSON.parse(job.config || "{}").minutes_followup,
+    (job) => job.kind === "analysis" && hasMinutesFollowup(job.config),
   );
-  const newDraft = versions.find(
-    (a) =>
-      a.provenance.draft &&
-      a.id !== meeting.active_minutes_id &&
-      a.id !== selectedId &&
-      !versions.some((child) => child.provenance.parent_minutes_id === a.id),
+  const newDraft = pendingMinutesDrafts(meeting).find(
+    (a) => a.id !== selectedId,
   );
   const notice =
     transcriptDirty && artifact
@@ -423,7 +422,7 @@ export default function MinutesView(props: Props) {
               <option key={a.id} value={a.id}>
                 版本 {versions.length - i} ·{" "}
                 {a.id === meeting.active_minutes_id ? "当前采用" : "历史／草稿"}{" "}
-                · 文字稿 v{a.revision}
+                · {minutesVersionDescription(a)} · 文字稿 v{a.revision}
                 {a.stale ? " · 已过期" : ""}
               </option>
             ))}
@@ -432,7 +431,7 @@ export default function MinutesView(props: Props) {
         {artifact && artifact.id !== meeting.active_minutes_id && (
           <button
             className="primary"
-            disabled={!current || generating}
+            disabled={!current || generating || transcriptDirty}
             onClick={props.onAdopt}
           >
             采用此版本
@@ -453,7 +452,7 @@ export default function MinutesView(props: Props) {
             </button>
           )}
         <button
-          disabled={!current || dirty}
+          disabled={!current || dirty || transcriptDirty}
           onClick={() => {
             if (draft) {
               props.onOptions({

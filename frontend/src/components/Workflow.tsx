@@ -1,3 +1,4 @@
+import { pendingMinutesDrafts } from "../features/minutes/presentation";
 import type { Meeting, ReviewStep } from "../types";
 import { currentMinutes, isRunning, latestMinutes } from "../utils";
 import { reviewProgress } from "./reviewProgress";
@@ -46,6 +47,7 @@ export default function Workflow(props: Props) {
     onConfirm,
   } = props;
   const progress = reviewProgress(meeting, transcriptDirty, minutesDirty);
+  const pendingDrafts = pendingMinutesDrafts(meeting);
   const minutes = currentMinutes(meeting),
     busy = meeting.jobs.find(isRunning);
   if (!meeting.review)
@@ -88,6 +90,10 @@ export default function Workflow(props: Props) {
   } else if (meeting.minutes_generation?.state === "running") {
     hint = `AI 纪要正在整理文字稿，已等待 ${meeting.minutes_generation.elapsed_seconds} 秒，完整返回后自动保存。`;
     label = "查看生成状态";
+    action = onMinutes;
+  } else if (pendingDrafts.length && !transcriptDirty) {
+    hint = `有 ${pendingDrafts.length} 份纪要草稿待核对，当前采用稿保持不变；可对比后采用。`;
+    label = "查看纪要草稿";
     action = onMinutes;
   } else if (meeting.minutes_generation?.state === "failed") {
     hint = "上次 AI 纪要未生成成功，失败原因已保留；已有文稿和纪要不受影响。";

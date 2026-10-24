@@ -1,3 +1,4 @@
+import { minutesAdoptionBlockReason } from "./features/minutes/presentation";
 import {
   readMinutesOptions,
   persistMinutesOptions,
@@ -1205,6 +1206,11 @@ export default function App() {
               right={right}
               onClose={() => setCompareIds(null)}
               onAdopt={() => void adoptMinutes(right.id)}
+              blockedReason={minutesAdoptionBlockReason(
+                meeting,
+                right,
+                transcriptDirty,
+              )}
             />
           ) : null;
         })()}
