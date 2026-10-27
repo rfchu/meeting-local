@@ -423,3 +423,10 @@ fieldset.minutes-document:disabled {
 .minutes-version-toolbar select[aria-label="纪要版本"] {
   max-width: min(420px, 75vw);
 }
+
+.minutes-grid > .minutes-table-citations {
+  grid-column: 1 / -1;
+  padding: 4px 8px 10px;
+  border: 0;
+  background: #fafbff;
+}

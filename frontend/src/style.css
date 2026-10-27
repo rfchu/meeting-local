@@ -2553,3 +2553,106 @@ dialog code {
   font-size: 12px;
   line-height: 1.7;
 }
+
+.workspace:has(.meeting-review-workspace) {
+  grid-template-columns: minmax(0, 1fr);
+}
+.workspace:has(.meeting-review-workspace) > .info-panel {
+  display: none;
+}
+.meeting-review-workspace.split {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr);
+  gap: 16px;
+  align-items: start;
+  padding: 16px;
+}
+.review-source-toggle {
+  grid-column: 1 / -1;
+  width: max-content;
+  margin: 8px;
+}
+.review-source-pane,
+.review-notes-pane {
+  min-width: 0;
+}
+.review-source-pane {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 14px;
+  background: #fafbff;
+  max-height: 75vh;
+  overflow: auto;
+  position: sticky;
+  top: 12px;
+}
+.review-pane-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+.review-pane-heading h3 {
+  margin: 0;
+}
+.review-source-pane p {
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--muted);
+}
+.review-source-pane > input {
+  width: 100%;
+  margin-bottom: 12px;
+}
+.review-source-pane .segment {
+  grid-template-columns: 70px minmax(0, 1fr);
+  padding: 12px 4px;
+}
+.review-source-pane .speaker-confirmed {
+  display: none;
+}
+.review-source-pane textarea[readonly] {
+  background: transparent;
+}
+.review-notes-pane {
+  max-height: 75vh;
+  overflow: auto;
+}
+.inline-note-review {
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+.inline-note-review .note-review-grid {
+  display: block;
+}
+.inline-note-review h2 {
+  font-size: 16px;
+}
+.inline-note-review .search-heading {
+  align-items: start;
+  gap: 8px;
+}
+.recording-end-plan select {
+  max-width: min(500px, 75vw);
+}
+@media (max-width: 950px) {
+  .meeting-review-workspace.split {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .review-source-pane {
+    position: static;
+    max-height: 40vh;
+  }
+  .review-notes-pane {
+    max-height: none;
+    overflow: visible;
+  }
+}
+
+.meeting-review-workspace.split .minutes-document {
+  padding: 24px 18px;
+}
+.meeting-review-workspace.split .minutes-meta {
+  grid-template-columns: minmax(0, 1fr);
+}

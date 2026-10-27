@@ -3,6 +3,7 @@ export interface RecordingPreferences {
   version: 1;
   keepAwake: boolean;
   autoProcess: boolean;
+  postGoal: "transcript" | "minutes";
   captureSource: "browser" | "macos-system" | "macos-both";
   draftEngine: "whisper" | "qwen";
   streamEnabled: boolean;
@@ -14,6 +15,7 @@ export const DEFAULT_RECORDING_PREFERENCES: RecordingPreferences = {
   version: 1,
   keepAwake: true,
   autoProcess: true,
+  postGoal: "transcript",
   captureSource: "browser",
   draftEngine: "whisper",
   streamEnabled: true,
@@ -31,6 +33,7 @@ export function readRecordingPreferences(
       return { ...DEFAULT_RECORDING_PREFERENCES };
     return {
       ...DEFAULT_RECORDING_PREFERENCES,
+      postGoal: value.postGoal === "minutes" ? "minutes" : "transcript",
       autoProcess:
         typeof value.autoProcess === "boolean" ? value.autoProcess : true,
       keepAwake: typeof value.keepAwake === "boolean" ? value.keepAwake : true,

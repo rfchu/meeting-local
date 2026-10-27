@@ -92,6 +92,7 @@ interface Props {
   selectedId: string | null;
   model: string;
   showCitations: boolean;
+  referenceMode?: boolean;
   generating: boolean;
   onOptions: (value: MinutesOptions) => void;
   onWithAnalysis: (value: boolean) => void;
@@ -104,6 +105,7 @@ interface Props {
   onGenerate: () => void;
   onDraft: (value: MeetingMinutes) => void;
   onSave: () => void;
+  onJobAction: (id: string, action: "cancel" | "retry") => void;
   onPreview: () => void;
   onSeek: (time: number) => void;
 }
@@ -124,6 +126,9 @@ export default function MinutesView(props: Props) {
     generating: locallyGenerating,
   } = props;
   const generation = meeting.minutes_generation;
+  const automaticJob = meeting.jobs.find((job) => job.kind === "minutes");
+  const automaticBusy =
+    automaticJob && ["queued", "running"].includes(automaticJob.state);
   const analysisFollowup = meeting.jobs.find(
     (job) =>
       ["queued", "running"].includes(job.state) &&
@@ -131,7 +136,10 @@ export default function MinutesView(props: Props) {
       hasMinutesFollowup(job.config),
   );
   const generating =
-    locallyGenerating || generation?.state === "running" || !!analysisFollowup;
+    locallyGenerating ||
+    generation?.state === "running" ||
+    !!analysisFollowup ||
+    !!automaticBusy;
   const versions = meeting.artifacts.filter(
     (a) => a.kind === "meeting_minutes",
   ) as Artifact<MeetingMinutes>[];
@@ -215,6 +223,26 @@ export default function MinutesView(props: Props) {
       }));
   return (
     <div id="minutesView">
+      {automaticJob && automaticJob.state !== "completed" && (
+        <div
+          className="analysis-notice"
+          role={automaticJob.state === "failed" ? "alert" : "status"}
+        >
+          自动纪要：{automaticJob.stage}
+          {automaticJob.error ? ` · ${automaticJob.error}` : ""}
+          <button
+            onClick={() =>
+              props.onJobAction(
+                automaticJob.id,
+                automaticBusy ? "cancel" : "retry",
+              )
+            }
+          >
+            {automaticBusy ? "取消自动纪要" : "只重试纪要步骤"}
+          </button>
+          <small>文字稿仍保留；来源已变化时请用当前文字稿重新生成。</small>
+        </div>
+      )}
       {generation?.state === "running" && (
         <p role="status">
           AI 纪要正在整理文字稿，已等待 {generation.elapsed_seconds}{" "}
@@ -474,7 +502,7 @@ export default function MinutesView(props: Props) {
             checked={showCitations}
             onChange={(e) => props.onCitations(e.target.checked)}
           />
-          显示原文引用
+          {props.referenceMode ? "导出包含原文引用" : "显示原文引用"}
         </label>
         <select
           aria-label="导出会议纪要"
@@ -668,6 +696,25 @@ export default function MinutesView(props: Props) {
                         >
                           删除
                         </button>
+                        {(showCitations || props.referenceMode) &&
+                          item.source_segment_ids.length > 0 && (
+                            <div className="citations minutes-table-citations">
+                              {item.source_segment_ids
+                                .map((sid) => byId.get(sid))
+                                .filter(Boolean)
+                                .map((segment) => (
+                                  <button
+                                    key={segment!.id}
+                                    className="citation"
+                                    aria-label={`${label} ${index + 1} 原文 ${clock(segment!.start)}`}
+                                    title={`${segment!.speaker}：${segment!.text}`}
+                                    onClick={() => props.onSeek(segment!.start)}
+                                  >
+                                    回听依据 {clock(segment!.start)}
+                                  </button>
+                                ))}
+                            </div>
+                          )}
                       </Fragment>
                     ) : (
                       <article className="minutes-item" key={index}>
@@ -718,7 +765,7 @@ export default function MinutesView(props: Props) {
                             删除
                           </button>
                         </div>
-                        {showCitations && (
+                        {(showCitations || props.referenceMode) && (
                           <div className="citations">
                             {item.source_segment_ids
                               .map((id) => byId.get(id))

@@ -20,7 +20,9 @@ class MinutesGeneration:
                 except BlockingIOError:pass
                 else:
                     # A process exit releases the lock; never leave a permanent spinner.
-                    value.update(state='failed',error='纪要生成进程已中断，请重新生成；已有纪要仍保留。',finished_at=time.time())
+                    completed=self.store.one("SELECT a.id FROM artifacts a JOIN jobs j ON j.id=json_extract(a.provenance,'$.job') WHERE a.meeting_id=? AND a.kind='meeting_minutes' AND j.id=? AND j.state='completed' LIMIT 1",(mid,value.get('job_id'))) if value.get('job_id') else None
+                    if completed:value.update(state='completed',artifact_id=completed['id'],error='',finished_at=time.time())
+                    else:value.update(state='failed',error='纪要生成进程已中断，请重新生成；已有纪要仍保留。',finished_at=time.time())
                     self._write(folder,value)
         return {**value,'elapsed_seconds':round(max(0,(value.get('finished_at') or time.time())-value['started_at']))}
     def track(self,operation):
@@ -32,12 +34,13 @@ class MinutesGeneration:
             with (folder/'minutes-generation.lock').open('a') as handle:
                 try:fcntl.flock(handle,fcntl.LOCK_EX|fcntl.LOCK_NB)
                 except BlockingIOError:raise HTTPException(409,'本场会议已有纪要正在生成，请等待当前请求完成')
-                status={'id':uid(),'state':'running','started_at':time.time(),'revision':row['revision'],'error':''}
+                status={'id':uid(),'job_id':getattr(body,'job_id',None),'state':'running','started_at':time.time(),'revision':row['revision'],'error':''}
                 self._write(folder,status)
                 try:result=operation(mid,body)
                 except BaseException as error:
                     message=getattr(error,'detail',str(error)) or '纪要生成中断，请重试'
-                    status.update(state='failed',error=str(message)[:1500],finished_at=time.time());self._write(folder,status)
+                    cancelled=self.store.one("SELECT state FROM jobs WHERE id=?",(status.get('job_id'),)) if status.get('job_id') else None
+                    status.update(state='cancelled' if cancelled and cancelled['state']=='cancelled' else 'failed',error=str(message)[:1500],finished_at=time.time());self._write(folder,status)
                     raise
                 status.update(state='completed',artifact_id=result['id'],finished_at=time.time());self._write(folder,status)
                 return result

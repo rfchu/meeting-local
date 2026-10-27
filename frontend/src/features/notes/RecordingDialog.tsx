@@ -10,6 +10,7 @@ import type {
   NativeCapability,
   NativeCaptureStatus,
   EngineInfo,
+  Environment,
 } from "../../types";
 import {
   readRecordingPreferences,
@@ -64,7 +65,13 @@ export default function RecordingDialog({
   onComplete,
   toast,
   onModels,
+  environment,
+  minutesModel,
+  onMinutesModel,
 }: {
+  environment?: Environment;
+  minutesModel: string;
+  onMinutesModel: (model: string) => void;
   meetings: MeetingSummary[];
   flowReady: boolean;
   onModels: () => void;
@@ -73,7 +80,11 @@ export default function RecordingDialog({
   onClose: () => void;
   onComplete: (
     meetingId: string,
-    options: { mode: CompletionMode; engine: "whisper" | "qwen" },
+    options: {
+      mode: CompletionMode;
+      engine: "whisper" | "qwen";
+      goal?: "transcript" | "minutes";
+    },
   ) => Promise<void>;
   toast: (text: string) => void;
 }) {
@@ -163,6 +174,7 @@ export default function RecordingDialog({
     [draftEngine, setDraftEngine] = useState<"whisper" | "qwen">(
       preferences.draftEngine,
     ),
+    [postGoal, setPostGoal] = useState(preferences.postGoal),
     [autoProcess, setAutoProcess] = useState(preferences.autoProcess),
     [completionMode, setCompletionMode] = useState<CompletionMode>(
       preferences.completionMode,
@@ -230,6 +242,7 @@ export default function RecordingDialog({
         version: 1,
         keepAwake,
         autoProcess,
+        postGoal,
         captureSource,
         draftEngine,
         streamEnabled,
@@ -249,6 +262,7 @@ export default function RecordingDialog({
     streamEnabled,
     responsiveMode,
     completionMode,
+    postGoal,
     autoProcess,
     keepAwake,
   ]);
@@ -262,7 +276,11 @@ export default function RecordingDialog({
     handingOff.current = true;
     setCompleting(true);
     try {
-      await onComplete(id, { mode, engine });
+      await onComplete(id, {
+        mode,
+        engine,
+        goal: mode === "none" ? "transcript" : postGoal,
+      });
     } catch (error) {
       toast(`录音已保存，后续处理未完成，可重试：${(error as Error).message}`);
     } finally {
@@ -725,6 +743,7 @@ export default function RecordingDialog({
       toast("此会话仍在采集，请先结束录音");
       return;
     }
+    setPostGoal("transcript");
     setBrief(session.brief || emptyBrief);
     briefRef.current = session.brief || emptyBrief;
     setNotes(session.notes);
@@ -1269,6 +1288,8 @@ export default function RecordingDialog({
             <button
               className="primary"
               disabled={
+                (postGoal === "minutes" &&
+                  (!minutesModel || !environment?.auto_minutes_ready)) ||
                 !engines.find((engine) => engine.id === draftEngine)?.ready ||
                 (captureSource !== "browser" && !nativeCapability?.available)
               }
@@ -1358,13 +1379,61 @@ export default function RecordingDialog({
       {state === "idle" && (
         <section className="recording-end-plan" aria-label="录音结束后的计划">
           <label>
+            交付目标
+            <select
+              aria-label="录音交付目标"
+              value={postGoal}
+              onChange={(e) => {
+                setPostGoal(e.target.value as "transcript" | "minutes");
+                if (e.target.value === "minutes" && completionMode === "none")
+                  setCompletionMode("quick");
+              }}
+            >
+              <option value="transcript">文字稿／录音资料</option>
+              <option
+                value="minutes"
+                disabled={!minutesModel || !environment?.auto_minutes_ready}
+              >
+                文字稿＋AI 纪要（含待办候选）
+              </option>
+            </select>
+          </label>
+          {postGoal === "minutes" && (
+            <label>
+              纪要模型
+              <select
+                aria-label="自动纪要模型"
+                value={minutesModel}
+                onChange={(e) => onMinutesModel(e.target.value)}
+              >
+                {environment?.analysis.profiles.length
+                  ? environment.analysis.profiles.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.name} ·{" "}
+                        {p.provider_type === "cloud" ? "云端" : "本地"}
+                      </option>
+                    ))
+                  : environment?.analysis.models.map((m) => (
+                      <option key={m}>{m}</option>
+                    ))}
+              </select>
+            </label>
+          )}
+          {postGoal === "minutes" &&
+            (!minutesModel || !environment?.auto_minutes_ready) && (
+              <p role="alert">
+                自动纪要模型或后台服务尚未就绪，请调整模型或选择仅文字稿。
+              </p>
+            )}
+          <label>
             结束后处理
             <select
               aria-label="结束后处理"
               value={completionMode}
-              onChange={(e) =>
-                setCompletionMode(e.target.value as CompletionMode)
-              }
+              onChange={(e) => {
+                setCompletionMode(e.target.value as CompletionMode);
+                if (e.target.value === "none") setPostGoal("transcript");
+              }}
             >
               <option value="quick">
                 快速完成文字稿（复用
@@ -1383,7 +1452,8 @@ export default function RecordingDialog({
             结束后自动进入会后整理
           </label>
           <p>
-            先保存完整录音，再执行所选方式；不会自动生成纪要或调用云端模型。异常恢复的录音仍由你确认后处理。
+            先保存录音，再完成文字稿；选择 AI
+            纪要时随后排队生成草稿，使用上次纪要模板与详略，行动项仍需核对。云端模型会在排队前再次确认；异常恢复的录音默认只处理文字稿。
           </p>
         </section>
       )}
@@ -1427,7 +1497,11 @@ export default function RecordingDialog({
               : completionMode === "full"
                 ? "精细处理文字稿"
                 : "先保留录音，暂不转写"}
-            。原音与关注点已经保存。
+            。
+            {postGoal === "minutes" && completionMode !== "none"
+              ? "文字稿完成后将自动生成 AI 纪要草稿。"
+              : ""}
+            原音与关注点已经保存。
           </p>
           <details>
             <summary>调整文字稿处理方式</summary>

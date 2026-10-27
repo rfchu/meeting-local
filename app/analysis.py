@@ -256,7 +256,7 @@ class LMStudioProvider:
             'type':'object','additionalProperties':False,'required':['basic_info','core_content','action_items','summary'],'properties':{
                 'basic_info':{'type':'object','additionalProperties':False,'required':['topic','meeting_form','attendees','purpose','source_segment_ids'],'properties':{
                     'topic':{'type':'string','minLength':1,'maxLength':300},'meeting_form':{'type':'string','maxLength':200},
-                    'attendees':{'type':'array','maxItems':20,'items':{'type':'string','enum':sorted(speakers)}},
+                    'attendees':{'type':'array','maxItems':20 if speakers else 0,'items':{'type':'string',**({'enum':sorted(speakers)} if speakers else {})}},
                     'purpose':{'type':'string','maxLength':500},'source_segment_ids':{'type':'array','maxItems':6,'items':ids}}},
                 'core_content':{'type':'array','minItems':1,'maxItems':10,'items':item},
                 'action_items':{'type':'array','maxItems':10,'items':item},

@@ -6,6 +6,7 @@ import {
   useRef,
   useState,
   type KeyboardEvent,
+  type RefObject,
 } from "react";
 import { defaultRangeExtractor, useVirtualizer } from "@tanstack/react-virtual";
 import type { Segment } from "../../types";
@@ -20,7 +21,9 @@ const Row = memo(function Row({
   segment,
   onUpdate,
   onSeek,
+  readOnly = false,
 }: {
+  readOnly?: boolean;
   segment: Segment;
   onUpdate: (segment: Segment) => void;
   onSeek: (time: number) => void;
@@ -56,6 +59,7 @@ const Row = memo(function Row({
       </button>
       <div>
         <input
+          readOnly={readOnly}
           className="speaker"
           aria-label="发言人"
           value={segment.speaker}
@@ -64,6 +68,7 @@ const Row = memo(function Row({
         <label className="speaker-confirmed">
           <input
             type="checkbox"
+            disabled={readOnly}
             checked={!!segment.speaker_locked}
             onChange={(e) =>
               onUpdate({ ...segment, speaker_locked: e.target.checked })
@@ -77,6 +82,7 @@ const Row = memo(function Row({
           </p>
         )}
         <textarea
+          readOnly={readOnly}
           ref={textRef}
           aria-label={`转写文字 ${clock(segment.start)}`}
           rows={Math.max(1, Math.ceil(segment.text.length / 42))}
@@ -95,7 +101,11 @@ export default function TranscriptList({
   onSeek,
   jumpSegmentId,
   onEditingChange,
+  scrollRoot,
+  readOnly = false,
 }: {
+  readOnly?: boolean;
+  scrollRoot?: RefObject<HTMLElement | null>;
   segments: Segment[];
   total: number;
   onUpdate: (segment: Segment) => void;
@@ -135,11 +145,22 @@ export default function TranscriptList({
     setHighlight(jumpSegmentId);
     if (virtual)
       list.scrollToIndex(index, { align: "center", behavior: "auto" });
-    else
-      parent.current
-        ?.querySelector(`[data-index="${index}"]`)
-        ?.scrollIntoView({ block: "center" });
-  }, [jumpSegmentId, segments, virtual, list]);
+    else {
+      const row = parent.current?.querySelector(`[data-index="${index}"]`);
+      const root = scrollRoot?.current;
+      if (row && root)
+        root.scrollTo({
+          top: Math.max(
+            0,
+            root.scrollTop +
+              row.getBoundingClientRect().top -
+              root.getBoundingClientRect().top -
+              root.clientHeight / 2,
+          ),
+        });
+      else row?.scrollIntoView({ block: "center" });
+    }
+  }, [jumpSegmentId, segments, virtual, list, scrollRoot]);
   useEffect(() => {
     if (!pendingFocus) return;
     const index = segments.findIndex((s) => s.id === pendingFocus.id);
@@ -201,7 +222,12 @@ export default function TranscriptList({
           : undefined
       }
     >
-      <Row segment={segment} onUpdate={onUpdate} onSeek={onSeek} />
+      <Row
+        readOnly={readOnly}
+        segment={segment}
+        onUpdate={onUpdate}
+        onSeek={onSeek}
+      />
     </div>
   );
   return (

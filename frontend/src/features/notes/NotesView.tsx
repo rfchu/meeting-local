@@ -1,6 +1,6 @@
 import { useModelChoice } from "../../preferences/useModelChoice";
 import { resolveModelChoice } from "../../preferences/modelChoices";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { api } from "../../api";
 import type {
   Meeting,
@@ -10,7 +10,7 @@ import type {
   NoteReview,
   NoteTodo,
 } from "../../types";
-import { clock } from "../../utils";
+import { clock, currentMinutes } from "../../utils";
 import Modal from "../../components/Modal";
 
 const labels: Record<MeetingNoteType, string> = {
@@ -28,7 +28,11 @@ export default function NotesView({
   toast,
   minutesDirty,
   onMinutes,
+  inlineReview = false,
+  onLocate,
 }: {
+  inlineReview?: boolean;
+  onLocate?: (time: number) => void;
   meeting: Meeting;
   onMinutes: () => void;
   minutesDirty: boolean;
@@ -94,6 +98,22 @@ export default function NotesView({
     ["queued", "running"].includes(job.state),
   );
   const selectedNote = meeting.notes.find((note) => note.id === selected);
+  if (inlineReview && selectedNote)
+    return (
+      <ReviewPanel
+        key={selectedNote.id}
+        inline
+        note={selectedNote}
+        meeting={meeting}
+        profileId={profileId}
+        minutesDirty={minutesDirty}
+        onPause={onPause}
+        onRefresh={onRefresh}
+        onSeek={onSeek}
+        onClose={() => setSelected(null)}
+        toast={toast}
+      />
+    );
   return (
     <div className="notes-view">
       <div className="notes-purpose">
@@ -251,7 +271,10 @@ export default function NotesView({
               }
               disabled={busy}
               onSeek={onSeek}
-              onReview={() => setSelected(note.id)}
+              onReview={() => {
+                setSelected(note.id);
+                onLocate?.(note.captured_at);
+              }}
               onSave={(draft) =>
                 run(() =>
                   api.updateNote(meeting.id, note.id, {
@@ -443,7 +466,38 @@ function NoteCard({
     </article>
   );
 }
+function ReviewContainer({
+  inline,
+  children,
+  onClose,
+  ...props
+}: {
+  inline: boolean;
+  children: React.ReactNode;
+  onClose: () => void;
+  className: string;
+  ariaLabel: string;
+}) {
+  const panel = useRef<HTMLElement>(null);
+  useEffect(() => {
+    if (inline) panel.current?.parentElement?.scrollTo({ top: 0 });
+  }, [inline]);
+  return inline ? (
+    <section
+      ref={panel}
+      className="inline-note-review"
+      aria-label={props.ariaLabel}
+    >
+      {children}
+    </section>
+  ) : (
+    <Modal {...props} onClose={onClose}>
+      {children}
+    </Modal>
+  );
+}
 function ReviewPanel({
+  inline = false,
   note,
   meeting,
   profileId,
@@ -454,6 +508,7 @@ function ReviewPanel({
   onClose,
   toast,
 }: {
+  inline?: boolean;
   note: MeetingNote;
   meeting: Meeting;
   profileId: string;
@@ -490,9 +545,7 @@ function ReviewPanel({
           ? "open_questions"
           : "conclusions",
   );
-  const minutes = meeting.artifacts.find(
-    (a) => a.kind === "meeting_minutes" && a.revision === meeting.revision,
-  );
+  const minutes = currentMinutes(meeting);
   const job = meeting.jobs.find(
     (j) =>
       j.kind === "note_expansion" && JSON.parse(j.config).note_id === note.id,
@@ -500,6 +553,9 @@ function ReviewPanel({
   const active = !!job && ["queued", "running"].includes(job.state);
   useEffect(() => {
     let live = true;
+    setConfirmed(false);
+    setContext(null);
+    setIds([]);
     api
       .reviewNote(meeting.id, note.id)
       .then((value) => {
@@ -519,7 +575,13 @@ function ReviewPanel({
     return () => {
       live = false;
     };
-  }, [note.id]);
+  }, [
+    note.id,
+    meeting.revision,
+    note.raw_text,
+    note.captured_at,
+    note.note_scope,
+  ]);
   useEffect(() => {
     setEdited(suggestion?.payload.text || "");
   }, [suggestion?.id]);
@@ -556,7 +618,8 @@ function ReviewPanel({
         : "已转为待办，可在简记下方填写负责人和期限。",
     );
   return (
-    <Modal
+    <ReviewContainer
+      inline={inline}
       className="note-review-dialog"
       onClose={() => {
         onPause();
@@ -572,7 +635,7 @@ function ReviewPanel({
             onClose();
           }}
         >
-          关闭
+          {inline ? "返回关注点列表" : "关闭"}
         </button>
       </div>
       <p>先回听原文，再确认用途。扩写是建议，标签不是已核实结论。</p>
@@ -824,7 +887,7 @@ function ReviewPanel({
           )}
         </section>
       </div>
-    </Modal>
+    </ReviewContainer>
   );
 }
 export function TodoCard({

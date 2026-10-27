@@ -24,7 +24,7 @@ export interface Job {
   progress: number;
   error: string;
   config: string;
-  kind?: "transcription" | "analysis" | "note_expansion";
+  kind?: "transcription" | "analysis" | "note_expansion" | "minutes";
 }
 
 export interface Revision {
@@ -297,7 +297,7 @@ export interface MeetingSummary {
 
 export interface MinutesGenerationStatus {
   id: string;
-  state: "running" | "completed" | "failed";
+  state: "running" | "completed" | "failed" | "cancelled";
   revision: number;
   elapsed_seconds: number;
   error: string;
@@ -354,6 +354,7 @@ export interface LLMConfig {
   is_default: boolean;
 }
 export interface Environment {
+  auto_minutes_ready?: boolean;
   qa_ready?: boolean;
   meeting_flow_ready?: boolean;
   engines: EngineInfo[];

@@ -49,6 +49,9 @@ export default function Workflow(props: Props) {
   } = props;
   const progress = reviewProgress(meeting, transcriptDirty, minutesDirty);
   const pendingDrafts = pendingMinutesDrafts(meeting);
+  const automaticMinutes = meeting.jobs.find(
+    (job) => job.kind === "minutes" && job.state === "completed",
+  );
   const deliveryAttention = deliveryAttentionCount(meeting);
   const nextRequired = progress.steps.find(
     (step) =>
@@ -98,6 +101,16 @@ export default function Workflow(props: Props) {
   } else if (meeting.minutes_generation?.state === "running") {
     hint = `AI 纪要正在整理文字稿，已等待 ${meeting.minutes_generation.elapsed_seconds} 秒，完整返回后自动保存。`;
     label = "查看生成状态";
+    action = onMinutes;
+  } else if (
+    automaticMinutes &&
+    minutes?.provenance.job === automaticMinutes.id &&
+    meeting.review?.steps.minutes.state !== "done" &&
+    !transcriptDirty &&
+    !minutesDirty
+  ) {
+    hint = "自动纪要草稿已保存，可先核对决策、负责人和期限，再预览导出。";
+    label = "核对自动纪要";
     action = onMinutes;
   } else if (pendingDrafts.length && !transcriptDirty) {
     hint = `有 ${pendingDrafts.length} 份纪要草稿待核对，当前采用稿保持不变；可对比后采用。`;

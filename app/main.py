@@ -27,6 +27,7 @@ from .qa import QA
 from .minutes_composition import ComposeInput,CompositionSettings,build_from_ai,publish_analysis,canonical_source
 from . import minutes_versions
 from .minutes_generation import MinutesGeneration
+from .auto_minutes import MinutesFollowupInput,prepare as prepare_auto_minutes
 from . import meeting_flow
 from .local_embedding import local_embedding
 from .retrieval import Retrieval
@@ -47,6 +48,7 @@ class RevisionInput(BaseModel):
     revision: int
     segments: list[Segment]=Field(max_length=50000)
 class JobInput(BaseModel):
+    minutes_followup: MinutesFollowupInput | None=None
     completion_mode: Literal["full","quick"]="full"
     engine: Literal["whisper","qwen"]="whisper"
     diarization: bool=False
@@ -408,7 +410,7 @@ def create_app(data_dir=None, start_worker=True):
             try:analysis=LMStudioProvider().status()
             except ValueError as error:analysis={'ready':False,'models':[],'error':str(error),'base_url':''}
             analysis.update(profiles=[],default_profile_id=None)
-        return {'engines':engine_catalog(),'default_engine':'whisper','engine_ready':engine.ready(),'engine':'whisper.cpp / Metal','model':Path(engine.model).name,'diarization_ready':diar.ready(),'punctuation_ready':LocalPunctuation().ready(),'ffmpeg_ready':bool(shutil.which('ffmpeg')),'data_dir':str(store.root),'offline':True,'analysis':analysis,'qa_ready':True,'meeting_flow_ready':True}
+        return {'engines':engine_catalog(),'default_engine':'whisper','engine_ready':engine.ready(),'engine':'whisper.cpp / Metal','model':Path(engine.model).name,'diarization_ready':diar.ready(),'punctuation_ready':LocalPunctuation().ready(),'ffmpeg_ready':bool(shutil.which('ffmpeg')),'data_dir':str(store.root),'offline':True,'analysis':analysis,'qa_ready':True,'meeting_flow_ready':True,'auto_minutes_ready':True}
 
     @app.get('/api/minutes-templates')
     def list_minutes_templates():
@@ -928,11 +930,13 @@ def create_app(data_dir=None, start_worker=True):
         if body.completion_mode!='quick' and not provider.ready(): raise HTTPException(409,f'{provider.label} 尚未就绪，请先安装对应模型')
         if body.completion_mode=='quick' and not (recordings.root/mid/'session.json').exists():raise HTTPException(409,'快速完成仅适用于本机实时录音')
         if body.completion_mode!='quick' and body.diarization and not LocalDiarization().ready(): raise HTTPException(409,'尚未配置本地发言人模型')
+        try:followup=prepare_auto_minutes(store,body.minutes_followup) if body.minutes_followup else None
+        except (ValueError,RuntimeError) as error:raise HTTPException(409,str(error))
         jid=uid()
         with store.connect() as db:
             db.execute('BEGIN IMMEDIATE')
             if db.execute("SELECT 1 FROM jobs WHERE meeting_id=? AND state IN ('running','queued')",(mid,)).fetchone(): raise HTTPException(409,'已有任务正在处理')
-            db.execute('INSERT INTO jobs(id,meeting_id,state,stage,config) VALUES(?,?,?,?,?)',(jid,mid,'queued','等待处理',encode({'engine':body.engine,'chunk_seconds':provider.chunk_seconds,'punctuation':provider.needs_punctuation,'diarization':body.diarization,'num_speakers':body.num_speakers,'base_revision':row['revision'],'engine_identity':provider.identity(),'pipeline_version':2,'completion_mode':body.completion_mode,'live_snapshot':live_results.snapshot(mid,body.engine) if body.completion_mode=='quick' else []})))
+            db.execute('INSERT INTO jobs(id,meeting_id,state,stage,config) VALUES(?,?,?,?,?)',(jid,mid,'queued','等待处理',encode({'engine':body.engine,'chunk_seconds':provider.chunk_seconds,'punctuation':provider.needs_punctuation,'diarization':body.diarization,'num_speakers':body.num_speakers,'base_revision':row['revision'],'engine_identity':provider.identity(),'pipeline_version':2,'minutes_followup':followup,'completion_mode':body.completion_mode,'live_snapshot':live_results.snapshot(mid,body.engine) if body.completion_mode=='quick' else []})))
         return {'id':jid}
     @app.post('/api/meetings/{mid}/analysis-jobs',status_code=201)
     def enqueue_analysis(mid:str,body:AnalysisJobInput):

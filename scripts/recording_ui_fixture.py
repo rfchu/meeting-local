@@ -38,6 +38,7 @@ def main():
     parser.add_argument('--review-demo',action='store_true',help='Seed a synthetic transcript and AI minutes for review acceptance')
     parser.add_argument('--minutes-demo',action='store_true',help='Seed persistent AI minutes generation failure for UI acceptance')
     parser.add_argument('--recovery-demo',action='store_true',help='Synthetic failed ASR and saved recovery text')
+    parser.add_argument('--automatic-demo',action='store_true',help='Synthetic ASR and automatic minutes worker only; no real models')
     parser.add_argument('--flow-demo',action='store_true',help='Synthetic meeting preparation, attention and follow-up flow; no real models')
     parser.add_argument('--qa-demo',action='store_true',help='Synthetic multi-meeting QA with deterministic replies, never calls a real model')
     parser.add_argument('--long-demo',type=int,choices=[1000,3000,10000],help='Seed an isolated long transcript for DOM/edit/search acceptance')
@@ -48,6 +49,7 @@ def main():
         session=recordings.create('audio/webm')
         recordings.metadata(session['id'],[{'captured_at':4,'raw_text':'验证用简记：核对中断后恢复','note_type':'note','note_scope':'personal'}],15,3)
         recordings.chunk(session['id'],0,b'fixture-head');recordings.chunk(session['id'],2,b'fixture-tail')
+        if args.automatic_demo:args.flow_demo=True
         if args.review_demo or args.qa_demo or args.flow_demo or args.recovery_demo:
             import wave
             from app.minutes import MeetingMinutes
@@ -99,11 +101,17 @@ def main():
                 def status(self):return {'ready':True,'models':['synthetic-minutes'],'base_url':self.base_url,'error':''}
                 def resolve_model(self,model=None):return 'synthetic-minutes'
                 def generate_ai_minutes(self,model,segments,metadata,work,run):
+                    if args.automatic_demo:
+                        import time
+                        time.sleep(3)
                     if args.minutes_demo:
                         import time
                         time.sleep(5) # Allow refreshing a pending synthetic request during acceptance.
                     return AIMinutesResult(basic_info=AIMinutesBasicInfo(topic='合成交付会',source_segment_ids=['demo-seg']),overview=[AnalysisItem(content='本次围绕交付安排进行核对。',source_segment_ids=['demo-seg'])],decisions=[AnalysisItem(content='按周五交付安排推进。',source_segment_ids=['demo-seg'])],open_questions=[AnalysisItem(content='交付负责人仍待确认。',source_segment_ids=['demo-seg'])],core_content=[AnalysisItem(content='测试约定周五交付，负责人待确认。',source_segment_ids=['demo-seg'])],action_items=[AnalysisItem(content='核对交付负责人',source_segment_ids=['demo-seg'])],summary=[AnalysisItem(content='继续确认交付安排。',source_segment_ids=['demo-seg'])])
             module.LMStudioProvider=SyntheticMinutesProvider
+            if args.automatic_demo:
+                import app.auto_minutes as automatic
+                automatic.LMStudioProvider=SyntheticMinutesProvider
             earlier=uid();folder=store.directory(earlier);folder.mkdir();(folder/'original').write_bytes((directory/'original').read_bytes())
             store.execute('INSERT INTO meetings(id,title,filename,duration) VALUES(?,?,?,?)',(earlier,'合成上次评审会','previous.wav',12))
             store.save_revision(earlier,[{'id':'previous-seg','start':0,'end':12,'speaker':'甲','text':'准备交付验收材料。'}],'manual')
@@ -129,7 +137,7 @@ def main():
         previous=module.NativeCapture
         try:
             module.NativeCapture=SyntheticCapture
-            app=create_app(root,start_worker=bool(args.qa_demo or args.long_demo))
+            app=create_app(root,start_worker=bool(args.qa_demo or args.long_demo or args.automatic_demo))
         finally:module.NativeCapture=previous
         if args.qa_demo or args.long_demo:
             actual_process=app.state.worker.process
@@ -137,6 +145,24 @@ def main():
                 if job.get('kind') not in ('retrieval_answer','retrieval_index'):raise ValueError('隔离验收服务仅处理合成问答和索引')
                 return actual_process(job)
             app.state.worker.process=only_qa
+        if args.automatic_demo:
+            import app.worker as worker_module
+            class SyntheticASR:
+                engine_id='whisper';label='合成 ASR';model='synthetic.bin';needs_punctuation=False;chunk_seconds=15
+                def ready(self):return True
+                def identity(self):return {}
+                def transcribe(self,*args):return [{'id':'demo-seg','start':0,'end':12,'speaker':'未分配','text':'测试约定周五交付，负责人待确认。'}]
+            module.get_asr_provider=lambda *_:SyntheticASR()
+            worker_module.get_asr_provider=lambda *_:SyntheticASR()
+            class NoDiarization:
+                def ready(self):return False
+            module.LocalDiarization=NoDiarization
+            app.state.worker.fast_transcription=lambda *args:([{'id':'demo-seg','start':0,'end':12,'speaker':'未分配','text':'测试约定周五交付，负责人待确认。'}],{})
+            actual=app.state.worker.process
+            def only_synthetic(job):
+                if job.get('kind') not in ('transcription','minutes'):raise ValueError('隔离服务仅处理合成转写与纪要')
+                return actual(job)
+            app.state.worker.process=only_synthetic
         app.state.keep_awake.supported=False
         print('SYNTHETIC TEST ONLY — no microphone, no real capture; temporary data removed on exit.',flush=True)
         uvicorn.run(app,host='127.0.0.1',port=args.port,access_log=False)

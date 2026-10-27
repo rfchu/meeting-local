@@ -366,6 +366,18 @@ export const api = {
       diarization: boolean;
       num_speakers: number;
       completion_mode?: "quick" | "full";
+      minutes_followup?: {
+        profile_id?: string;
+        model?: string;
+        confirm_cloud: boolean;
+        expected_provider?: {
+          id: string;
+          base_url: string;
+          provider_type: string;
+          model: string;
+        };
+        settings: import("./features/minutes/composition").MinutesOptions;
+      };
     },
   ) => request<{ id: string }>(`/meetings/${id}/jobs`, json("POST", body)),
   jobAction: (id: string, action: "cancel" | "retry") =>

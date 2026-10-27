@@ -151,15 +151,17 @@ export function minutesVersionDescription(artifact: Artifact<MeetingMinutes>) {
     raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
   const method = artifact.provenance.edited
     ? "人工修订"
-    : artifact.provenance.llm_polished
-      ? "AI 润色"
-      : settings.method === "analysis"
-        ? "规则成稿"
-        : settings.method === "current"
-          ? "AI 派生"
-          : artifact.payload.style === "ai"
-            ? "AI 全文"
-            : "规则成稿";
+    : artifact.provenance.automatic
+      ? "AI 自动成稿"
+      : artifact.provenance.llm_polished
+        ? "AI 润色"
+        : settings.method === "analysis"
+          ? "规则成稿"
+          : settings.method === "current"
+            ? "AI 派生"
+            : artifact.payload.style === "ai"
+              ? "AI 全文"
+              : "规则成稿";
   const detail =
     settings.method === "analysis"
       ? ""

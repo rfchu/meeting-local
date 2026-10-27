@@ -100,3 +100,10 @@ def test_unsupported_native_endpoint_falls_back_without_reprobing(monkeypatch):
     request=script.native_minutes_requester();payload={'model':'synthetic','messages':[]}
     for _ in range(2):assert request('http://localhost/v1/chat/completions',{},payload)=={'ok':True}
     assert len(native)==1 and len(compatible)==2
+
+
+
+def test_unknown_speakers_do_not_produce_empty_enum_in_schema():
+    schema=LMStudioProvider._ai_minutes_response_format({'s1'},set())['json_schema']['schema']
+    attendees=schema['properties']['basic_info']['properties']['attendees']
+    assert attendees['maxItems']==0 and 'enum' not in attendees['items']

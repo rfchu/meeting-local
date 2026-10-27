@@ -60,7 +60,7 @@ class Worker:
             self.busy_jid=job['id']
             try:
                 self.process(job)
-                stage={'analysis':'分析完成','note_expansion':'简记扩写完成','retrieval_index':'检索索引建立完成','retrieval_answer':'引用问答完成'}.get(job.get('kind'),'转写完成')
+                stage={'analysis':'分析完成','note_expansion':'简记扩写完成','retrieval_index':'检索索引建立完成','retrieval_answer':'引用问答完成','minutes':'AI 纪要草稿已保存，待人工核对'}.get(job.get('kind'),'转写完成')
                 if job.get('kind')=='analysis' and json.loads(job['config']).get('minutes_followup'):stage='分析与纪要草稿完成'
                 self.store.execute("UPDATE jobs SET state='completed',stage=?,progress=1 WHERE id=? AND state='running'",(stage,job['id']))
             except Cancelled: pass
@@ -84,6 +84,9 @@ class Worker:
                 return Retrieval(self.store).build(self,job)
             if job.get('kind')=='note_expansion':return self.process_note_expansion(job)
             if job.get('kind')=='analysis':return self.process_analysis(job)
+            if job.get('kind')=='minutes':
+                from .auto_minutes import process
+                return process(self,job)
             return self.process_transcription(job)
         except Cancelled:raise
         except Exception:
@@ -239,7 +242,7 @@ class Worker:
             current=db.execute('SELECT revision FROM meetings WHERE id=?',(mid,)).fetchone()['revision']
             if current != config['base_revision']:
                 db.execute('INSERT INTO artifacts(id,meeting_id,revision,kind,payload,provenance) VALUES(?,?,?,?,?,?)',(uid(),mid,current,'transcript_candidate',encode(segments),source_meta))
-                db.execute("UPDATE jobs SET stage='已生成候选稿，校对内容已保留',state='completed',progress=1 WHERE id=?",(jid,))
+                db.execute("UPDATE jobs SET stage=?,state='completed',progress=1 WHERE id=?",('已生成候选稿，校对内容已保留'+('；自动纪要未启动' if config.get('minutes_followup') else ''),jid))
             else:
                 rev=current+1; payload=encode(segments)
                 db.execute('INSERT INTO revisions(meeting_id,revision,segments,source) VALUES(?,?,?,?)',(mid,rev,payload,source_meta))
@@ -247,6 +250,9 @@ class Worker:
                 warning_count=sum(bool(s.get('alignment_warning')) for s in segments)
                 stage='快速文字稿完成，可再精细处理' if config.get('completion_mode')=='quick' else ('转写完成，部分时间待校准' if warning_count else '转写完成')
                 db.execute("UPDATE jobs SET state='completed',stage=?,progress=1 WHERE id=?",(stage,jid))
+                if config.get('minutes_followup'):
+                    from .auto_minutes import enqueue_after_transcription
+                    enqueue_after_transcription(db,mid,jid,rev,config['minutes_followup'])
             db.execute("DELETE FROM artifacts WHERE id=? AND meeting_id=? AND kind='transcript_candidate'",(hashlib.sha256(('transcription-progress:'+jid).encode()).hexdigest()[:32],mid))
 
     def fast_transcription(self,config,duration,audio,work,provider,run,jid):

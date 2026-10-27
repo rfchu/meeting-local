@@ -1,3 +1,4 @@
+import ReviewSourcePane from "./features/meeting/ReviewSourcePane";
 import {
   browserMeetingStorage,
   readMeetingView,
@@ -147,6 +148,9 @@ export default function App() {
     refetchInterval: 30000,
     enabled: !recordingOpen,
   });
+  const [reviewFocus, setReviewFocus] = useState<number | null>(null);
+  const [reviewFocusVersion, setReviewFocusVersion] = useState(0);
+  const [reviewSourceOpen, setReviewSourceOpen] = useState(true);
   const [reviewBusy, setReviewBusy] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [followupsOpen, setFollowupsOpen] = useState(false);
@@ -387,7 +391,13 @@ export default function App() {
     return () => window.clearTimeout(timer);
   }, [minutesDirty, minutesDraft, saveMinutes]);
 
+  const locateReview = (time: number) => {
+    setReviewFocus(time);
+    setReviewFocusVersion((value) => value + 1);
+  };
+
   const openMeeting = async (id: string) => {
+    setReviewFocus(null);
     const request = ++openingMeeting.current;
     try {
       await saveTranscript();
@@ -525,7 +535,11 @@ export default function App() {
   };
   const completeRecording = async (
     meetingId: string,
-    options: { mode: CompletionMode; engine: "whisper" | "qwen" },
+    options: {
+      mode: CompletionMode;
+      engine: "whisper" | "qwen";
+      goal?: "transcript" | "minutes";
+    },
   ) => {
     setUploading(true);
     let created: Meeting | null = null;
@@ -540,7 +554,42 @@ export default function App() {
           diarization,
           numSpeakers,
         );
-        if (plan) await api.transcribe(created.id, plan);
+        if (plan) {
+          const profile = envQuery.data?.analysis.profiles.find(
+            (p) => p.id === minutesModel,
+          );
+          const requested = options.goal === "minutes";
+          const consent =
+            !requested ||
+            profile?.provider_type !== "cloud" ||
+            window.confirm(
+              `转写完成后，将文字稿、会议准备及已确认关注点发送到 ${profile.name}（${profile.base_url}）生成纪要。是否同意本次自动处理？`,
+            );
+          if (requested && !consent)
+            followUpErrors.push("未授权云端纪要，本次只生成文字稿");
+          await api.transcribe(created.id, {
+            ...plan,
+            ...(requested && consent
+              ? {
+                  minutes_followup: {
+                    ...(envQuery.data?.analysis.profiles.length
+                      ? { profile_id: minutesModel }
+                      : { model: minutesModel }),
+                    confirm_cloud: profile?.provider_type === "cloud",
+                    expected_provider: profile
+                      ? {
+                          id: profile.id,
+                          base_url: profile.base_url,
+                          provider_type: profile.provider_type,
+                          model: profile.model,
+                        }
+                      : undefined,
+                    settings: { ...minutesOptions, method: "ai" },
+                  },
+                }
+              : {}),
+          });
+        }
       } catch (error) {
         followUpErrors.push(`转写未启动：${(error as Error).message}`);
       }
@@ -553,7 +602,7 @@ export default function App() {
           ? `录音已保存；${followUpErrors.join("；")}`
           : options.mode === "none"
             ? `录音和 ${created.notes.length} 条简记已保存，可稍后转写`
-            : `录音和 ${created.notes.length} 条简记已保存，文字稿正在本机生成`,
+            : `录音和 ${created.notes.length} 条简记已保存，文字稿正在本机生成${options.goal === "minutes" ? "，完成后自动排队纪要" : ""}`,
       );
     } catch (error) {
       toast((error as Error).message);
@@ -1103,72 +1152,140 @@ export default function App() {
                   />
                 )}
                 {workspace === "notes" && (
-                  <NotesView
-                    meeting={meeting}
-                    onRefresh={async () => {
-                      const fresh = await api.meeting(meeting.id);
-                      setMeeting(fresh);
-                      if (!minutesDirty) {
-                        const artifact = latestMinutes(fresh);
-                        displayMinutes(artifact || null);
-                      }
-                    }}
-                    minutesDirty={minutesDirty}
-                    onMinutes={() => setWorkspace("minutes")}
-                    onPause={() => pausePlaybackRef.current?.()}
-                    onSeek={(time) => seekRef.current?.(time)}
-                    toast={toast}
-                  />
+                  <div
+                    className={`meeting-review-workspace ${reviewSourceOpen ? "split" : ""}`}
+                  >
+                    <button
+                      className="review-source-toggle"
+                      onClick={() => setReviewSourceOpen(!reviewSourceOpen)}
+                    >
+                      {reviewSourceOpen ? "收起原文" : "展开原文与回听"}
+                    </button>
+                    {reviewSourceOpen && (
+                      <ReviewSourcePane
+                        key={meeting.id}
+                        meeting={meeting}
+                        focusTime={reviewFocus}
+                        focusVersion={reviewFocusVersion}
+                        onSeek={(time) => {
+                          seekRef.current?.(time);
+                        }}
+                        onEdit={() => setWorkspace("transcript")}
+                      />
+                    )}
+                    <div className="review-notes-pane">
+                      <NotesView
+                        key={meeting.id}
+                        inlineReview
+                        onLocate={(time) => {
+                          locateReview(time);
+                          setReviewSourceOpen(true);
+                        }}
+                        meeting={meeting}
+                        onRefresh={async () => {
+                          const fresh = await api.meeting(meeting.id);
+                          setMeeting(fresh);
+                          if (!minutesDirty) {
+                            const artifact = latestMinutes(fresh);
+                            displayMinutes(artifact || null);
+                          }
+                        }}
+                        minutesDirty={minutesDirty}
+                        onMinutes={() => setWorkspace("minutes")}
+                        onPause={() => pausePlaybackRef.current?.()}
+                        onSeek={(time) => {
+                          locateReview(time);
+                          seekRef.current?.(time);
+                        }}
+                        toast={toast}
+                      />
+                    </div>
+                  </div>
                 )}
                 {workspace === "minutes" && (
-                  <>
-                    <MeetingOutcomes
-                      onSeek={(time) => seekRef.current?.(time)}
-                      minutesDirty={minutesDirty}
-                      meeting={meeting}
-                      onNotes={() => setWorkspace("notes")}
-                      onRefresh={async () =>
-                        setMeeting(await api.meeting(meeting.id))
-                      }
-                      toast={toast}
-                    />
-                    <MinutesView
-                      meeting={meeting}
-                      environment={environment}
-                      draft={minutesDraft}
-                      dirty={minutesDirty}
-                      transcriptDirty={transcriptDirty}
-                      options={minutesOptions}
-                      withAnalysis={withAnalysis}
-                      selectedId={selectedMinutesId}
-                      templates={
-                        (templatesQuery.data || []) as MinutesTemplate[]
-                      }
-                      model={minutesModel}
-                      showCitations={showCitations}
-                      generating={generating}
-                      onOptions={changeMinutesOptions}
-                      onWithAnalysis={setWithAnalysis}
-                      onSelect={(id) => void selectMinutes(id)}
-                      onAdopt={() => void adoptMinutes()}
-                      onCompare={(left, right) =>
-                        void compareMinutes(left, right)
-                      }
-                      onExport={(format) => void exportMinutes(format)}
-                      onModel={setMinutesModel}
-                      onCitations={setShowCitations}
-                      onGenerate={() => void startMinutes()}
-                      onDraft={(value) => {
-                        minutesGeneration.current++;
-                        minutesDraftRef.current = { draft: value, dirty: true };
-                        setMinutesDraft(value);
-                        setMinutesDirty(true);
-                      }}
-                      onSave={() => void saveMinutes()}
-                      onPreview={() => void openMinutesPreview()}
-                      onSeek={(time) => seekRef.current?.(time)}
-                    />
-                  </>
+                  <div
+                    className={`meeting-review-workspace ${reviewSourceOpen ? "split" : ""}`}
+                  >
+                    <button
+                      className="review-source-toggle"
+                      onClick={() => setReviewSourceOpen(!reviewSourceOpen)}
+                    >
+                      {reviewSourceOpen ? "收起原文" : "展开原文与回听"}
+                    </button>
+                    {reviewSourceOpen && (
+                      <ReviewSourcePane
+                        key={meeting.id}
+                        meeting={meeting}
+                        focusTime={reviewFocus}
+                        focusVersion={reviewFocusVersion}
+                        onSeek={(time) => {
+                          seekRef.current?.(time);
+                        }}
+                        onEdit={() => setWorkspace("transcript")}
+                      />
+                    )}
+                    <div className="review-notes-pane">
+                      <MeetingOutcomes
+                        onSeek={(time) => {
+                          locateReview(time);
+                          setReviewSourceOpen(true);
+                          seekRef.current?.(time);
+                        }}
+                        minutesDirty={minutesDirty}
+                        meeting={meeting}
+                        onNotes={() => setWorkspace("notes")}
+                        onRefresh={async () =>
+                          setMeeting(await api.meeting(meeting.id))
+                        }
+                        toast={toast}
+                      />
+                      <MinutesView
+                        meeting={meeting}
+                        environment={environment}
+                        draft={minutesDraft}
+                        dirty={minutesDirty}
+                        transcriptDirty={transcriptDirty}
+                        options={minutesOptions}
+                        withAnalysis={withAnalysis}
+                        selectedId={selectedMinutesId}
+                        templates={
+                          (templatesQuery.data || []) as MinutesTemplate[]
+                        }
+                        model={minutesModel}
+                        referenceMode={reviewSourceOpen}
+                        showCitations={showCitations}
+                        generating={generating}
+                        onOptions={changeMinutesOptions}
+                        onWithAnalysis={setWithAnalysis}
+                        onSelect={(id) => void selectMinutes(id)}
+                        onAdopt={() => void adoptMinutes()}
+                        onCompare={(left, right) =>
+                          void compareMinutes(left, right)
+                        }
+                        onExport={(format) => void exportMinutes(format)}
+                        onModel={setMinutesModel}
+                        onCitations={setShowCitations}
+                        onGenerate={() => void startMinutes()}
+                        onDraft={(value) => {
+                          minutesGeneration.current++;
+                          minutesDraftRef.current = {
+                            draft: value,
+                            dirty: true,
+                          };
+                          setMinutesDraft(value);
+                          setMinutesDirty(true);
+                        }}
+                        onJobAction={(id, action) => void jobAction(id, action)}
+                        onSave={() => void saveMinutes()}
+                        onPreview={() => void openMinutesPreview()}
+                        onSeek={(time) => {
+                          locateReview(time);
+                          setReviewSourceOpen(true);
+                          seekRef.current?.(time);
+                        }}
+                      />
+                    </div>
+                  </div>
                 )}
               </div>
               <div className="info-panel">
@@ -1310,6 +1427,9 @@ export default function App() {
       )}
       {recordingOpen && (
         <RecordingDialog
+          environment={environment}
+          minutesModel={minutesModel}
+          onMinutesModel={setMinutesModel}
           flowReady={environment?.meeting_flow_ready === true}
           meetings={listQuery.data || []}
           engineLabel={engineLabel(engine)}
