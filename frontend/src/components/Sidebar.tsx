@@ -9,6 +9,7 @@ const states: Record<string, string> = {
 };
 
 interface Props {
+  onHome: () => void;
   meetings: MeetingSummary[];
   currentId?: string;
   uploading: boolean;
@@ -22,6 +23,7 @@ interface Props {
 }
 
 export default function Sidebar({
+  onHome,
   meetings,
   currentId,
   uploading,
@@ -36,7 +38,14 @@ export default function Sidebar({
   const choose = () => document.getElementById("file")?.click();
   return (
     <aside>
-      <a className="brand" href="/">
+      <a
+        className="brand"
+        href="/"
+        onClick={(event) => {
+          event.preventDefault();
+          onHome();
+        }}
+      >
         ◉{" "}
         <span>
           听记<small>LOCAL MEETING</small>

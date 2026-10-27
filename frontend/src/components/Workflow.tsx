@@ -1,3 +1,4 @@
+import { deliveryAttentionCount } from "./deliveryAttention";
 import { pendingMinutesDrafts } from "../features/minutes/presentation";
 import type { Meeting, ReviewStep } from "../types";
 import { currentMinutes, isRunning, latestMinutes } from "../utils";
@@ -48,6 +49,13 @@ export default function Workflow(props: Props) {
   } = props;
   const progress = reviewProgress(meeting, transcriptDirty, minutesDirty);
   const pendingDrafts = pendingMinutesDrafts(meeting);
+  const deliveryAttention = deliveryAttentionCount(meeting);
+  const nextRequired = progress.steps.find(
+    (step) =>
+      step.state !== "done" &&
+      step.state !== "not_needed" &&
+      (step.key !== "notes" || deliveryAttention > 0),
+  );
   const minutes = currentMinutes(meeting),
     busy = meeting.jobs.find(isRunning);
   if (!meeting.review)
@@ -106,18 +114,12 @@ export default function Workflow(props: Props) {
     hint = "文字稿有未保存修改，保存后重新核对受影响的内容。";
     label = "保存文字稿";
     action = onSave;
-  } else if (
-    meeting.flow &&
-    meeting.flow.counts.pending +
-      meeting.flow.counts.stale +
-      meeting.flow.counts.deferred >
-      0
-  ) {
-    hint = `你留下的关注点还有 ${meeting.flow.counts.pending + meeting.flow.counts.stale + meeting.flow.counts.deferred} 个待处理，可先整理，再生成纪要。`;
-    label = "核对现场关注";
+  } else if (deliveryAttention > 0) {
+    hint = `有 ${deliveryAttention} 个准备用于会议成果的关注点需核对；个人与暂缓记录可稍后整理。`;
+    label = "核对会议关注点";
     action = () => onReview("notes");
-  } else if (progress.next && progress.next.key !== "minutes") {
-    const step = progress.next.key;
+  } else if (nextRequired && nextRequired.key !== "minutes") {
+    const step = nextRequired.key;
     hint = progress.stale
       ? "内容发生变化，受影响的核对项需要重新确认。"
       : "按清单核对后继续整理；核对进度会保存到本机。";
@@ -133,12 +135,15 @@ export default function Workflow(props: Props) {
     hint = "纪要有未保存修改，保存后再确认发送前检查。";
     label = "查看并保存纪要";
     action = onMinutes;
-  } else if (progress.next) {
+  } else if (nextRequired) {
     hint = "纪要已生成，请检查内容与最终版式后记录核对结果。";
     label = "检查会议纪要";
     action = onMinutes;
   } else {
-    hint = "核对清单已完成。发送前可预览并导出 Word 或 PDF。";
+    hint =
+      progress.complete === 4
+        ? "核对清单已完成。发送前可预览并导出 Word 或 PDF。"
+        : "本次交付相关核对已完成，可预览导出；个人与暂缓记录可稍后整理。";
     label = "预览并导出";
     action = onPreview;
   }
@@ -157,25 +162,31 @@ export default function Workflow(props: Props) {
         </summary>
         <p>
           人工核对记录只表示你的确认，不等同于 AI
-          已验证；不限制独立生成分析或纪要。
+          已验证；不限制独立生成分析或纪要。个人与暂缓记录不阻碍纪要交付。
         </p>
         <div className="review-grid">
           {progress.steps.map(({ key, state, item }) => (
             <article key={key} className={`review-card ${state}`}>
               <strong>{labels[key]}</strong>
               <span className="review-state">
-                {state === "blocked" &&
-                key === "minutes" &&
-                latestMinutes(meeting)
-                  ? "纪要已过期，请更新"
-                  : {
-                      done:
-                        item?.decision === "skipped" ? "本次不区分" : "已核对",
-                      pending: "待核对",
-                      stale: "内容变化，待复核",
-                      blocked: "等待内容",
-                      not_needed: "无简记，无需核对",
-                    }[state]}
+                {key === "notes" &&
+                deliveryAttention === 0 &&
+                ["pending", "stale"].includes(state)
+                  ? "可稍后整理"
+                  : state === "blocked" &&
+                      key === "minutes" &&
+                      latestMinutes(meeting)
+                    ? "纪要已过期，请更新"
+                    : {
+                        done:
+                          item?.decision === "skipped"
+                            ? "本次不区分"
+                            : "已核对",
+                        pending: "待核对",
+                        stale: "内容变化，待复核",
+                        blocked: "等待内容",
+                        not_needed: "无简记，无需核对",
+                      }[state]}
               </span>
               <p>{hints[key]}</p>
               <div>

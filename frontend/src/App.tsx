@@ -1,3 +1,12 @@
+import {
+  browserMeetingStorage,
+  readMeetingView,
+  resolveMeetingView,
+  saveMeetingView,
+  lastMeeting,
+  rememberMeeting,
+  type MeetingView,
+} from "./preferences/meetingView";
 import { minutesAdoptionBlockReason } from "./features/minutes/presentation";
 import {
   readMinutesOptions,
@@ -90,6 +99,10 @@ export default function App() {
       persistMinutesOptions(next);
     }
   }, [templatesQuery.data, minutesOptions]);
+  const [playbackRestore, setPlaybackRestore] = useState<MeetingView>({});
+  const restoredMeeting = useRef(false);
+  const openingMeeting = useRef(0);
+  const [restoredSegment, setRestoredSegment] = useState<string>();
   const [withAnalysis, setWithAnalysis] = useState(false);
   const [selectedMinutesId, setSelectedMinutesId] = useState<string | null>(
     null,
@@ -186,12 +199,19 @@ export default function App() {
 
   useEffect(() => {
     if (!searchTarget || meeting?.id !== searchTarget.meeting_id) return;
+    setRestoredSegment(undefined);
     const timer = window.setTimeout(() => {
       if (searchTarget.start !== null) seekRef.current?.(searchTarget.start);
       setSearchTarget(null);
     }, 100);
     return () => window.clearTimeout(timer);
   }, [searchTarget, meeting?.id]);
+
+  useEffect(() => {
+    if (!restoredSegment || workspace !== "transcript") return;
+    const timer = window.setTimeout(() => setRestoredSegment(undefined), 400);
+    return () => window.clearTimeout(timer);
+  }, [restoredSegment, workspace]);
 
   const navigateReview = (step: ReviewStep) => {
     setWorkspace(step === "speakers" ? "transcript" : step);
@@ -368,18 +388,35 @@ export default function App() {
   }, [minutesDirty, minutesDraft, saveMinutes]);
 
   const openMeeting = async (id: string) => {
+    const request = ++openingMeeting.current;
     try {
       await saveTranscript();
       await saveMinutes();
       const value = await api.meeting(id);
+      if (request !== openingMeeting.current) return null;
       setMeeting(value);
       setTranscriptDirty(false);
-      const artifact = latestMinutes(value);
+      const restored = resolveMeetingView(
+        value,
+        readMeetingView(id, browserMeetingStorage()),
+      );
+      const artifact = restored.minutes;
+      setPlaybackRestore(restored);
+      setRestoredSegment(
+        restored.position > 0
+          ? value.segments.find(
+              (segment) =>
+                segment.start <= restored.position &&
+                segment.end > restored.position,
+            )?.id
+          : undefined,
+      );
+      rememberMeeting(id, browserMeetingStorage());
       displayMinutes(artifact || null);
       if (!artifact && minutesOptions.method === "current")
         setMinutesOptions((old) => ({ ...old, method: "ai" }));
       setShowCitations(artifact?.payload.style === "internal");
-      setWorkspace(latestMinutes(value) ? "minutes" : "notes");
+      setWorkspace(restored.workspace);
 
       meetingRef.current = value;
       const job = latestJob(value, "transcription");
@@ -394,6 +431,38 @@ export default function App() {
     } catch (error) {
       toast((error as Error).message);
       return null;
+    }
+  };
+
+  useEffect(() => {
+    if (!listQuery.data || restoredMeeting.current) return;
+    restoredMeeting.current = true;
+    const id = lastMeeting(browserMeetingStorage());
+    if (!meetingRef.current && listQuery.data.some((row) => row.id === id))
+      void openMeeting(id);
+  }, [listQuery.data]);
+  useEffect(() => {
+    if (meeting)
+      saveMeetingView(
+        meeting.id,
+        { workspace, minutesId: selectedMinutesId },
+        browserMeetingStorage(),
+      );
+  }, [meeting?.id, workspace, selectedMinutesId]);
+  const goHome = async () => {
+    if (savingTranscript) {
+      toast("文字稿正在保存，请稍候再返回首页");
+      return;
+    }
+    openingMeeting.current++;
+    try {
+      await saveTranscript();
+      await saveMinutes();
+      rememberMeeting("", browserMeetingStorage());
+      setMeeting(null);
+      displayMinutes(null);
+    } catch {
+      /* Preserve unsaved content. */
     }
   };
 
@@ -658,6 +727,7 @@ export default function App() {
   return (
     <>
       <Sidebar
+        onHome={() => void goHome()}
         meetings={listQuery.data || []}
         currentId={meeting?.id}
         uploading={uploading}
@@ -719,6 +789,7 @@ export default function App() {
                     return;
                   try {
                     await api.remove(meeting.id);
+                    rememberMeeting("", browserMeetingStorage());
                     setMeeting(null);
                     await client.invalidateQueries({ queryKey: ["meetings"] });
                   } catch (error) {
@@ -1002,7 +1073,7 @@ export default function App() {
                     jumpSegmentId={
                       searchTarget?.meeting_id === meeting.id
                         ? searchTarget.source_segment_ids[0]
-                        : undefined
+                        : restoredSegment
                     }
                     onChange={updateSegments}
                     onSeek={(time) => seekRef.current?.(time)}
@@ -1132,6 +1203,11 @@ export default function App() {
               </div>
             </div>
             <Player
+              key={meeting.id}
+              initialView={playbackRestore}
+              onBookmark={(bookmark) =>
+                saveMeetingView(meeting.id, bookmark, browserMeetingStorage())
+              }
               meetingId={meeting.id}
               segments={meeting.segments}
               seekRef={seekRef}

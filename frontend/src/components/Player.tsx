@@ -1,8 +1,11 @@
+import type { MeetingView } from "../preferences/meetingView";
 import { useEffect, useRef, useState } from "react";
 import type { Segment } from "../types";
 import { clock } from "../utils";
 
 interface Props {
+  initialView?: MeetingView;
+  onBookmark?: (bookmark: MeetingView) => void;
   meetingId: string;
   segments: Segment[];
   seekRef: React.MutableRefObject<((time: number) => void) | null>;
@@ -15,30 +18,43 @@ export default function Player({
   seekRef,
   pauseRef,
   audioTracks = [],
+  initialView = {},
+  onBookmark,
 }: Props) {
   const audio = useRef<HTMLAudioElement>(null);
   const [playing, setPlaying] = useState(false),
-    [time, setTime] = useState(0),
+    [time, setTime] = useState(initialView.position || 0),
     [duration, setDuration] = useState(0),
-    [track, setTrack] = useState("");
+    [track, setTrack] = useState(initialView.track || "");
+  const [rate, setRate] = useState(initialView.rate || 1);
+  const pendingPosition = useRef(initialView.position || 0),
+    ready = useRef(false),
+    lastSave = useRef(0);
+  const bookmarkRef = useRef(onBookmark);
+  bookmarkRef.current = onBookmark;
+  const savePosition = () => {
+    const a = audio.current;
+    if (a && ready.current)
+      bookmarkRef.current?.({
+        position: a.currentTime,
+        track,
+        rate: a.playbackRate,
+      });
+  };
   useEffect(() => {
     if (pauseRef) pauseRef.current = () => audio.current?.pause();
     seekRef.current = (value) => {
       if (!audio.current) return;
-      audio.current.currentTime = value;
-      void audio.current.play();
+      pendingPosition.current = value;
+      if (ready.current) audio.current.currentTime = value;
+      setTime(value);
+      void audio.current.play().catch(() => setPlaying(false));
     };
     return () => {
       seekRef.current = null;
       if (pauseRef) pauseRef.current = null;
     };
   }, [seekRef, pauseRef]);
-  useEffect(() => {
-    setTime(0);
-    setDuration(0);
-    setPlaying(false);
-    setTrack("");
-  }, [meetingId]);
   useEffect(() => {
     const active = segments.find(
       (segment) => segment.start <= time && segment.end > time,
@@ -59,7 +75,7 @@ export default function Player({
         aria-label="播放暂停"
         onClick={() => {
           const a = audio.current!;
-          if (a.paused) void a.play();
+          if (a.paused) void a.play().catch(() => setPlaying(false));
           else a.pause();
         }}
       >
@@ -77,6 +93,7 @@ export default function Player({
         onChange={(e) => {
           audio.current!.currentTime = Number(e.target.value);
           setTime(Number(e.target.value));
+          savePosition();
         }}
       />
       <span>{clock(duration)}</span>
@@ -84,7 +101,11 @@ export default function Player({
         <select
           aria-label="回听音轨"
           value={track}
-          onChange={(e) => setTrack(e.target.value)}
+          onChange={(e) => {
+            pendingPosition.current = audio.current?.currentTime || time;
+            ready.current = false;
+            setTrack(e.target.value);
+          }}
         >
           <option value="">混合录音</option>
           {audioTracks.map((name) => (
@@ -96,9 +117,11 @@ export default function Player({
       )}
       <select
         aria-label="播放速度"
-        defaultValue="1"
+        value={String(rate)}
         onChange={(e) => {
           audio.current!.playbackRate = Number(e.target.value);
+          setRate(Number(e.target.value));
+          savePosition();
         }}
       >
         <option value="0.75">0.75×</option>
@@ -116,9 +139,30 @@ export default function Player({
         }
         preload="metadata"
         onPlay={() => setPlaying(true)}
-        onPause={() => setPlaying(false)}
-        onTimeUpdate={(e) => setTime(e.currentTarget.currentTime)}
-        onLoadedMetadata={(e) => setDuration(e.currentTarget.duration || 0)}
+        onPause={() => {
+          setPlaying(false);
+          savePosition();
+        }}
+        onTimeUpdate={(e) => {
+          setTime(e.currentTarget.currentTime);
+          if (Date.now() - lastSave.current > 1500) {
+            lastSave.current = Date.now();
+            savePosition();
+          }
+        }}
+        onLoadedMetadata={(e) => {
+          const a = e.currentTarget;
+          const duration = Number.isFinite(a.duration) ? a.duration : 0;
+          setDuration(duration);
+          a.currentTime = Math.min(
+            pendingPosition.current,
+            duration || pendingPosition.current,
+          );
+          a.playbackRate = rate;
+          setTime(a.currentTime);
+          ready.current = true;
+          savePosition();
+        }}
       />
     </div>
   );

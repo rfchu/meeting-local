@@ -2531,3 +2531,25 @@ dialog code {
   line-height: 1.8;
   margin: 12px 0;
 }
+
+.recording-end-plan {
+  margin: 12px 24px;
+  padding: 16px 20px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #fafbff;
+}
+.recording-end-plan label {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 20px 8px 0;
+  font-size: 13px;
+  flex-wrap: wrap;
+}
+.recording-end-plan p {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.7;
+}

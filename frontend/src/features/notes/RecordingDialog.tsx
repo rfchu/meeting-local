@@ -163,6 +163,7 @@ export default function RecordingDialog({
     [draftEngine, setDraftEngine] = useState<"whisper" | "qwen">(
       preferences.draftEngine,
     ),
+    [autoProcess, setAutoProcess] = useState(preferences.autoProcess),
     [completionMode, setCompletionMode] = useState<CompletionMode>(
       preferences.completionMode,
     ),
@@ -228,6 +229,7 @@ export default function RecordingDialog({
       saved = saveRecordingPreferences(window.localStorage, {
         version: 1,
         keepAwake,
+        autoProcess,
         captureSource,
         draftEngine,
         streamEnabled,
@@ -247,20 +249,32 @@ export default function RecordingDialog({
     streamEnabled,
     responsiveMode,
     completionMode,
+    autoProcess,
     keepAwake,
   ]);
-  const processSaved = async (mode: CompletionMode) => {
-    if (!savedMeetingId || completing) return;
-    setCompletionMode(mode);
-    persistPreferences(mode);
+  const handingOff = useRef(false);
+  const handoffSaved = async (
+    id: string,
+    mode: CompletionMode,
+    engine: "whisper" | "qwen",
+  ) => {
+    if (handingOff.current) return;
+    handingOff.current = true;
     setCompleting(true);
     try {
-      await onComplete(savedMeetingId, { mode, engine: savedEngine });
+      await onComplete(id, { mode, engine });
     } catch (error) {
-      toast(`录音已保存：${(error as Error).message}`);
+      toast(`录音已保存，后续处理未完成，可重试：${(error as Error).message}`);
     } finally {
+      handingOff.current = false;
       setCompleting(false);
     }
+  };
+  const processSaved = async (mode: CompletionMode) => {
+    if (!savedMeetingId || handingOff.current) return;
+    setCompletionMode(mode);
+    persistPreferences(mode);
+    await handoffSaved(savedMeetingId, mode, savedEngine);
   };
 
   const currentSeconds = () =>
@@ -674,6 +688,7 @@ export default function RecordingDialog({
   const finish = async (
     session: RecordingSession,
     reuseEngine = draftEngine,
+    allowAutoProcess = false,
   ) => {
     setState("saving");
     stateRef.current = "saving";
@@ -691,6 +706,8 @@ export default function RecordingDialog({
       stateRef.current = "finished";
       setState("finished");
       setElapsed(accruedRef.current);
+      if (allowAutoProcess && autoProcess)
+        await handoffSaved(meeting.id, completionMode, reuseEngine);
     } catch (error) {
       setState("failed");
       stateRef.current = "failed";
@@ -1149,6 +1166,7 @@ export default function RecordingDialog({
     return () => window.removeEventListener("keydown", handler);
   }, [state]);
   const stop = async () => {
+    if (!recordingState(stateRef.current)) return;
     if (sessionRef.current?.source === "macos") {
       accruedRef.current = currentSeconds();
       draftEnabledRef.current = false;
@@ -1173,7 +1191,7 @@ export default function RecordingDialog({
         const status = await api.nativeCommand(sessionRef.current.id, "stop");
         accruedRef.current = status.duration;
         const session = metadata();
-        if (session) await finish(session);
+        if (session) await finish(session, draftEngine, true);
       } catch (error) {
         stateRef.current = "failed";
         setState("failed");
@@ -1207,7 +1225,7 @@ export default function RecordingDialog({
     setNotes(savedNotes);
     setNoteText("");
     const session = metadata();
-    if (session) await finish(session);
+    if (session) await finish(session, draftEngine, true);
   };
 
   const recording = state === "recording" || state === "paused";
@@ -1270,7 +1288,7 @@ export default function RecordingDialog({
           {state === "paused" && <button onClick={resume}>继续录音</button>}
           {recording && (
             <button className="recording-stop" onClick={() => void stop()}>
-              ■ 结束录音
+              ■ {autoProcess ? "结束并整理" : "结束录音"}
             </button>
           )}
           {state === "saving" && <button disabled>正在保存并创建会议…</button>}
@@ -1279,7 +1297,8 @@ export default function RecordingDialog({
               className="primary"
               onClick={() => {
                 const session = metadata();
-                if (session) void finish(session);
+                if (session)
+                  void finish(session, session.draft_engine || draftEngine);
               }}
             >
               重试完成保存
@@ -1336,6 +1355,38 @@ export default function RecordingDialog({
             上次选择的音源或模型暂不可用，请调整设置后开始。
           </p>
         )}
+      {state === "idle" && (
+        <section className="recording-end-plan" aria-label="录音结束后的计划">
+          <label>
+            结束后处理
+            <select
+              aria-label="结束后处理"
+              value={completionMode}
+              onChange={(e) =>
+                setCompletionMode(e.target.value as CompletionMode)
+              }
+            >
+              <option value="quick">
+                快速完成文字稿（复用
+                {draftEngine === "qwen" ? "千问" : "Whisper"}实时结果）
+              </option>
+              <option value="full">精细处理文字稿（{engineLabel}）</option>
+              <option value="none">仅保存录音和关注点</option>
+            </select>
+          </label>
+          <label>
+            <input
+              type="checkbox"
+              checked={autoProcess}
+              onChange={(e) => setAutoProcess(e.target.checked)}
+            />
+            结束后自动进入会后整理
+          </label>
+          <p>
+            先保存完整录音，再执行所选方式；不会自动生成纪要或调用云端模型。异常恢复的录音仍由你确认后处理。
+          </p>
+        </section>
+      )}
       {state === "idle" && flowReady && (
         <details className="recording-preparation">
           <summary>
