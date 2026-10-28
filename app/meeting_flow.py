@@ -114,7 +114,7 @@ def flow(store,mid):
         if value['previous_meeting_id']:
             prev=db.execute('SELECT id,title FROM meetings WHERE id=?',(value['previous_meeting_id'],)).fetchone()
             if prev:
-                previous=dict(prev);previous['todos']=[dict(t) for t in db.execute("SELECT * FROM note_todos WHERE meeting_id=? AND status='pending'",(prev['id'],))]
+                previous=dict(prev);previous['todos']=[t for t in tasks(db,prev['id']) if t['status']=='pending' and t['note_scope']=='meeting']
                 for todo in previous['todos']:todo['stale']=todo_stale(db,todo)
         return {'brief':value,'counts':counts,'attention':entries,'previous':previous,'has_current_minutes':valid_artifact}
 
@@ -141,9 +141,62 @@ def track_action(store,mid,aid,index,body):
         if not body.confirmed or not body.content.strip():raise ValueError('请核对内容、负责人及期限后确认')
         action=actions[index];ids=action.get('source_segment_ids',[]);valid={s['id'] for s in json.loads(row['segments'])}
         if not ids or not set(ids)<=valid:raise ValueError('行动项缺少当前原文依据')
-        text=body.content.strip();existing=db.execute('SELECT id,content,source_artifact_id,source_index FROM note_todos WHERE meeting_id=?',(mid,)).fetchall()
+        bound=action_bindings(db,mid,source).get(str(index))
+        if bound:return {'id':bound,'reused':True}
+        text=body.content.strip();existing=db.execute("SELECT id,content,source_artifact_id,source_index FROM note_todos WHERE meeting_id=? AND note_scope='meeting'",(mid,)).fetchall()
         for todo in existing:
-            if todo['content'].strip()==text or (todo['source_artifact_id']==aid and todo['source_index']==index):return {'id':todo['id'],'reused':True}
+            if todo['content'].strip()==text or (todo['source_artifact_id']==aid and todo['source_index']==index):
+                bind_action(db,mid,aid,index,todo['id']);return {'id':todo['id'],'reused':True}
         key=hashlib.sha256(encode([mid,aid,index]).encode()).hexdigest()
         db.execute("INSERT INTO note_todos(id,meeting_id,note_id,content,owner,due_date,revision,note_fingerprint,source_segment_ids,note_scope,source_kind,source_artifact_id,source_index) VALUES(?,?,?,?,?,?,?,?,?,?,'minutes',?,?)",(key,mid,'',text,body.owner.strip(),body.due_date.strip(),row['revision'],'',encode(ids),'meeting',aid,index))
+        bind_action(db,mid,aid,index,key)
         return {'id':key,'reused':False}
+
+
+def tasks(db,mid):
+    rows=db.execute("""SELECT t.*,m.title AS source_meeting_title FROM note_todos t
+        JOIN meetings m ON m.id=t.meeting_id WHERE t.meeting_id=? OR EXISTS
+        (SELECT 1 FROM meeting_task_links l WHERE l.meeting_id=? AND l.task_id=t.id)
+        ORDER BY t.created,t.rowid""",(mid,mid)).fetchall()
+    return [{**dict(t),'carried':t['meeting_id']!=mid,'stale':todo_stale(db,dict(t))} for t in rows]
+
+
+def bind_action(db,mid,aid,index,tid):
+    db.execute('INSERT OR REPLACE INTO minutes_task_bindings(meeting_id,artifact_id,action_index,task_id) VALUES(?,?,?,?)',(mid,aid,index,tid))
+
+
+def action_bindings(db,mid,artifact):
+    """Carry stable task identity through exact unchanged items in explicit edit lineage.
+
+    Independent AI generations never inherit a binding just because their wording matches.
+    """
+    target=json.loads(artifact['payload']).get('action_items',[]);result={};seen=set();current=artifact
+    while current and current['id'] not in seen and len(seen)<100:
+        seen.add(current['id']);actions=json.loads(current['payload']).get('action_items',[])
+        rows=db.execute('SELECT action_index,task_id FROM minutes_task_bindings WHERE artifact_id=?',(current['id'],)).fetchall()
+        legacy=db.execute("SELECT source_index AS action_index,id AS task_id FROM note_todos WHERE meeting_id=? AND source_artifact_id=?",(mid,current['id'])).fetchall()
+        for binding in [*rows,*legacy]:
+            index=binding['action_index']
+            if not 0<=index<len(actions):continue
+            item=actions[index]
+            # Ambiguous duplicate lines are not matched by content across versions.
+            candidates=[i for i,a in enumerate(target) if a==item]
+            if len(candidates)==1 and sum(a==item for a in actions)==1:
+                result.setdefault(str(candidates[0]),binding['task_id'])
+            elif current['id']==artifact['id'] and index<len(target):result.setdefault(str(index),binding['task_id'])
+        parent=json.loads(current['provenance']).get('parent_minutes_id')
+        current=db.execute("SELECT * FROM artifacts WHERE id=? AND meeting_id=? AND kind='meeting_minutes'",(parent,mid)).fetchone() if parent else None
+    return result
+
+
+def carry_task(store,mid,tid):
+    with store.connect() as db:
+        db.execute('BEGIN IMMEDIATE')
+        if not db.execute('SELECT 1 FROM meetings WHERE id=?',(mid,)).fetchone():raise ValueError('会议不存在')
+        previous=brief(db,mid)['previous_meeting_id']
+        todo=next((t for t in tasks(db,previous) if t['id']==tid),None) if previous else None
+        if not todo or todo['note_scope']!='meeting':raise ValueError('只能带入关联上次会议的会议跟进项')
+        if todo['meeting_id']==mid:raise ValueError('该事项已属于本次会议')
+        if todo['status']!='pending' or todo['stale']:raise ValueError('事项已完成或来源变化，请先在来源会议核对')
+        db.execute('INSERT OR IGNORE INTO meeting_task_links(meeting_id,task_id) VALUES(?,?)',(mid,tid))
+        return {'id':tid}

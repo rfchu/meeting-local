@@ -112,7 +112,17 @@ class Store:
                 CREATE INDEX IF NOT EXISTS attention_reviews_meeting ON attention_reviews(meeting_id);
                 CREATE INDEX IF NOT EXISTS note_todos_meeting ON note_todos(meeting_id);""")
             db.execute('CREATE TABLE IF NOT EXISTS minutes_selection (meeting_id TEXT PRIMARY KEY, artifact_id TEXT NOT NULL)')
-            db.execute('PRAGMA user_version=14')
+            db.executescript("""CREATE TABLE IF NOT EXISTS meeting_task_links (
+                meeting_id TEXT NOT NULL,task_id TEXT NOT NULL,created TEXT DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY(meeting_id,task_id));
+                CREATE TABLE IF NOT EXISTS minutes_task_bindings (
+                meeting_id TEXT NOT NULL,artifact_id TEXT NOT NULL,action_index INTEGER NOT NULL,task_id TEXT NOT NULL,
+                PRIMARY KEY(artifact_id,action_index));
+                CREATE TABLE IF NOT EXISTS minutes_deliveries (
+                id TEXT PRIMARY KEY,meeting_id TEXT NOT NULL,artifact_id TEXT NOT NULL,
+                payload TEXT NOT NULL,created TEXT DEFAULT CURRENT_TIMESTAMP);
+                CREATE INDEX IF NOT EXISTS minutes_deliveries_meeting ON minutes_deliveries(meeting_id);""")
+            db.execute('PRAGMA user_version=15')
         os.chmod(self.path,0o600)
     @contextmanager
     def connect(self):

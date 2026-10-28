@@ -269,10 +269,15 @@ export default function MinutesView(props: Props) {
           。刷新页面仍可继续查看。
         </p>
       )}
-      <section
+      <details
+        open={!draft}
         className="minutes-generation-settings"
         aria-label="生成纪要设置"
       >
+        <summary>
+          {draft ? "生成新草稿" : "生成会议纪要"} ·{" "}
+          {selectedTemplate?.name || "选择模板"}
+        </summary>
         <div className="minutes-toolbar">
           <label>
             会议模板
@@ -345,9 +350,7 @@ export default function MinutesView(props: Props) {
                   : "生成会议纪要"}
           </button>
         </div>
-        <p>
-          这些设置仅用于下一份草稿，切换不会改动当前纪要。新稿生成后可对比、采用；旧版本始终保留。
-        </p>
+        <p>生成后另存草稿，核对后采用。</p>
         <details className="minutes-advanced">
           <summary>
             高级设置 ·{" "}
@@ -423,7 +426,7 @@ export default function MinutesView(props: Props) {
             云端模型会接收本次整理资料，操作前会确认。对外发送前仍需人工核对事实及个人信息。
           </p>
         </details>
-      </section>
+      </details>
       {newDraft && (
         <div className="analysis-notice">
           新草稿已保存，当前采用稿未改变。
@@ -437,88 +440,96 @@ export default function MinutesView(props: Props) {
           )}
         </div>
       )}
-      <div className="minutes-toolbar minutes-version-toolbar">
-        <label>
-          当前显示版本
-          <select
-            aria-label="纪要版本"
-            value={selectedId || ""}
-            onChange={(e) => props.onSelect(e.target.value)}
-          >
-            {!selectedId && <option value="">尚未选择</option>}
-            {versions.map((a, i) => (
-              <option key={a.id} value={a.id}>
-                版本 {versions.length - i} ·{" "}
-                {a.id === meeting.active_minutes_id ? "当前采用" : "历史／草稿"}{" "}
-                · {minutesVersionDescription(a)} · 文字稿 v{a.revision}
-                {a.stale ? " · 已过期" : ""}
-              </option>
-            ))}
-          </select>
-        </label>
-        {artifact && artifact.id !== meeting.active_minutes_id && (
-          <button
-            className="primary"
-            disabled={!current || generating || transcriptDirty}
-            onClick={props.onAdopt}
-          >
-            采用此版本
-          </button>
-        )}
-        <button disabled={!draft || !dirty || readOnly} onClick={props.onSave}>
-          {dirty ? "保存为新版本" : "已保存"}
-        </button>
-        {artifact &&
-          meeting.active_minutes_id &&
-          artifact.id !== meeting.active_minutes_id && (
-            <button
-              onClick={() =>
-                props.onCompare(meeting.active_minutes_id!, artifact.id)
-              }
+      <details className="minutes-version-options">
+        <summary>版本管理与草稿导出{dirty ? " · 正在保存修改" : ""}</summary>
+        <div className="minutes-toolbar minutes-version-toolbar">
+          <label>
+            当前显示版本
+            <select
+              aria-label="纪要版本"
+              value={selectedId || ""}
+              onChange={(e) => props.onSelect(e.target.value)}
             >
-              与采用稿对比
+              {!selectedId && <option value="">尚未选择</option>}
+              {versions.map((a, i) => (
+                <option key={a.id} value={a.id}>
+                  版本 {versions.length - i} ·{" "}
+                  {a.id === meeting.active_minutes_id
+                    ? "当前采用"
+                    : "历史／草稿"}{" "}
+                  · {minutesVersionDescription(a)} · 文字稿 v{a.revision}
+                  {a.stale ? " · 已过期" : ""}
+                </option>
+              ))}
+            </select>
+          </label>
+          {artifact && artifact.id !== meeting.active_minutes_id && (
+            <button
+              className="primary"
+              disabled={!current || generating || transcriptDirty}
+              onClick={props.onAdopt}
+            >
+              采用此版本
             </button>
           )}
-        <button
-          disabled={!current || dirty || transcriptDirty}
-          onClick={() => {
-            if (draft) {
-              props.onOptions({
-                ...options,
-                method: "current",
-                detail_level: "brief",
-              });
-            }
-          }}
-        >
-          从本稿整理精简版
-        </button>
-        <button disabled={!draft} onClick={props.onPreview}>
-          导出预览
-        </button>
-        <label>
-          <input
-            type="checkbox"
-            checked={showCitations}
-            onChange={(e) => props.onCitations(e.target.checked)}
-          />
-          {props.referenceMode ? "导出包含原文引用" : "显示原文引用"}
-        </label>
-        <select
-          aria-label="导出会议纪要"
-          value=""
-          disabled={!draft}
-          onChange={(e) => {
-            if (e.target.value)
-              props.onExport(e.target.value as "docx" | "pdf" | "md");
-          }}
-        >
-          <option value="">导出当前显示版本 ↓</option>
-          <option value="docx">Word 文档</option>
-          <option value="pdf">PDF 文档</option>
-          <option value="md">Markdown</option>
-        </select>
-      </div>
+          <button
+            disabled={!draft || !dirty || readOnly}
+            onClick={props.onSave}
+          >
+            {dirty ? "保存为新版本" : "已保存"}
+          </button>
+          {artifact &&
+            meeting.active_minutes_id &&
+            artifact.id !== meeting.active_minutes_id && (
+              <button
+                onClick={() =>
+                  props.onCompare(meeting.active_minutes_id!, artifact.id)
+                }
+              >
+                与采用稿对比
+              </button>
+            )}
+          <button
+            disabled={!current || dirty || transcriptDirty}
+            onClick={() => {
+              if (draft) {
+                props.onOptions({
+                  ...options,
+                  method: "current",
+                  detail_level: "brief",
+                });
+              }
+            }}
+          >
+            从本稿整理精简版
+          </button>
+          <button disabled={!draft} onClick={props.onPreview}>
+            导出预览
+          </button>
+          <label>
+            <input
+              type="checkbox"
+              checked={showCitations}
+              onChange={(e) => props.onCitations(e.target.checked)}
+            />
+            {props.referenceMode ? "导出包含原文引用" : "显示原文引用"}
+          </label>
+          <select
+            aria-label="导出会议纪要"
+            value=""
+            disabled={!draft}
+            onChange={(e) => {
+              if (e.target.value)
+                props.onExport(e.target.value as "docx" | "pdf" | "md");
+            }}
+          >
+            <option value="">导出当前显示版本 ↓</option>
+            <option value="docx">Word 文档</option>
+            <option value="pdf">PDF 文档</option>
+            <option value="md">Markdown</option>
+          </select>
+        </div>
+      </details>
       {readOnly && (
         <p className="analysis-notice">
           这个版本的来源已变化，仅供查看和导出；请根据当前原文生成新草稿，旧稿仍保留。
@@ -567,35 +578,41 @@ export default function MinutesView(props: Props) {
             value={draft.title}
             onChange={(e) => update("title", e.target.value)}
           />
-          <div className="minutes-meta">
-            {(
-              [
-                ["日期", "meeting_date"],
-                ["会议形式", "meeting_form"],
-                ["地点", "location"],
-                ["参会人", "attendees"],
-                ["记录人", "recorder"],
-              ] as [string, keyof MeetingMinutes][]
-            ).map(([label, key]) => (
-              <label key={key}>
-                <span>{label}</span>
-                <input
-                  value={String(draft[key] || "")}
-                  onChange={(e) => update(key, e.target.value as never)}
+          <details className="minutes-basic-info">
+            <summary>
+              会议基本信息
+              {draft.meeting_date ? ` · ${draft.meeting_date}` : " · 待补充"}
+            </summary>
+            <div className="minutes-meta">
+              {(
+                [
+                  ["日期", "meeting_date"],
+                  ["会议形式", "meeting_form"],
+                  ["地点", "location"],
+                  ["参会人", "attendees"],
+                  ["记录人", "recorder"],
+                ] as [string, keyof MeetingMinutes][]
+              ).map(([label, key]) => (
+                <label key={key}>
+                  <span>{label}</span>
+                  <input
+                    value={String(draft[key] || "")}
+                    onChange={(e) => update(key, e.target.value as never)}
+                  />
+                </label>
+              ))}
+            </div>
+            <div className="minutes-purpose">
+              <label>
+                <span>{draft.style === "ai" ? "会议目的" : "会议目标"}</span>
+                <textarea
+                  rows={2}
+                  value={draft.purpose}
+                  onChange={(e) => update("purpose", e.target.value)}
                 />
               </label>
-            ))}
-          </div>
-          <div className="minutes-purpose">
-            <label>
-              <span>{draft.style === "ai" ? "会议目的" : "会议目标"}</span>
-              <textarea
-                rows={2}
-                value={draft.purpose}
-                onChange={(e) => update("purpose", e.target.value)}
-              />
-            </label>
-          </div>
+            </div>
+          </details>
           {layoutSections.map(({ id, source: section, title: label, kind }) => {
             const items = draft[section],
               table = kind === "decision_table" || kind === "action_table";
@@ -633,7 +650,7 @@ export default function MinutesView(props: Props) {
                 >
                   {table &&
                     (section === "action_items"
-                      ? ["行动项", "负责人", "截止时间", "状态", ""]
+                      ? ["行动项", "负责人", "截止时间", "会议记录状态", ""]
                       : ["决策事项", "负责人", "生效/完成时间", ""]
                     ).map((value) => (
                       <b className="minutes-grid-head" key={value}>
@@ -643,6 +660,24 @@ export default function MinutesView(props: Props) {
                   {items.map((item, index) =>
                     table ? (
                       <Fragment key={index}>
+                        {section === "action_items" &&
+                          meeting.action_tasks?.[selectedId || ""]?.[
+                            String(index)
+                          ] && (
+                            <div className="minutes-table-citations task-live-badge">
+                              当前跟进：
+                              {meeting.note_todos.find(
+                                (t) =>
+                                  t.id ===
+                                  meeting.action_tasks?.[selectedId || ""]?.[
+                                    String(index)
+                                  ],
+                              )?.status === "done"
+                                ? "已完成"
+                                : "待完成"}{" "}
+                              · 在下方跟进清单更新
+                            </div>
+                          )}
                         <textarea
                           rows={2}
                           value={item.content}
@@ -672,6 +707,12 @@ export default function MinutesView(props: Props) {
                         />
                         {section === "action_items" && (
                           <select
+                            disabled={
+                              !!meeting.action_tasks?.[selectedId || ""]?.[
+                                String(index)
+                              ]
+                            }
+                            title="会议记录中的状态；当前执行进度在跟进清单更新"
                             value={item.status || "待开始"}
                             onChange={(e) =>
                               itemUpdate(section, index, {
@@ -718,6 +759,24 @@ export default function MinutesView(props: Props) {
                       </Fragment>
                     ) : (
                       <article className="minutes-item" key={index}>
+                        {section === "action_items" &&
+                          meeting.action_tasks?.[selectedId || ""]?.[
+                            String(index)
+                          ] && (
+                            <small className="task-live-badge">
+                              当前跟进：
+                              {meeting.note_todos.find(
+                                (t) =>
+                                  t.id ===
+                                  meeting.action_tasks?.[selectedId || ""]?.[
+                                    String(index)
+                                  ],
+                              )?.status === "done"
+                                ? "已完成"
+                                : "待完成"}{" "}
+                              · 在下方跟进清单更新
+                            </small>
+                          )}
                         <textarea
                           rows={Math.max(
                             2,

@@ -63,14 +63,38 @@ export default function MeetingPreparation({
           <button onClick={() => onOpen(meeting.flow!.previous!.id)}>
             打开上次会议
           </button>
-          <p>未完成事项仅供本次讨论参考，不会自动当作本次决定。</p>
+          <p>选择带入后沿用同一事项，在任一关联会议更新完成状态。</p>
           {meeting.flow.previous.todos.length ? (
             meeting.flow.previous.todos.map((t) => (
-              <p key={t.id}>
+              <article key={t.id}>
                 {t.content} · {t.owner || "负责人待确认"} ·{" "}
                 {t.due_date || "期限待确认"}
                 {t.stale ? " · 来源变化，需复核" : ""}
-              </p>
+                <button
+                  disabled={
+                    busy ||
+                    dirty ||
+                    t.stale ||
+                    meeting.note_todos.some((todo) => todo.id === t.id)
+                  }
+                  onClick={async () => {
+                    setBusy(true);
+                    try {
+                      await api.carryTask(meeting.id, t.id);
+                      await onRefresh();
+                      toast("已带入，同步跟进同一事项。");
+                    } catch (e) {
+                      toast((e as Error).message);
+                    } finally {
+                      setBusy(false);
+                    }
+                  }}
+                >
+                  {meeting.note_todos.some((todo) => todo.id === t.id)
+                    ? "已带入"
+                    : "带入本次跟进"}
+                </button>
+              </article>
             ))
           ) : (
             <p>上次会议没有待完成的跟进项。</p>

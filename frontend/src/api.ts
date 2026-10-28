@@ -257,6 +257,23 @@ export const api = {
       `/meetings/${mid}/minutes/${aid}/actions/${index}/track`,
       json("POST", body),
     ),
+  carryTask: (mid: string, tid: string) =>
+    request(`/meetings/${mid}/tasks/${tid}/carry`, json("POST")),
+  unlinkTask: (mid: string, tid: string) =>
+    request(`/meetings/${mid}/tasks/${tid}/link`, { method: "DELETE" }),
+  createDelivery: (
+    mid: string,
+    artifactId: string,
+    includeCitations: boolean,
+  ) =>
+    request<import("./types").MinutesDelivery>(
+      `/meetings/${mid}/minutes/deliveries`,
+      json("POST", {
+        artifact_id: artifactId,
+        include_citations: includeCitations,
+        confirmed: true,
+      }),
+    ),
   followups: () =>
     request<(NoteTodo & { meeting_id: string; meeting_title: string })[]>(
       "/followups",

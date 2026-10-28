@@ -1,3 +1,4 @@
+import MinutesDeliveryPanel from "./features/minutes/MinutesDeliveryPanel";
 import ReviewSourcePane from "./features/meeting/ReviewSourcePane";
 import {
   browserMeetingStorage,
@@ -850,56 +851,68 @@ export default function App() {
               </button>
             </div>
             <div className="action-row">
-              <label className="engine-field">
-                识别引擎{" "}
-                <select
-                  value={engine}
-                  disabled={transcriptionRunning}
-                  onChange={(e) => setEngine(e.target.value)}
-                >
-                  {environment?.engines.map((item) => (
-                    <option
-                      value={item.id}
-                      disabled={!item.ready}
-                      key={item.id}
+              <details
+                className="transcription-options"
+                open={!meeting.revision}
+              >
+                <summary>
+                  {meeting.revision ? "重新转写与识别设置" : "转写设置"}
+                </summary>
+                <div className="transcription-options-body">
+                  <label className="engine-field">
+                    识别引擎{" "}
+                    <select
+                      value={engine}
+                      disabled={transcriptionRunning}
+                      onChange={(e) => setEngine(e.target.value)}
                     >
-                      {item.label}
-                      {item.ready ? "" : " · 待安装"}
-                    </option>
-                  )) || (
-                    <>
-                      <option value="whisper">Whisper large-v3-turbo</option>
-                      <option value="qwen">千问 Qwen3-ASR-1.7B</option>
-                    </>
-                  )}
-                </select>
-              </label>
-              <label className="check">
-                <input
-                  type="checkbox"
-                  checked={diarization}
-                  disabled={!environment?.diarization_ready}
-                  onChange={(e) => setDiarization(e.target.checked)}
-                />{" "}
-                自动区分发言人
-              </label>
-              <select
-                value={numSpeakers}
-                onChange={(e) => setNumSpeakers(Number(e.target.value))}
-              >
-                {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((value) => (
-                  <option value={value} key={value}>
-                    {value ? `${value} 位发言人` : "人数自动估计"}
-                  </option>
-                ))}
-              </select>
-              <button
-                className="primary"
-                disabled={transcriptionRunning || !engineReady}
-                onClick={() => void startTranscription()}
-              >
-                {meeting.revision ? "重新转写" : "开始转写"}
-              </button>
+                      {environment?.engines.map((item) => (
+                        <option
+                          value={item.id}
+                          disabled={!item.ready}
+                          key={item.id}
+                        >
+                          {item.label}
+                          {item.ready ? "" : " · 待安装"}
+                        </option>
+                      )) || (
+                        <>
+                          <option value="whisper">
+                            Whisper large-v3-turbo
+                          </option>
+                          <option value="qwen">千问 Qwen3-ASR-1.7B</option>
+                        </>
+                      )}
+                    </select>
+                  </label>
+                  <label className="check">
+                    <input
+                      type="checkbox"
+                      checked={diarization}
+                      disabled={!environment?.diarization_ready}
+                      onChange={(e) => setDiarization(e.target.checked)}
+                    />{" "}
+                    自动区分发言人
+                  </label>
+                  <select
+                    value={numSpeakers}
+                    onChange={(e) => setNumSpeakers(Number(e.target.value))}
+                  >
+                    {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((value) => (
+                      <option value={value} key={value}>
+                        {value ? `${value} 位发言人` : "人数自动估计"}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    className="primary"
+                    disabled={transcriptionRunning || !engineReady}
+                    onClick={() => void startTranscription()}
+                  >
+                    {meeting.revision ? "重新转写" : "开始转写"}
+                  </button>
+                </div>
+              </details>
               <button onClick={() => setRenameOpen(true)}>重命名</button>
               <select
                 value=""
@@ -1225,20 +1238,6 @@ export default function App() {
                       />
                     )}
                     <div className="review-notes-pane">
-                      <MeetingOutcomes
-                        onSeek={(time) => {
-                          locateReview(time);
-                          setReviewSourceOpen(true);
-                          seekRef.current?.(time);
-                        }}
-                        minutesDirty={minutesDirty}
-                        meeting={meeting}
-                        onNotes={() => setWorkspace("notes")}
-                        onRefresh={async () =>
-                          setMeeting(await api.meeting(meeting.id))
-                        }
-                        toast={toast}
-                      />
                       <MinutesView
                         meeting={meeting}
                         environment={environment}
@@ -1283,6 +1282,30 @@ export default function App() {
                           setReviewSourceOpen(true);
                           seekRef.current?.(time);
                         }}
+                      />
+                      <MeetingOutcomes
+                        onSeek={(time) => {
+                          locateReview(time);
+                          setReviewSourceOpen(true);
+                          seekRef.current?.(time);
+                        }}
+                        minutesDirty={minutesDirty}
+                        meeting={meeting}
+                        onNotes={() => setWorkspace("notes")}
+                        onRefresh={async () =>
+                          setMeeting(await api.meeting(meeting.id))
+                        }
+                        toast={toast}
+                      />
+                      <MinutesDeliveryPanel
+                        meeting={meeting}
+                        selectedId={selectedMinutesId}
+                        dirty={minutesDirty || transcriptDirty}
+                        includeCitations={showCitations}
+                        onRefresh={async () =>
+                          setMeeting(await api.meeting(meeting.id))
+                        }
+                        toast={toast}
                       />
                     </div>
                   </div>

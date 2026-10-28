@@ -2656,3 +2656,18 @@ dialog code {
 .meeting-review-workspace.split .minutes-meta {
   grid-template-columns: minmax(0, 1fr);
 }
+.transcription-options > summary {
+  padding: 10px 14px;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--muted);
+}
+.transcription-options-body {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}

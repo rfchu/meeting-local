@@ -158,7 +158,11 @@ export default function Workflow(props: Props) {
         ? "核对清单已完成。发送前可预览并导出 Word 或 PDF。"
         : "本次交付相关核对已完成，可预览导出；个人与暂缓记录可稍后整理。";
     label = "预览并导出";
-    action = onPreview;
+    const delivered = meeting.deliveries?.some(
+      (d) => d.artifact_id === meeting.active_minutes_id,
+    );
+    label = delivered ? "预览当前稿" : "确认交付版本";
+    action = delivered ? onPreview : onMinutes;
   }
   return (
     <section className="workflow" aria-label="会议处理进度">
@@ -249,12 +253,6 @@ export default function Workflow(props: Props) {
           ))}
         </div>
       </details>
-      <div className="review-optional">
-        <button className="text-btn" onClick={onAnalysis}>
-          会议分析（可选）
-        </button>
-        <span>未完成清单也可使用各功能；核对标记不会自动发送任何资料。</span>
-      </div>
     </section>
   );
 }

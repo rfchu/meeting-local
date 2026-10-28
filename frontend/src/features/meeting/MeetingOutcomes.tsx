@@ -23,128 +23,150 @@ export default function MeetingOutcomes({
   const minutes = currentMinutes(meeting);
   return (
     <section className="meeting-outcomes">
-      <h3>会议成果与后续跟进</h3>
-      <p>
-        纪要整理、人工确认和跟进共用本次会议的原文依据。个人跟进不自动进入对外纪要。
-      </p>
-      <div className="attention-summary">
-        <span>
-          关注点：已确认可用 {counts?.meeting || 0} · 个人保留{" "}
-          {counts?.personal || 0} · 待处理{" "}
-          {(counts?.pending || 0) +
-            (counts?.deferred || 0) +
-            (counts?.stale || 0)}
-        </span>
-        <button onClick={onNotes}>回到会后整理</button>
-      </div>
-      {meeting.flow?.brief.questions && (
-        <details>
-          <summary>会前希望确认的问题</summary>
-          <p style={{ whiteSpace: "pre-wrap" }}>
-            {meeting.flow.brief.questions}
-          </p>
-          <small>
-            请结合纪要和原文核对是否得到回答；不会自动标记为已解决。
-          </small>
-        </details>
-      )}
-      {meeting.notes.some(
-        (n) =>
-          n.note_type === "question" &&
-          ["pending", "stale", "deferred"].includes(
-            meeting.flow?.attention.find((a) => a.note_id === n.id)?.state ||
-              "pending",
-          ),
-      ) && (
-        <details>
-          <summary>尚待处理的问题线索</summary>
-          {meeting.notes
-            .filter(
-              (n) =>
-                n.note_type === "question" &&
-                ["pending", "stale", "deferred"].includes(
-                  meeting.flow?.attention.find((a) => a.note_id === n.id)
-                    ?.state || "pending",
-                ),
-            )
-            .map((n) => (
-              <p key={n.id}>{n.raw_text || "标记了问题时间，待补充"}</p>
-            ))}
-          <button onClick={onNotes}>核对问题与原声</button>
-        </details>
-      )}
-      {minutes && (
-        <details>
-          <summary>
-            从纪要行动项核对跟进 · {minutes.payload.action_items.length} 项
-          </summary>
-          <p>
-            这是纪要中的候选内容，核对原文后再加入跟进。已有同内容事项会提示去重。
-          </p>
-          <fieldset disabled={minutesDirty}>
-            {minutesDirty && <p>请先保存纪要，再核对行动项。</p>}
-            {minutes.payload.action_items.map(
-              (item: import("../../types").MinutesItem, index: number) => (
-                <ActionCandidate
-                  key={`${minutes.id}-${index}`}
-                  meetingId={meeting.id}
-                  artifactId={minutes.id}
-                  index={index}
-                  item={item}
-                  sources={meeting.segments.filter((s) =>
-                    item.source_segment_ids.includes(s.id),
-                  )}
-                  onSeek={onSeek}
-                  alreadyTracked={meeting.note_todos.some(
-                    (t) =>
-                      (t.source_artifact_id === minutes.id &&
-                        t.source_index === index) ||
-                      t.content.trim() === item.content.trim(),
-                  )}
-                  onRefresh={onRefresh}
-                  toast={toast}
-                />
-              ),
-            )}
-          </fieldset>
-        </details>
-      )}
-      <details
-        open={(meeting.note_todos || []).some((t) => t.status === "pending")}
-      >
+      <details className="outcomes-panel">
         <summary>
-          跟进事项 ·{" "}
-          {
-            (meeting.note_todos || []).filter((t) => t.status === "pending")
-              .length
-          }{" "}
+          行动与跟进 ·{" "}
+          {meeting.note_todos.filter((t) => t.status === "pending").length}{" "}
           项待完成
         </summary>
-        {!meeting.note_todos?.length && (
-          <p>
-            暂无已确认的跟进事项。可在关注点核对后“转为待办”；AI
-            纪要中的行动项仍需人工核对。
-          </p>
+        <div className="attention-summary">
+          <span>会议关注点 {counts?.meeting || 0} 项已核对</span>
+          <button onClick={onNotes}>核对关注点</button>
+        </div>
+        {meeting.flow?.brief.questions && (
+          <details>
+            <summary>会前希望确认的问题</summary>
+            <p style={{ whiteSpace: "pre-wrap" }}>
+              {meeting.flow.brief.questions}
+            </p>
+            <small>
+              请结合纪要和原文核对是否得到回答；不会自动标记为已解决。
+            </small>
+          </details>
         )}
-        <fieldset disabled={busy}>
-          {(meeting.note_todos || []).map((todo) => (
-            <TodoCard
-              key={todo.id}
-              todo={todo}
-              onSave={async (value) => {
-                setBusy(true);
-                try {
-                  await api.updateNoteTodo(meeting.id, todo.id, value);
-                  await onRefresh();
-                } catch (e) {
-                  toast((e as Error).message);
-                } finally {
-                  setBusy(false);
-                }
-              }}
-            />
-          ))}
-        </fieldset>
+        {meeting.notes.some(
+          (n) =>
+            n.note_type === "question" &&
+            ["pending", "stale", "deferred"].includes(
+              meeting.flow?.attention.find((a) => a.note_id === n.id)?.state ||
+                "pending",
+            ),
+        ) && (
+          <details>
+            <summary>尚待处理的问题线索</summary>
+            {meeting.notes
+              .filter(
+                (n) =>
+                  n.note_type === "question" &&
+                  ["pending", "stale", "deferred"].includes(
+                    meeting.flow?.attention.find((a) => a.note_id === n.id)
+                      ?.state || "pending",
+                  ),
+              )
+              .map((n) => (
+                <p key={n.id}>{n.raw_text || "标记了问题时间，待补充"}</p>
+              ))}
+            <button onClick={onNotes}>核对问题与原声</button>
+          </details>
+        )}
+        {minutes && (
+          <section>
+            <h4>核对纪要行动项 · {minutes.payload.action_items.length} 项</h4>
+            <p>
+              这是纪要中的候选内容，核对原文后再加入跟进。已有同内容事项会提示去重。
+            </p>
+            <fieldset disabled={minutesDirty}>
+              {minutesDirty && <p>请先保存纪要，再核对行动项。</p>}
+              {minutes.payload.action_items.map(
+                (item: import("../../types").MinutesItem, index: number) =>
+                  meeting.action_tasks?.[minutes.id]?.[String(index)] ? (
+                    <p key={index}>{item.content} · 已关联下方跟进清单</p>
+                  ) : (
+                    <details
+                      key={`${minutes.id}-${index}`}
+                      className="candidate-fold"
+                    >
+                      <summary>{item.content}</summary>
+                      <ActionCandidate
+                        key={`${minutes.id}-${index}`}
+                        meetingId={meeting.id}
+                        artifactId={minutes.id}
+                        index={index}
+                        item={item}
+                        sources={meeting.segments.filter((s) =>
+                          item.source_segment_ids.includes(s.id),
+                        )}
+                        onSeek={onSeek}
+                        alreadyTracked={meeting.note_todos.some(
+                          (t) =>
+                            (t.source_artifact_id === minutes.id &&
+                              t.source_index === index) ||
+                            (t.note_scope === "meeting" &&
+                              t.content.trim() === item.content.trim()),
+                        )}
+                        onRefresh={onRefresh}
+                        toast={toast}
+                      />
+                    </details>
+                  ),
+              )}
+            </fieldset>
+          </section>
+        )}
+        <details open>
+          <summary>
+            跟进事项 ·{" "}
+            {
+              (meeting.note_todos || []).filter((t) => t.status === "pending")
+                .length
+            }{" "}
+            项待完成
+          </summary>
+          {!meeting.note_todos?.length && (
+            <p>
+              暂无已确认的跟进事项。可在关注点核对后“转为待办”；AI
+              纪要中的行动项仍需人工核对。
+            </p>
+          )}
+          <fieldset disabled={busy}>
+            {(meeting.note_todos || []).map((todo) => (
+              <div key={todo.id}>
+                <TodoCard
+                  todo={todo}
+                  onSave={async (value) => {
+                    setBusy(true);
+                    try {
+                      await api.updateNoteTodo(meeting.id, todo.id, value);
+                      await onRefresh();
+                    } catch (e) {
+                      toast((e as Error).message);
+                    } finally {
+                      setBusy(false);
+                    }
+                  }}
+                />
+                {todo.carried && (
+                  <button
+                    disabled={busy}
+                    onClick={async () => {
+                      setBusy(true);
+                      try {
+                        await api.unlinkTask(meeting.id, todo.id);
+                        await onRefresh();
+                      } catch (e) {
+                        toast((e as Error).message);
+                      } finally {
+                        setBusy(false);
+                      }
+                    }}
+                  >
+                    移出本次会议
+                  </button>
+                )}
+              </div>
+            ))}
+          </fieldset>
+        </details>
       </details>
     </section>
   );
@@ -237,7 +259,7 @@ function ActionCandidate({
         我已核对行动项及原文，确认负责人和期限的填写。
       </label>
       <button
-        disabled={busy || alreadyTracked || !confirmed || !content.trim()}
+        disabled={busy || !confirmed || !content.trim()}
         onClick={() => {
           setBusy(true);
           void api
@@ -259,7 +281,7 @@ function ActionCandidate({
             .finally(() => setBusy(false));
         }}
       >
-        {alreadyTracked ? "已加入跟进" : "加入跟进"}
+        {alreadyTracked ? "关联已有跟进" : "加入跟进"}
       </button>
     </article>
   );

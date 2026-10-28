@@ -28,7 +28,7 @@ from .minutes_composition import ComposeInput,CompositionSettings,build_from_ai,
 from . import minutes_versions
 from .minutes_generation import MinutesGeneration
 from .auto_minutes import MinutesFollowupInput,prepare as prepare_auto_minutes
-from . import meeting_flow
+from . import meeting_flow,minutes_delivery
 from .local_embedding import local_embedding
 from .retrieval import Retrieval
 
@@ -153,6 +153,10 @@ class ActionTrackInput(BaseModel):
     owner: str=Field(default='',max_length=200)
     due_date: str=Field(default='',max_length=200)
     confirmed: bool=False
+class DeliveryInput(BaseModel):
+    artifact_id: str=Field(min_length=1,max_length=100)
+    include_citations: bool=False
+    confirmed: bool=False
 class RecordingInput(BaseModel):
     mime_type: Literal['audio/webm;codecs=opus','audio/webm','audio/mp4','audio/mp4;codecs=mp4a.40.2']='audio/webm'
 class RecordingMetadata(MeetingNotesBatchInput):
@@ -276,8 +280,7 @@ def create_app(data_dir=None, start_worker=True):
             note['expansion']=suggestion
         row['notes']=notes
         from .notes import fingerprint
-        todos=store.all('SELECT * FROM note_todos WHERE meeting_id=? ORDER BY created,rowid',(row['id'],))
-        by_id={n['id']:n for n in notes}
+        with store.connect() as db:todos=meeting_flow.tasks(db,row['id'])
         with store.connect() as db:adopted=minutes_versions.selected(db,row['id'],row['revision'])
         current_minutes=next((a for a in artifacts if adopted and a['id']==adopted['id'] and not a['stale']),None)
         for note in notes:
@@ -286,8 +289,10 @@ def create_app(data_dir=None, start_worker=True):
             db.execute('BEGIN')
             for todo in todos:
                 todo['source_segment_ids']=json.loads(todo['source_segment_ids'])
-                todo['stale']=meeting_flow.todo_stale(db,todo)
         row['note_todos']=todos
+        with store.connect() as db:
+            row['action_tasks']={a['id']:meeting_flow.action_bindings(db,row['id'],a) for a in store.all("SELECT * FROM artifacts WHERE meeting_id=? AND kind='meeting_minutes'",(row['id'],))}
+        row['deliveries']=[minutes_delivery.public(d) for d in store.all('SELECT * FROM minutes_deliveries WHERE meeting_id=? ORDER BY created DESC,rowid DESC',(row['id'],))]
         row['audio_tracks']=[name for name in ('system','microphone') if (store.directory(row['id'])/(name+'.wav')).is_file()]
         row['review']=meeting_review.read(row['id'])
         row['flow']=meeting_flow.flow(store,row['id'])
@@ -739,7 +744,9 @@ def create_app(data_dir=None, start_worker=True):
         values=[]
         for row in store.all("SELECT id,title FROM meetings WHERE EXISTS(SELECT 1 FROM note_todos WHERE meeting_id=meetings.id) ORDER BY created DESC,rowid DESC"):
             value=decorated(meeting(row['id']))
-            for todo in value['note_todos']:values.append({**todo,'meeting_id':row['id'],'meeting_title':row['title']})
+            for todo in value['note_todos']:
+                if todo.get('carried'):continue
+                values.append({**todo,'meeting_id':row['id'],'meeting_title':row['title']})
         return values
     @app.post('/api/meetings/{mid}/speaker-reviews',status_code=201)
     def create_speaker_review(mid:str,body:AnalysisJobInput):
@@ -830,9 +837,22 @@ def create_app(data_dir=None, start_worker=True):
     @app.put('/api/meetings/{mid}/note-todos/{tid}')
     def update_note_todo(mid:str,tid:str,body:TodoUpdate):
         meeting(mid)
-        if not store.one('SELECT id FROM note_todos WHERE meeting_id=? AND id=?',(mid,tid)):raise HTTPException(404,'待办不存在')
+        if not store.one('SELECT id FROM note_todos WHERE id=? AND (meeting_id=? OR EXISTS(SELECT 1 FROM meeting_task_links WHERE meeting_id=? AND task_id=note_todos.id))',(tid,mid,mid)):raise HTTPException(404,'待办不存在')
         store.execute('UPDATE note_todos SET status=?,owner=?,due_date=?,updated=CURRENT_TIMESTAMP WHERE id=?',(body.status,body.owner.strip(),body.due_date.strip(),tid))
         return {'ok':True}
+    @app.post('/api/meetings/{mid}/tasks/{tid}/carry',status_code=201)
+    def carry_task(mid:str,tid:str):
+        try:return meeting_flow.carry_task(store,mid,tid)
+        except ValueError as error:raise HTTPException(409,str(error))
+    @app.delete('/api/meetings/{mid}/tasks/{tid}/link')
+    def unlink_task(mid:str,tid:str):
+        meeting(mid)
+        store.execute('DELETE FROM meeting_task_links WHERE meeting_id=? AND task_id=?',(mid,tid))
+        return {'ok':True}
+    @app.post('/api/meetings/{mid}/minutes/deliveries',status_code=201)
+    def create_delivery(mid:str,body:DeliveryInput):
+        try:return minutes_delivery.create(store,mid,body.artifact_id,body.include_citations,body.confirmed)
+        except ValueError as error:raise HTTPException(409,str(error))
     @app.post('/api/meetings/{mid}/notes/{nid}/expand',status_code=201)
     def expand_note(mid:str,nid:str,body:AnalysisJobInput):
         from .note_expansion import nearby_segments
@@ -904,9 +924,11 @@ def create_app(data_dir=None, start_worker=True):
             db.execute('BEGIN IMMEDIATE')
             if db.execute("SELECT 1 FROM jobs WHERE meeting_id=? AND state IN ('running','queued')",(mid,)).fetchone():
                 raise HTTPException(409,'请先取消任务，等待处理停止后删除')
+            if db.execute('SELECT 1 FROM meeting_task_links l JOIN note_todos t ON t.id=l.task_id WHERE t.meeting_id=? AND l.meeting_id!=?',(mid,mid)).fetchone():
+                raise HTTPException(409,'该会议有带入其他会议的跟进项，请先在关联会议移除关联后再删除')
             db.execute('DELETE FROM live_asr_ranges WHERE recording_id=?',(mid,))
             QA.forget_meeting(db,mid)
-            for table in ['minutes_selection','meeting_briefs','attention_reviews','meeting_reviews','note_todos','retrieval_units','meeting_notes','artifacts','revisions','jobs','meetings']:
+            for table in ['minutes_deliveries','minutes_task_bindings','meeting_task_links','minutes_selection','meeting_briefs','attention_reviews','meeting_reviews','note_todos','retrieval_units','meeting_notes','artifacts','revisions','jobs','meetings']:
                 key='id' if table=='meetings' else 'meeting_id'
                 db.execute(f'DELETE FROM {table} WHERE {key}=?',(mid,))
         shutil.rmtree(store.directory(mid),ignore_errors=True)
@@ -1275,14 +1297,20 @@ def create_app(data_dir=None, start_worker=True):
         return public_artifact(store.one('SELECT * FROM artifacts WHERE id=?',(aid,)))
 
     @app.get('/api/meetings/{mid}/minutes/export/{format}')
-    def export_minutes(mid:str,format:str,include_citations:bool=False,inline:bool=False,artifact_id:str|None=None):
+    def export_minutes(mid:str,format:str,include_citations:bool=False,inline:bool=False,artifact_id:str|None=None,delivery_id:str|None=None):
         if format not in ('md','docx','pdf'):raise HTTPException(400,'会议纪要仅支持 Markdown、Word 或 PDF')
         row=meeting(mid)
-        with store.connect() as db:
-            artifact=db.execute("SELECT * FROM artifacts WHERE id=? AND meeting_id=? AND kind='meeting_minutes'",(artifact_id,mid)).fetchone() if artifact_id else minutes_versions.selected(db,mid,row['revision'])
-        if not artifact:raise HTTPException(404,'当前文字稿版本还没有会议纪要')
-        document=MeetingMinutes.model_validate(json.loads(artifact['payload']));source=store.one('SELECT segments FROM revisions WHERE meeting_id=? AND revision=?',(mid,artifact['revision']))
-        segments=json.loads(source['segments']) if source else []
+        if delivery_id:
+            delivery=store.one('SELECT payload FROM minutes_deliveries WHERE id=? AND meeting_id=?',(delivery_id,mid))
+            if not delivery:raise HTTPException(404,'交付版本不存在')
+            frozen=json.loads(delivery['payload']);document=MeetingMinutes.model_validate(frozen['document'])
+            segments=frozen['segments'];include_citations=frozen['include_citations']
+        else:
+            with store.connect() as db:
+                artifact=db.execute("SELECT * FROM artifacts WHERE id=? AND meeting_id=? AND kind='meeting_minutes'",(artifact_id,mid)).fetchone() if artifact_id else minutes_versions.selected(db,mid,row['revision'])
+            if not artifact:raise HTTPException(404,'当前文字稿版本还没有会议纪要')
+            document=MeetingMinutes.model_validate(json.loads(artifact['payload']));source=store.one('SELECT segments FROM revisions WHERE meeting_id=? AND revision=?',(mid,artifact['revision']))
+            segments=json.loads(source['segments']) if source else []
         validate_minutes_citations(document,{segment['id'] for segment in segments})
         if format=='md':
             content=minutes_markdown(document,segments,include_citations)

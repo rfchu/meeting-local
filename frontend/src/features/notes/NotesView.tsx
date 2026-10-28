@@ -919,7 +919,11 @@ export function TodoCard({
     <article className="note-todo-card">
       <strong>{todo.content}</strong>
       <small>
-        {todo.note_scope === "personal" ? "个人跟进" : "会议内容转出"}
+        {todo.carried
+          ? `沿用：${todo.source_meeting_title || "上次会议"}`
+          : todo.note_scope === "personal"
+            ? "个人跟进"
+            : "会议跟进"}
         {todo.stale ? " · 来源变化，待复核" : ""}
       </small>
       <div className="note-compose-options">

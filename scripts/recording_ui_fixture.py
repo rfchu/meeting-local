@@ -116,10 +116,10 @@ def main():
             store.execute('INSERT INTO meetings(id,title,filename,duration) VALUES(?,?,?,?)',(earlier,'合成上次评审会','previous.wav',12))
             store.save_revision(earlier,[{'id':'previous-seg','start':0,'end':12,'speaker':'甲','text':'准备交付验收材料。'}],'manual')
             with store.connect() as db:
-                old=insert_note(db,earlier,{'captured_at':3,'raw_text':'准备验收材料','note_type':'action','note_scope':'personal'})
+                old=insert_note(db,earlier,{'captured_at':3,'raw_text':'准备验收材料','note_type':'action','note_scope':'meeting'})
                 from app.notes import fingerprint
                 n=db.execute('SELECT * FROM meeting_notes WHERE id=?',(old,)).fetchone()
-                db.execute('INSERT INTO note_todos(id,meeting_id,note_id,content,revision,note_fingerprint,owner) VALUES(?,?,?,?,?,?,?)',(uid(),earlier,old,'准备验收材料',1,fingerprint(n),'测试负责人'))
+                db.execute('INSERT INTO note_todos(id,meeting_id,note_id,content,revision,note_fingerprint,owner,note_scope) VALUES(?,?,?,?,?,?,?,?)',(uid(),earlier,old,'准备验收材料',1,fingerprint(n),'测试负责人','meeting'))
                 save_brief(db,mid,{'title':'合成验收会议','purpose':'核对交付安排','questions':'负责人是否明确？','previous_meeting_id':earlier})
                 insert_note(db,mid,{'captured_at':5,'raw_text':'我的私人担忧，不能直接写进纪要','note_type':'note','note_scope':'personal'})
                 insert_note(db,mid,{'captured_at':7,'raw_text':'负责人到底是谁？','note_type':'question','note_scope':'personal'})

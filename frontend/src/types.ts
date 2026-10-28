@@ -94,7 +94,26 @@ export interface NoteExpansion {
   reason: string;
   evidence: { segment_id: string; quote: string }[];
 }
+export interface MinutesDelivery {
+  id: string;
+  artifact_id: string;
+  created: string;
+  title: string;
+  revision: number;
+  include_citations: boolean;
+  task_status: {
+    action_index: number;
+    task_id: string;
+    content: string;
+    status: string;
+    owner: string;
+    due_date: string;
+  }[];
+}
 export interface NoteTodo {
+  meeting_id?: string;
+  carried?: boolean;
+  source_meeting_title?: string;
   source_kind?: "note" | "minutes";
   source_artifact_id?: string;
   source_index?: number;
@@ -305,6 +324,8 @@ export interface MinutesGenerationStatus {
 }
 export interface Meeting extends MeetingSummary {
   active_minutes_id?: string | null;
+  action_tasks?: Record<string, Record<string, string>>;
+  deliveries?: MinutesDelivery[];
   minutes_generation?: MinutesGenerationStatus | null;
   flow?: MeetingFlow;
   review?: MeetingReview;

@@ -40,10 +40,7 @@ export default function ReviewSourcePane({
         <h3>原文与回听</h3>
         <button onClick={onEdit}>校对文字稿</button>
       </div>
-      <p>
-        点击时间戳回听；右侧核对关注点或点击纪要引用时，会定位到对应原文。当前原文
-        v{meeting.revision}。
-      </p>
+      <p>原文 v{meeting.revision} · 点击时间戳回听</p>
       <input
         aria-label="整理原文搜索"
         placeholder="搜索原文或发言人"
