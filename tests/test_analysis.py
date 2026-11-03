@@ -249,8 +249,9 @@ def test_builtin_minutes_templates_are_versioned_and_drive_sections(client):
     templates=client.get('/api/minutes-templates')
     assert templates.status_code==200
     values=templates.json()
-    assert [item['id'] for item in values]==['general-meeting','project-weekly','customer-interview']
-    assert all(item['version']==1 and item['builtin'] for item in values)
+    assert [item['id'] for item in values]==['general-meeting','project-weekly','customer-interview','online-interview']
+    assert all(item['builtin'] and item['version']>=1 for item in values)
+    assert next(item for item in values if item['id']=='online-interview')['version']==2
 
     mid=upload(client);store=client.app.state.store;store.save_revision(mid,sample(),'manual',expected=0)
     item=AnalysisItem(content='项目按计划推进',source_segment_ids=['seg1'])

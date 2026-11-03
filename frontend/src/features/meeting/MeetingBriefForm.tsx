@@ -69,6 +69,79 @@ export default function MeetingBriefForm({
             ))}
         </select>
       </label>
+      <details className="interview-preparation">
+        <summary>
+          线上面试准备（可选）
+          {value.interview?.role ? ` · ${value.interview.role}` : ""}
+        </summary>
+        <p>
+          填写岗位与本轮重点。未填写时仅按原文作通用面试记录；准备内容不代表候选人的实际回答。
+        </p>
+        {(
+          [
+            ["candidate", "候选人姓名／代称", 200],
+            ["role", "应聘岗位", 300],
+            ["round", "面试轮次", 200],
+            ["interviewers", "计划面试官", 1000],
+            ["focus", "本轮考察维度", 3000],
+            ["questions", "预设面试问题", 3000],
+            ["job_description", "岗位说明（选填）", 6000],
+          ] as const
+        ).map(([key, label, max]) => (
+          <label key={key}>
+            {label}
+            {max <= 1000 ? (
+              <input
+                maxLength={max}
+                value={value.interview?.[key] || ""}
+                onChange={(e) =>
+                  onChange({
+                    ...value,
+                    interview: {
+                      candidate: "",
+                      role: "",
+                      round: "",
+                      interviewers: "",
+                      focus: "",
+                      questions: "",
+                      job_description: "",
+                      ...value.interview,
+                      [key]: e.target.value,
+                    },
+                  })
+                }
+              />
+            ) : (
+              <textarea
+                rows={3}
+                maxLength={max}
+                value={value.interview?.[key] || ""}
+                onChange={(e) =>
+                  onChange({
+                    ...value,
+                    interview: {
+                      candidate: "",
+                      role: "",
+                      round: "",
+                      interviewers: "",
+                      focus: "",
+                      questions: "",
+                      job_description: "",
+                      ...value.interview,
+                      [key]: e.target.value,
+                    },
+                  })
+                }
+              />
+            )}
+          </label>
+        ))}
+        {value.interview && (
+          <button onClick={() => onChange({ ...value, interview: null })}>
+            清空面试准备
+          </button>
+        )}
+      </details>
       <small>
         这些内容用于准备和引导整理，不代表议题已经讨论或形成决定。个人判断请保留在“我的关注”中。
       </small>

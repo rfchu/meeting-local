@@ -56,6 +56,7 @@ def use_note(store,mid,nid,body):
         if any(item.get('key')==key for item in adopted):return {'id':artifact['id'],'reused':True}
         if artifact['id']!=body.minutes_id:raise ValueError('会议纪要已变化，请重新打开核对面板')
         document=MeetingMinutes.model_validate(json.loads(artifact['payload']))
+        if document.interview:raise ValueError('面试纪要请在结构化正文或面试官评价中补充；已核对关注点也可在重新生成时参与整理')
         if any(item.content==text and item.source_segment_ids==ids for item in getattr(document,body.section)):return {'id':artifact['id'],'reused':True}
         getattr(document,body.section).append(MinutesItem(content=text,source_segment_ids=ids))
         document=MeetingMinutes.model_validate(document.model_dump())

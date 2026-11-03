@@ -13,6 +13,7 @@ def brief(db,mid):
 
 def save_brief(db,mid,value):
     value={**EMPTY_BRIEF,**value}
+    if not value.get('interview'):value.pop('interview',None)
     previous=value.get('previous_meeting_id')
     if previous and (previous==mid or not db.execute('SELECT id FROM meetings WHERE id=?',(previous,)).fetchone()):raise ValueError('关联会议不存在，或不能关联自己')
     db.execute('INSERT INTO meeting_briefs(meeting_id,payload) VALUES(?,?) ON CONFLICT(meeting_id) DO UPDATE SET payload=excluded.payload,updated=CURRENT_TIMESTAMP',(mid,encode(value)))

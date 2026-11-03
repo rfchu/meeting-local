@@ -44,6 +44,12 @@ def build_from_ai(created,result,settings,source=None,template=None):
         style='ai',template_id=template.id,template_version=template.version,template_snapshot=template.model_dump(),
         basic_info_source_segment_ids=result.basic_info.source_segment_ids,overview=copy(result.overview),conclusions=copy(result.core_content),
         decisions=copy(result.decisions),action_items=copy(result.action_items,True),open_questions=copy(result.open_questions),summary=copy(result.summary))
+    if template.id=='online-interview':
+        if not result.interview:raise ValueError('模型未返回结构化面试结果，请使用 AI 整理全文生成')
+        from .interview import project
+        document.interview=result.interview.model_copy(deep=True)
+        document.title=topic if topic.endswith('面试纪要') else topic+('纪要' if topic.endswith('面试') else '面试纪要')
+        return project(document)
     if source:
         base=canonical_source(source)
         # Editorial variants cannot silently remove or change commitments and manual facts.

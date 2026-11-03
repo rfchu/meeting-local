@@ -35,7 +35,39 @@ export interface Revision {
 }
 export type MeetingNoteType =
   "note" | "highlight" | "question" | "decision" | "action";
+export interface InterviewPreparation {
+  candidate: string;
+  role: string;
+  round: string;
+  interviewers: string;
+  focus: string;
+  questions: string;
+  job_description: string;
+}
+export interface InterviewEvidence {
+  segment_id: string;
+  quote: string;
+}
+export interface InterviewItem {
+  content: string;
+  evidence: InterviewEvidence[];
+}
+export interface InterviewResult {
+  background: InterviewItem[];
+  qa: (InterviewItem & { question: string })[];
+  competencies: (InterviewItem & {
+    dimension: string;
+    coverage: "covered" | "needs_examples" | "not_discussed" | "unclear";
+  })[];
+  concerns: (InterviewItem & { reason: string; followup: string })[];
+  followups: (InterviewItem & {
+    owner: string | null;
+    due_date: string | null;
+  })[];
+  summary: InterviewItem[];
+}
 export interface MeetingBrief {
+  interview?: InterviewPreparation | null;
   title: string;
   purpose: string;
   agenda: string;
@@ -260,6 +292,11 @@ export interface MinutesTemplate {
   sections: MinutesTemplateSection[];
 }
 export interface MeetingMinutes {
+  interview?: InterviewResult | null;
+  interview_context?: InterviewPreparation | null;
+  interview_reviews?: Record<string, "kept" | "ignored">;
+  interviewer_evaluation?: string;
+  interview_evaluation_needs_review?: boolean;
   title: string;
   meeting_date: string;
   meeting_form: string;

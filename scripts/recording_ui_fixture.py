@@ -34,6 +34,7 @@ def main():
     import argparse
     import uvicorn
     parser=argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--interview-demo',action='store_true',help='Synthetic interview context, evidence and review; no real model')
     parser.add_argument('--empty-recovery-demo',action='store_true',help='Seed a failed native start with no saved material')
     parser.add_argument('--port',type=int,default=8766)
     parser.add_argument('--review-demo',action='store_true',help='Seed a synthetic transcript and AI minutes for review acceptance')
@@ -55,7 +56,7 @@ def main():
             empty=recordings.create('audio/wav');empty['source']='macos'
             recordings.write(recordings.folder(empty['id'])/'session.json',empty)
             recordings.write(recordings.folder(empty['id'])/'capture.json',{'state':'failed','duration':0,'error':'请在系统设置 → 隐私与安全性 → 屏幕与系统音频录制中允许听记采集器，然后重新开始'})
-        if args.automatic_demo:args.flow_demo=True
+        if args.automatic_demo or args.interview_demo:args.flow_demo=True
         if args.review_demo or args.qa_demo or args.flow_demo or args.recovery_demo:
             import wave
             from app.minutes import MeetingMinutes
@@ -107,6 +108,15 @@ def main():
                 def status(self):return {'ready':True,'models':['synthetic-minutes'],'base_url':self.base_url,'error':''}
                 def resolve_model(self,model=None):return 'synthetic-minutes'
                 def generate_ai_minutes(self,model,segments,metadata,work,run):
+                    if args.interview_demo and metadata.get('minutes_template',{}).get('id')=='online-interview':
+                        from app.interview import InterviewResult
+                        evidence=[{'segment_id':'demo-seg','quote':'我负责接口实现'}]
+                        return AIMinutesResult(basic_info=AIMinutesBasicInfo(topic='合成后端岗位面试',source_segment_ids=['interview-q']),interview=InterviewResult.model_validate({
+                            'background':[{'content':'候选人自述负责支付接口实现。','evidence':evidence}],
+                            'qa':[{'question':'本人在项目中承担什么职责？','content':'候选人表示负责接口实现，团队延迟改善，但测量基线需要补充。','evidence':evidence}],
+                            'competencies':[{'dimension':'项目贡献','coverage':'covered','content':'已获得本人承担接口实现的回答，其他职责边界待核对。','evidence':evidence}],
+                            'concerns':[{'content':'量化结果的测量基线尚不明确。','reason':'候选人明确表示具体基线需要补充。','followup':'请补充改造前后指标及测试方法。','evidence':[{'segment_id':'demo-seg','quote':'具体基线我需要补充'}]}],
+                            'followups':[],'summary':[{'content':'本轮获得了接口开发经历的自述，测量方法仍待核对。','evidence':evidence}]}))
                     if args.automatic_demo:
                         import time
                         time.sleep(3)
@@ -131,6 +141,12 @@ def main():
                 insert_note(db,mid,{'captured_at':7,'raw_text':'负责人到底是谁？','note_type':'question','note_scope':'personal'})
             document.action_items=[MinutesItem(content='核对交付负责人',source_segment_ids=['demo-seg'])]
             store.execute("UPDATE artifacts SET payload=?,provenance=? WHERE meeting_id=? AND kind='meeting_minutes'",(encode(document.model_dump()),encode({'edited':True,'ai_generated':True}),mid))
+        if args.interview_demo:
+            store.save_revision(mid,[{'id':'interview-q','start':0,'end':4,'speaker':'面试官','text':'请介绍你本人在支付改造项目中的职责。','boundary_review':False},
+                {'id':'demo-seg','start':4,'end':12,'speaker':'候选人','text':'我负责接口实现，我们团队把延迟降低了百分之三十。具体基线我需要补充。','boundary_review':False}],'manual')
+            store.execute("DELETE FROM artifacts WHERE meeting_id=?",(mid,))
+            store.execute("UPDATE meetings SET title='合成线上面试' WHERE id=?",(mid,))
+            with store.connect() as db:save_brief(db,mid,{'title':'合成线上面试','interview':{'candidate':'候选人甲（合成）','role':'后端工程师','round':'技术初面','focus':'项目贡献、量化方法'}})
         if args.recovery_demo:
             jid=uid()
             store.execute('INSERT INTO jobs(id,meeting_id,state,stage,error,config) VALUES(?,?,?,?,?,?)',(jid,mid,'failed','处理失败','合成异常：补识别片段未完成',encode({'engine':'qwen','completion_mode':'full','pipeline_version':2})))

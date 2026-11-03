@@ -1,3 +1,4 @@
+from .interview import InterviewPreparation
 import asyncio, sqlite3, io, hashlib, json, os, shutil, subprocess, tempfile, threading, time, wave
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -135,6 +136,7 @@ class MeetingNoteUpdate(BaseModel):
     is_marker: bool | None=None
     captured_at: float | None=Field(default=None,ge=0,allow_inf_nan=False)
 class MeetingBriefInput(BaseModel):
+    interview:InterviewPreparation|None=None
     title: str=Field(default='',max_length=200)
     purpose: str=Field(default='',max_length=1000)
     agenda: str=Field(default='',max_length=3000)
@@ -1099,6 +1101,7 @@ def create_app(data_dir=None, start_worker=True):
         segments=json.loads(row['segments'])
         analysis=MeetingAnalysis.model_validate(json.loads(source['payload']))
         template=minutes_template(body.template_id)
+        if template.id=='online-interview':raise HTTPException(409,'线上面试模板请使用 AI 整理全文')
         document=build_minutes(row['title'],row['created'],segments,analysis,body.style,template)
         aid=uid();provenance={'source_analysis_id':source['id'],'minutes_version':MINUTES_VERSION,'style':body.style,
                               'template_id':template.id,'template_version':template.version,'edited':False}
@@ -1113,7 +1116,13 @@ def create_app(data_dir=None, start_worker=True):
             if not body.source_analysis_id:raise HTTPException(409,'规则纪要缺少来源会议分析')
             minutes_source(mid,row,body.source_analysis_id)
         segments=json.loads(row['segments']);valid_ids={segment['id'] for segment in segments}
-        try:validate_minutes_citations(body.document,valid_ids)
+        try:
+            if body.document.template_id=='online-interview':
+                from .interview import project
+                if not body.document.interview:raise ValueError('面试纪要缺少结构化结果')
+                body.document.interview.validate_sources(segments)
+                body.document=project(body.document)
+            validate_minutes_citations(body.document,valid_ids)
         except ValueError as error:raise HTTPException(400,str(error))
         aid=uid();provenance={'source_analysis_id':body.source_analysis_id,'source_transcript_revision':row['revision'] if body.document.style=='ai' else None,
                               'minutes_version':MINUTES_VERSION,'style':body.document.style,'template_id':body.document.template_id,
@@ -1145,6 +1154,7 @@ def create_app(data_dir=None, start_worker=True):
         row=meeting(mid);settings=CompositionSettings.model_validate(body.model_dump())
         from .minutes_composition import semantic_template
         template=semantic_template(settings.template_id,minutes_template(settings.template_id))
+        if template.id=='online-interview' and settings.method!='ai':raise HTTPException(409,'线上面试模板请使用 AI 整理全文，问答与证据不能由普通会议分析代替')
         if body.source_minutes_id and not store.one("SELECT id FROM artifacts WHERE id=? AND meeting_id=? AND kind='meeting_minutes'",(body.source_minutes_id,mid)):raise HTTPException(404,'来源纪要不存在')
         if settings.method=='analysis':
             analysis=store.one("SELECT * FROM artifacts WHERE meeting_id=? AND revision=? AND kind='meeting_analysis' ORDER BY created DESC,rowid DESC LIMIT 1",(mid,row['revision']))
@@ -1157,7 +1167,7 @@ def create_app(data_dir=None, start_worker=True):
         if settings.method=='current' and not body.source_minutes_id:raise HTTPException(409,'请先选择要整理的纪要版本')
         result=generate_ai_minutes(mid,AIMinutesGenerateInput(profile_id=body.profile_id,model=body.model,composition=settings,source_minutes_id=body.source_minutes_id))
         response={'artifact':result}
-        if body.also_analyze and settings.method=='ai' and not store.one("SELECT id FROM artifacts WHERE meeting_id=? AND revision=? AND kind='meeting_analysis'",(mid,result['revision'])):
+        if body.also_analyze and settings.method=='ai' and template.id!='online-interview' and not store.one("SELECT id FROM artifacts WHERE meeting_id=? AND revision=? AND kind='meeting_analysis'",(mid,result['revision'])):
             try:
                 if meeting(mid)['revision']!=result['revision']:raise HTTPException(409,'原文版本已变化')
                 response['analysis_job_id']=enqueue_analysis(mid,AnalysisJobInput(profile_id=body.profile_id,model=body.model))['id']
@@ -1184,7 +1194,8 @@ def create_app(data_dir=None, start_worker=True):
         if body.composition:
             from .minutes_composition import semantic_template
             template=semantic_template(template.id,template)
-        source_analysis=minutes_source(mid,row) if body.mode=='full' else None
+        if template.id=='online-interview' and body.composition and body.composition.method!='ai':raise HTTPException(409,'线上面试模板仅支持 AI 整理全文')
+        source_analysis=minutes_source(mid,row) if body.mode=='full' and template.id!='online-interview' else None
         try:
             with store.connect() as db:context,context_hash=meeting_flow.ai_context(db,mid)
         except ValueError as error:raise HTTPException(409,str(error))
@@ -1196,6 +1207,7 @@ def create_app(data_dir=None, start_worker=True):
                 with store.connect() as db:
                     if not source or source['revision']!=row['revision'] or not meeting_flow.artifact_current(db,mid,json.loads(source['provenance'])):raise HTTPException(409,'来源纪要已过期，请选择当前有效版本')
                 source_document=MeetingMinutes.model_validate(json.loads(source['payload']))
+                if source_document.interview:raise HTTPException(409,'面试纪要请重新生成面试草稿，或直接核对结构化内容；不使用通用纪要派生')
                 canonical=canonical_source(source_document)
                 # Keep unreferenced manual additions outside the rewrite model and reattach verbatim.
                 source_payload=canonical.model_dump()
@@ -1229,6 +1241,11 @@ def create_app(data_dir=None, start_worker=True):
             result=provider.generate_ai_minutes(model,segments,{'title':row['title'],'date':row['created'][:10],
                 'known_attendees':speakers,'minutes_template':template.model_dump(),**context},work/'result',run)
             document=build_from_ai(row['created'],result,body.composition,source_document,template) if body.composition else build_ai_minutes(row['created'],result,template)
+            if template.id=='online-interview':
+                document.interview.validate_sources(segments)
+                document.interview_context=InterviewPreparation.model_validate(context['preparation']['interview']) if context['preparation'].get('interview') else None
+                from .interview import project
+                document=project(document)
             validate_minutes_citations(document,{segment['id'] for segment in segments})
         except (RuntimeError,ValueError,subprocess.TimeoutExpired) as error:raise HTTPException(409,str(error))
         aid=uid();provenance={'minutes_version':MINUTES_VERSION,'style':'ai','template_id':template.id,
@@ -1244,7 +1261,7 @@ def create_app(data_dir=None, start_worker=True):
             try:current_context_hash=meeting_flow.ai_context(db,mid)[1]
             except ValueError as error:raise HTTPException(409,str(error))
             if not current or current['revision']!=row['revision'] or current_context_hash!=context_hash:raise HTTPException(409,'生成期间原文或会议准备／关注点变化，请重新生成')
-            if body.composition:aid=minutes_versions.publish_draft(db,mid,row['revision'],document,provenance)
+            if body.composition or template.id=='online-interview':aid=minutes_versions.publish_draft(db,mid,row['revision'],document,provenance)
             else:db.execute('INSERT INTO artifacts(id,meeting_id,revision,kind,payload,provenance) VALUES(?,?,?,?,?,?)',
                 (aid,mid,row['revision'],'meeting_minutes',encode(document.model_dump()),encode(provenance)))
         return public_artifact(store.one('SELECT * FROM artifacts WHERE id=?',(aid,)))
@@ -1259,6 +1276,7 @@ def create_app(data_dir=None, start_worker=True):
             try:polish_context_hash=meeting_flow.ai_context(db,mid)[1]
             except ValueError as error:raise HTTPException(409,str(error))
         document=MeetingMinutes.model_validate(json.loads(source['payload']))
+        if document.template_id=='online-interview':raise HTTPException(409,'面试纪要请直接核对结构化内容，或重新生成草稿')
         segments=json.loads(row['segments']);valid_ids={segment['id'] for segment in segments}
         try:validate_minutes_citations(document,valid_ids)
         except ValueError as error:raise HTTPException(400,str(error))

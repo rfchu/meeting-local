@@ -90,6 +90,11 @@ def process(worker,job):
             temp=checkpoint.with_suffix('.tmp');temp.write_text(encode({'identity':identity,'result':result.model_dump()}));temp.replace(checkpoint)
         if not any(result.all_items()):raise ValueError('模型没有返回有效纪要内容，请检查模型后重试纪要步骤')
         document=build_from_ai(row['created'],result,settings,template=template)
+        if document.interview:
+            from .interview import InterviewPreparation,project
+            document.interview.validate_sources(segments)
+            document.interview_context=InterviewPreparation.model_validate(context['preparation']['interview']) if context['preparation'].get('interview') else None
+            document=project(document)
         validate_minutes_citations(document,{s['id'] for s in segments})
         worker.check(jid);worker.update(jid,'校验原文与保存纪要草稿',.95)
         with store.connect() as db:

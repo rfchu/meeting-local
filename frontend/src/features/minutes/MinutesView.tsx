@@ -1,3 +1,4 @@
+import InterviewMinutesBody from "./InterviewMinutesBody";
 import {
   hasMinutesFollowup,
   pendingMinutesDrafts,
@@ -96,6 +97,7 @@ interface Props {
   generating: boolean;
   onOptions: (value: MinutesOptions) => void;
   onWithAnalysis: (value: boolean) => void;
+  onPreparation: () => void;
   onSelect: (id: string) => void;
   onAdopt: () => void;
   onCompare: (left: string, right: string) => void;
@@ -284,9 +286,17 @@ export default function MinutesView(props: Props) {
             <select
               aria-label="纪要模板"
               value={options.template_id}
-              onChange={(e) =>
-                props.onOptions({ ...options, template_id: e.target.value })
-              }
+              onChange={(e) => {
+                props.onOptions({
+                  ...options,
+                  template_id: e.target.value,
+                  ...(e.target.value === "online-interview"
+                    ? { method: "ai", audience: "internal" }
+                    : {}),
+                });
+                if (e.target.value === "online-interview")
+                  props.onWithAnalysis(false);
+              }}
             >
               {templates.map((item) => (
                 <option key={item.id} value={item.id}>
@@ -350,6 +360,12 @@ export default function MinutesView(props: Props) {
                   : "生成会议纪要"}
           </button>
         </div>
+        {options.template_id === "online-interview" && (
+          <p>
+            <button onClick={props.onPreparation}>填写面试准备</button>
+            可选填岗位与考察重点；本模板仅使用 AI 整理全文。
+          </p>
+        )}
         <p>生成后另存草稿，核对后采用。</p>
         <details className="minutes-advanced">
           <summary>
@@ -377,8 +393,18 @@ export default function MinutesView(props: Props) {
               }
             >
               <option value="ai">AI 整理全文（推荐）</option>
-              <option value="analysis">根据会议分析快速成稿</option>
-              <option value="current" disabled={!current}>
+              <option
+                value="analysis"
+                disabled={options.template_id === "online-interview"}
+              >
+                根据会议分析快速成稿
+              </option>
+              <option
+                value="current"
+                disabled={
+                  !current || options.template_id === "online-interview"
+                }
+              >
                 基于当前显示的纪要整理
               </option>
             </select>
@@ -403,16 +429,17 @@ export default function MinutesView(props: Props) {
               )}
             </select>
           </label>
-          {options.method === "ai" && (
-            <label>
-              <input
-                type="checkbox"
-                checked={withAnalysis}
-                onChange={(e) => props.onWithAnalysis(e.target.checked)}
-              />
-              同时生成会议分析，作为独立复盘资料
-            </label>
-          )}
+          {options.method === "ai" &&
+            options.template_id !== "online-interview" && (
+              <label>
+                <input
+                  type="checkbox"
+                  checked={withAnalysis}
+                  onChange={(e) => props.onWithAnalysis(e.target.checked)}
+                />
+                同时生成会议分析，作为独立复盘资料
+              </label>
+            )}
           <p>
             {options.method === "analysis"
               ? analysis
@@ -490,7 +517,9 @@ export default function MinutesView(props: Props) {
               </button>
             )}
           <button
-            disabled={!current || dirty || transcriptDirty}
+            disabled={
+              !current || dirty || transcriptDirty || !!draft?.interview
+            }
             onClick={() => {
               if (draft) {
                 props.onOptions({
@@ -580,7 +609,7 @@ export default function MinutesView(props: Props) {
           />
           <details className="minutes-basic-info">
             <summary>
-              会议基本信息
+              {draft.interview ? "面试基本信息" : "会议基本信息"}
               {draft.meeting_date ? ` · ${draft.meeting_date}` : " · 待补充"}
             </summary>
             <div className="minutes-meta">
@@ -613,244 +642,265 @@ export default function MinutesView(props: Props) {
               </label>
             </div>
           </details>
-          {layoutSections.map(({ id, source: section, title: label, kind }) => {
-            const items = draft[section],
-              table = kind === "decision_table" || kind === "action_table";
-            return (
-              <section
-                className={`minutes-section minutes-section-${section}`}
-                key={id}
-              >
-                <div className="minutes-section-head">
-                  <h3>{label}</h3>
-                  <button
-                    onClick={() =>
-                      update(section, [
-                        ...items,
-                        {
-                          content: "新增事项",
-                          source_segment_ids: [],
-                          owner: null,
-                          due_date: null,
-                          status: section === "action_items" ? "待开始" : null,
-                        },
-                      ])
-                    }
+          {draft.interview && (
+            <InterviewMinutesBody
+              document={draft}
+              onPreparation={props.onPreparation}
+              segments={meeting.segments}
+              onChange={props.onDraft}
+              onSeek={props.onSeek}
+            />
+          )}
+          {!draft.interview &&
+            layoutSections.map(
+              ({ id, source: section, title: label, kind }) => {
+                const items = draft[section],
+                  table = kind === "decision_table" || kind === "action_table";
+                return (
+                  <section
+                    className={`minutes-section minutes-section-${section}`}
+                    key={id}
                   >
-                    ＋ 添加
-                  </button>
-                </div>
-                {!items.length && <p className="minutes-empty">无明确内容</p>}
-                <div
-                  className={
-                    table
-                      ? `minutes-grid ${section === "action_items" ? "action-grid" : "decision-grid"}`
-                      : ""
-                  }
-                >
-                  {table &&
-                    (section === "action_items"
-                      ? ["行动项", "负责人", "截止时间", "会议记录状态", ""]
-                      : ["决策事项", "负责人", "生效/完成时间", ""]
-                    ).map((value) => (
-                      <b className="minutes-grid-head" key={value}>
-                        {value}
-                      </b>
-                    ))}
-                  {items.map((item, index) =>
-                    table ? (
-                      <Fragment key={index}>
-                        {section === "action_items" &&
-                          meeting.action_tasks?.[selectedId || ""]?.[
-                            String(index)
-                          ] && (
-                            <div className="minutes-table-citations task-live-badge">
-                              当前跟进：
-                              {meeting.note_todos.find(
-                                (t) =>
-                                  t.id ===
-                                  meeting.action_tasks?.[selectedId || ""]?.[
-                                    String(index)
-                                  ],
-                              )?.status === "done"
-                                ? "已完成"
-                                : "待完成"}{" "}
-                              · 在下方跟进清单更新
-                            </div>
-                          )}
-                        <textarea
-                          rows={2}
-                          value={item.content}
-                          onChange={(e) =>
-                            itemUpdate(section, index, {
-                              content: e.target.value,
-                            })
-                          }
-                        />
-                        <input
-                          placeholder="待确认"
-                          value={item.owner || ""}
-                          onChange={(e) =>
-                            itemUpdate(section, index, {
-                              owner: e.target.value || null,
-                            })
-                          }
-                        />
-                        <input
-                          placeholder="待确认"
-                          value={item.due_date || ""}
-                          onChange={(e) =>
-                            itemUpdate(section, index, {
-                              due_date: e.target.value || null,
-                            })
-                          }
-                        />
-                        {section === "action_items" && (
-                          <select
-                            disabled={
-                              !!meeting.action_tasks?.[selectedId || ""]?.[
+                    <div className="minutes-section-head">
+                      <h3>{label}</h3>
+                      <button
+                        onClick={() =>
+                          update(section, [
+                            ...items,
+                            {
+                              content: "新增事项",
+                              source_segment_ids: [],
+                              owner: null,
+                              due_date: null,
+                              status:
+                                section === "action_items" ? "待开始" : null,
+                            },
+                          ])
+                        }
+                      >
+                        ＋ 添加
+                      </button>
+                    </div>
+                    {!items.length && (
+                      <p className="minutes-empty">无明确内容</p>
+                    )}
+                    <div
+                      className={
+                        table
+                          ? `minutes-grid ${section === "action_items" ? "action-grid" : "decision-grid"}`
+                          : ""
+                      }
+                    >
+                      {table &&
+                        (section === "action_items"
+                          ? ["行动项", "负责人", "截止时间", "会议记录状态", ""]
+                          : ["决策事项", "负责人", "生效/完成时间", ""]
+                        ).map((value) => (
+                          <b className="minutes-grid-head" key={value}>
+                            {value}
+                          </b>
+                        ))}
+                      {items.map((item, index) =>
+                        table ? (
+                          <Fragment key={index}>
+                            {section === "action_items" &&
+                              meeting.action_tasks?.[selectedId || ""]?.[
                                 String(index)
-                              ]
-                            }
-                            title="会议记录中的状态；当前执行进度在跟进清单更新"
-                            value={item.status || "待开始"}
-                            onChange={(e) =>
-                              itemUpdate(section, index, {
-                                status: e.target.value,
-                              })
-                            }
-                          >
-                            {["待开始", "进行中", "已完成", "已延期"].map(
-                              (value) => (
-                                <option key={value}>{value}</option>
-                              ),
-                            )}
-                          </select>
-                        )}
-                        <button
-                          onClick={() =>
-                            update(
-                              section,
-                              items.filter((_, i) => i !== index),
-                            )
-                          }
-                        >
-                          删除
-                        </button>
-                        {(showCitations || props.referenceMode) &&
-                          item.source_segment_ids.length > 0 && (
-                            <div className="citations minutes-table-citations">
-                              {item.source_segment_ids
-                                .map((sid) => byId.get(sid))
-                                .filter(Boolean)
-                                .map((segment) => (
-                                  <button
-                                    key={segment!.id}
-                                    className="citation"
-                                    aria-label={`${label} ${index + 1} 原文 ${clock(segment!.start)}`}
-                                    title={`${segment!.speaker}：${segment!.text}`}
-                                    onClick={() => props.onSeek(segment!.start)}
-                                  >
-                                    回听依据 {clock(segment!.start)}
-                                  </button>
-                                ))}
-                            </div>
-                          )}
-                      </Fragment>
-                    ) : (
-                      <article className="minutes-item" key={index}>
-                        {section === "action_items" &&
-                          meeting.action_tasks?.[selectedId || ""]?.[
-                            String(index)
-                          ] && (
-                            <small className="task-live-badge">
-                              当前跟进：
-                              {meeting.note_todos.find(
-                                (t) =>
-                                  t.id ===
-                                  meeting.action_tasks?.[selectedId || ""]?.[
+                              ] && (
+                                <div className="minutes-table-citations task-live-badge">
+                                  当前跟进：
+                                  {meeting.note_todos.find(
+                                    (t) =>
+                                      t.id ===
+                                      meeting.action_tasks?.[
+                                        selectedId || ""
+                                      ]?.[String(index)],
+                                  )?.status === "done"
+                                    ? "已完成"
+                                    : "待完成"}{" "}
+                                  · 在下方跟进清单更新
+                                </div>
+                              )}
+                            <textarea
+                              rows={2}
+                              value={item.content}
+                              onChange={(e) =>
+                                itemUpdate(section, index, {
+                                  content: e.target.value,
+                                })
+                              }
+                            />
+                            <input
+                              placeholder="待确认"
+                              value={item.owner || ""}
+                              onChange={(e) =>
+                                itemUpdate(section, index, {
+                                  owner: e.target.value || null,
+                                })
+                              }
+                            />
+                            <input
+                              placeholder="待确认"
+                              value={item.due_date || ""}
+                              onChange={(e) =>
+                                itemUpdate(section, index, {
+                                  due_date: e.target.value || null,
+                                })
+                              }
+                            />
+                            {section === "action_items" && (
+                              <select
+                                disabled={
+                                  !!meeting.action_tasks?.[selectedId || ""]?.[
                                     String(index)
-                                  ],
-                              )?.status === "done"
-                                ? "已完成"
-                                : "待完成"}{" "}
-                              · 在下方跟进清单更新
-                            </small>
-                          )}
-                        <textarea
-                          rows={Math.max(
-                            2,
-                            Math.ceil(item.content.length / 45),
-                          )}
-                          value={item.content}
-                          onChange={(e) =>
-                            itemUpdate(section, index, {
-                              content: e.target.value,
-                            })
-                          }
-                        />
-                        <div className="minutes-item-tools">
-                          {(section === "action_items" ||
-                            section === "decisions") && (
-                            <>
-                              <input
-                                placeholder="负责人待确认"
-                                value={item.owner || ""}
+                                  ]
+                                }
+                                title="会议记录中的状态；当前执行进度在跟进清单更新"
+                                value={item.status || "待开始"}
                                 onChange={(e) =>
                                   itemUpdate(section, index, {
-                                    owner: e.target.value || null,
+                                    status: e.target.value,
                                   })
                                 }
-                              />
-                              <input
-                                placeholder="时间待确认"
-                                value={item.due_date || ""}
-                                onChange={(e) =>
-                                  itemUpdate(section, index, {
-                                    due_date: e.target.value || null,
-                                  })
+                              >
+                                {["待开始", "进行中", "已完成", "已延期"].map(
+                                  (value) => (
+                                    <option key={value}>{value}</option>
+                                  ),
+                                )}
+                              </select>
+                            )}
+                            <button
+                              onClick={() =>
+                                update(
+                                  section,
+                                  items.filter((_, i) => i !== index),
+                                )
+                              }
+                            >
+                              删除
+                            </button>
+                            {(showCitations || props.referenceMode) &&
+                              item.source_segment_ids.length > 0 && (
+                                <div className="citations minutes-table-citations">
+                                  {item.source_segment_ids
+                                    .map((sid) => byId.get(sid))
+                                    .filter(Boolean)
+                                    .map((segment) => (
+                                      <button
+                                        key={segment!.id}
+                                        className="citation"
+                                        aria-label={`${label} ${index + 1} 原文 ${clock(segment!.start)}`}
+                                        title={`${segment!.speaker}：${segment!.text}`}
+                                        onClick={() =>
+                                          props.onSeek(segment!.start)
+                                        }
+                                      >
+                                        回听依据 {clock(segment!.start)}
+                                      </button>
+                                    ))}
+                                </div>
+                              )}
+                          </Fragment>
+                        ) : (
+                          <article className="minutes-item" key={index}>
+                            {section === "action_items" &&
+                              meeting.action_tasks?.[selectedId || ""]?.[
+                                String(index)
+                              ] && (
+                                <small className="task-live-badge">
+                                  当前跟进：
+                                  {meeting.note_todos.find(
+                                    (t) =>
+                                      t.id ===
+                                      meeting.action_tasks?.[
+                                        selectedId || ""
+                                      ]?.[String(index)],
+                                  )?.status === "done"
+                                    ? "已完成"
+                                    : "待完成"}{" "}
+                                  · 在下方跟进清单更新
+                                </small>
+                              )}
+                            <textarea
+                              rows={Math.max(
+                                2,
+                                Math.ceil(item.content.length / 45),
+                              )}
+                              value={item.content}
+                              onChange={(e) =>
+                                itemUpdate(section, index, {
+                                  content: e.target.value,
+                                })
+                              }
+                            />
+                            <div className="minutes-item-tools">
+                              {(section === "action_items" ||
+                                section === "decisions") && (
+                                <>
+                                  <input
+                                    placeholder="负责人待确认"
+                                    value={item.owner || ""}
+                                    onChange={(e) =>
+                                      itemUpdate(section, index, {
+                                        owner: e.target.value || null,
+                                      })
+                                    }
+                                  />
+                                  <input
+                                    placeholder="时间待确认"
+                                    value={item.due_date || ""}
+                                    onChange={(e) =>
+                                      itemUpdate(section, index, {
+                                        due_date: e.target.value || null,
+                                      })
+                                    }
+                                  />
+                                </>
+                              )}
+                              <button
+                                onClick={() =>
+                                  update(
+                                    section,
+                                    items.filter((_, i) => i !== index),
+                                  )
                                 }
-                              />
-                            </>
-                          )}
-                          <button
-                            onClick={() =>
-                              update(
-                                section,
-                                items.filter((_, i) => i !== index),
-                              )
-                            }
-                          >
-                            删除
-                          </button>
-                        </div>
-                        {(showCitations || props.referenceMode) && (
-                          <div className="citations">
-                            {item.source_segment_ids
-                              .map((id) => byId.get(id))
-                              .filter(Boolean)
-                              .map((segment) => (
-                                <button
-                                  key={segment!.id}
-                                  className="citation"
-                                  title={`${segment!.speaker}：${segment!.text}`}
-                                  onClick={() => props.onSeek(segment!.start)}
-                                >
-                                  {clock(segment!.start)}
-                                </button>
-                              ))}
-                          </div>
-                        )}
-                      </article>
-                    ),
-                  )}
-                </div>
-              </section>
-            );
-          })}
+                              >
+                                删除
+                              </button>
+                            </div>
+                            {(showCitations || props.referenceMode) && (
+                              <div className="citations">
+                                {item.source_segment_ids
+                                  .map((id) => byId.get(id))
+                                  .filter(Boolean)
+                                  .map((segment) => (
+                                    <button
+                                      key={segment!.id}
+                                      className="citation"
+                                      title={`${segment!.speaker}：${segment!.text}`}
+                                      onClick={() =>
+                                        props.onSeek(segment!.start)
+                                      }
+                                    >
+                                      {clock(segment!.start)}
+                                    </button>
+                                  ))}
+                              </div>
+                            )}
+                          </article>
+                        ),
+                      )}
+                    </div>
+                  </section>
+                );
+              },
+            )}
           <p className="minutes-reference-note">
             {template?.description || fallback.hint}{" "}
-            发送前请确认参会人、负责人和时间。
+            {draft.interview
+              ? "导出前核对问答归属、依据和待追问事项。"
+              : "发送前请确认参会人、负责人和时间。"}
           </p>
         </fieldset>
       )}

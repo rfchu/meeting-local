@@ -71,6 +71,15 @@ BUILTIN_TEMPLATES = (
             MinutesTemplateSection(id="followups", title="后续动作", source="action_items", kind="action_table", max_items=15),
         ],
     ),
+    MinutesTemplate(id="online-interview",name="线上面试纪要",category="招聘面试",version=2,
+        description="围绕岗位考察整理问答、原文证据与待追问问题；评价由面试官填写。",
+        generation_instruction="区分候选人自述、原文证据与AI待核对建议，不评分、不排名，不生成招聘决定。",
+        sections=[MinutesTemplateSection(id="background",title="候选人经历与项目",source="overview",max_items=20),
+            MinutesTemplateSection(id="qa",title="核心问答记录",source="conclusions",max_items=40),
+            MinutesTemplateSection(id="evidence",title="岗位能力证据",source="decisions",max_items=20),
+            MinutesTemplateSection(id="concerns",title="已保留的关注与待追问",source="open_questions",max_items=30),
+            MinutesTemplateSection(id="followups",title="明确约定的后续动作",source="action_items",kind="action_table",max_items=30),
+            MinutesTemplateSection(id="summary",title="面试总结与人工评价",source="summary",max_items=20)]),
 )
 
 

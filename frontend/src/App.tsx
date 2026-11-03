@@ -1257,6 +1257,7 @@ export default function App() {
                         generating={generating}
                         onOptions={changeMinutesOptions}
                         onWithAnalysis={setWithAnalysis}
+                        onPreparation={() => setWorkspace("prepare")}
                         onSelect={(id) => void selectMinutes(id)}
                         onAdopt={() => void adoptMinutes()}
                         onCompare={(left, right) =>

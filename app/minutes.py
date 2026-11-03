@@ -1,3 +1,5 @@
+from typing import Literal
+from .interview import InterviewResult,InterviewPreparation
 """Editable, source-grounded meeting minutes and document exports."""
 from io import BytesIO
 from pathlib import Path
@@ -37,7 +39,7 @@ MINUTES_LABELS = {
 
 
 class MinutesItem(BaseModel):
-    content: str = Field(min_length=1, max_length=2000)
+    content: str = Field(min_length=1, max_length=6000)
     source_segment_ids: list[str] = Field(default_factory=list, max_length=100)
     owner: str | None = Field(default=None, max_length=200)
     due_date: str | None = Field(default=None, max_length=200)
@@ -45,6 +47,11 @@ class MinutesItem(BaseModel):
 
 
 class MeetingMinutes(BaseModel):
+    interview_context:InterviewPreparation|None=None
+    interview:InterviewResult|None=None
+    interview_reviews:dict[str,Literal['kept','ignored']]=Field(default_factory=dict,max_length=30)
+    interviewer_evaluation:str=Field(default='',max_length=1800)
+    interview_evaluation_needs_review:bool=False
     title: str = Field(min_length=1, max_length=300)
     meeting_date: str = Field(default="", max_length=100)
     meeting_form: str = Field(default="", max_length=200)
@@ -73,6 +80,9 @@ class MeetingMinutes(BaseModel):
 def validate_minutes_citations(document: MeetingMinutes, valid_ids: set[str]):
     if not set(document.basic_info_source_segment_ids).issubset(valid_ids):
         raise ValueError("会议纪要基本信息包含不存在的原文引用")
+    if document.interview:
+        for evidence in document.interview.evidence():
+            if evidence.segment_id not in valid_ids:raise ValueError('面试纪要包含不存在的原文引用')
     for item in document.all_items():
         if not set(item.source_segment_ids).issubset(valid_ids):
             raise ValueError("会议纪要包含不存在的原文引用")
@@ -119,6 +129,9 @@ def build_minutes(title: str, created: str, segments: list[dict], analysis: Meet
 
 
 def build_ai_minutes(created: str, result: AIMinutesResult, template: MinutesTemplate | None = None):
+    if template and template.id=='online-interview':
+        from .minutes_composition import build_from_ai,CompositionSettings
+        return build_from_ai(created,result,CompositionSettings(template_id=template.id),template=template)
     def copy(items, action=False):
         return [MinutesItem(**item.model_dump(),status="待开始" if action else None) for item in items]
     topic=result.basic_info.topic.strip()

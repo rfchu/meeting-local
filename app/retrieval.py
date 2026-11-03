@@ -89,6 +89,9 @@ class Retrieval:
     def units(self,db):
         units=[]
         for meeting in db.execute('SELECT * FROM meetings ORDER BY created,id').fetchall():
+            # Interview records stay outside the general cross-meeting library in this first release.
+            from .meeting_flow import brief
+            if brief(db,meeting['id']).get('interview') or db.execute("SELECT 1 FROM artifacts WHERE meeting_id=? AND kind='meeting_minutes' AND json_extract(payload,'$.template_id')='online-interview'",(meeting['id'],)).fetchone():continue
             mid=meeting['id'];revision=meeting['revision'];segments=json.loads(meeting['segments']);by_id={s['id']:s for s in segments}
             def add(key,kind,text,ids,start=None,end=None,artifact_id=None,note_scope=None):
                 if not text.strip():return

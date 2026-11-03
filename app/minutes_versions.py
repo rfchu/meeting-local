@@ -15,6 +15,13 @@ def adopt(db,mid,aid):
 
 def publish_draft(db,mid,revision,document,provenance):
     previous=selected(db,mid)
+    if document.template_id=='online-interview' and previous:
+        import json
+        from .minutes import MeetingMinutes
+        from .interview import preserve_review
+        old=MeetingMinutes.model_validate(json.loads(previous['payload']))
+        same=previous['revision']==revision and json.loads(previous['provenance']).get('flow_context_hash')==provenance.get('flow_context_hash')
+        document=preserve_review(document,old,same)
     if previous:adopt(db,mid,previous['id'])
     aid=uid();db.execute("INSERT INTO artifacts(id,meeting_id,revision,kind,payload,provenance) VALUES(?,?,?,'meeting_minutes',?,?)",(aid,mid,revision,encode(document.model_dump()),encode({**provenance,'draft':bool(previous)})))
     if not previous:adopt(db,mid,aid)

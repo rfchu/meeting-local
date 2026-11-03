@@ -14,6 +14,7 @@ def create(store,mid,aid,include_citations,confirmed):
         if not artifact or artifact['id']!=aid or not meeting_flow.artifact_current(db,mid,json.loads(artifact['provenance'])):
             raise ValueError('采用稿或来源已变化，请重新核对后交付')
         document=MeetingMinutes.model_validate(json.loads(artifact['payload']))
+        if document.interview_evaluation_needs_review:raise ValueError('请先复核来源变化后的面试官评价，再确认交付')
         segments=json.loads(row['segments']);validate_minutes_citations(document,{s['id'] for s in segments})
         if not any(document.model_dump().get(k) for k in ('overview','conclusions','decisions','action_items','open_questions','summary')):
             raise ValueError('请先补充纪要正文')
