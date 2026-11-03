@@ -2956,3 +2956,409 @@ fieldset.recovery-center-body {
 .recovery-confirm button {
   margin-right: 8px;
 }
+
+/* Stable recording canvas with configuration edited off the canvas. */
+.recording-setup {
+  margin: 6px 32px 16px;
+  flex-shrink: 0;
+}
+.recording-setup-caption {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+  margin: 0 2px 10px;
+  color: #637188;
+  font-size: 11px;
+}
+.recording-setup-caption small {
+  font-size: 11px;
+  color: #8893a4;
+}
+.recording-setup-cards {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+button.recording-setup-card {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
+  padding: 17px 18px;
+  text-align: left;
+  border: 1px solid #e2e7ef;
+  border-radius: 14px;
+  background: #fff;
+  box-shadow: 0 2px 5px #24365c03;
+  transition:
+    background 0.16s,
+    border-color 0.16s,
+    box-shadow 0.16s,
+    transform 0.16s;
+  color: var(--text);
+}
+button.recording-setup-card:not(:disabled):hover {
+  border-color: #b7c5ee;
+  background: #fcfdff;
+  box-shadow: 0 5px 18px #354d8410;
+  transform: translateY(-1px);
+}
+button.recording-setup-card:focus-visible {
+  outline: 3px solid #d9e3ff;
+  outline-offset: 2px;
+}
+button.recording-setup-card:disabled {
+  opacity: 1;
+  cursor: default;
+  background: #fafbfd;
+}
+.setup-card-icon {
+  width: 38px;
+  height: 38px;
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  border-radius: 11px;
+  color: #5870ba;
+  background: #f0f3fc;
+}
+.setup-outcome .setup-card-icon {
+  color: #6866b5;
+  background: #f2f0fb;
+}
+.setup-brief .setup-card-icon {
+  color: #4c8275;
+  background: #edf5f2;
+}
+.setup-card-icon svg {
+  width: 21px;
+  height: 21px;
+}
+.setup-card-copy {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  flex: 1;
+}
+.setup-card-label {
+  color: #79859a;
+  font-size: 11px;
+  font-weight: 400;
+}
+.setup-card-copy strong {
+  font-size: 14px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 1.5;
+}
+.setup-card-copy small {
+  font-size: 11px;
+  color: #8791a1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 400;
+}
+.setup-card-arrow {
+  font-size: 16px;
+  color: #a2acc0;
+  align-self: flex-start;
+}
+.recording-workbench .workbench-topbar {
+  padding-bottom: 18px;
+}
+.recording-workbench .live-note-options {
+  position: relative;
+  margin: 4px 0 10px;
+}
+button.note-options-trigger {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: center;
+  width: 100%;
+  font-size: 12px;
+  border: 0;
+  background: #f6f8fc;
+  padding: 9px 11px;
+  border-radius: 8px;
+  color: #68778e;
+}
+.note-options-trigger span {
+  color: #8591a4;
+  font-size: 11px;
+}
+.note-options-popover {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 0;
+  right: 0;
+  z-index: 4;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  background: white;
+  border: 1px solid #dfe5ef;
+  border-radius: 12px;
+  padding: 14px;
+  box-shadow: 0 12px 36px #25365626;
+}
+.note-options-popover select {
+  min-width: 0;
+  width: 100%;
+  font-size: 12px;
+}
+.note-options-popover > button {
+  grid-column: 1/-1;
+  justify-self: end;
+  font-size: 12px;
+}
+.recording-inspector-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  width: 100%;
+  padding: 8px 4px;
+  border: 0;
+  background: transparent;
+  color: #7e8ba0;
+  font-size: 11px;
+}
+.recording-inspector-trigger span {
+  font-size: 11px;
+  color: #9aa4b4;
+}
+.recording-inspector {
+  width: 720px;
+  max-width: calc(100vw - 40px);
+  max-height: 85vh;
+  overflow: auto;
+}
+.recording-inspector .search-heading {
+  align-items: flex-start;
+}
+.recording-inspector .search-heading p {
+  color: var(--muted);
+  font-size: 12px;
+}
+.recording-config-panel {
+  position: fixed;
+  inset: 0 0 0 auto;
+  margin: 0;
+  width: 560px;
+  max-width: 100vw;
+  height: 100dvh;
+  max-height: 100dvh;
+  border-radius: 22px 0 0 22px;
+  border: 0;
+  border-left: 1px solid #e0e6f0;
+  padding: 0;
+  overflow: auto;
+  box-shadow: -18px 0 80px #1b2b4a20;
+}
+.recording-config-panel::backdrop {
+  background: #17243f35;
+  backdrop-filter: blur(2px);
+}
+.recording-config-panel > .search-heading {
+  display: flex;
+  align-items: flex-start;
+  padding: 30px 28px 22px;
+  margin: 0;
+  border-bottom: 1px solid var(--line);
+  background: #fff;
+}
+.config-panel-eyebrow {
+  font-size: 11px;
+  color: #8793a7;
+}
+.recording-config-panel h2 {
+  font-size: 23px;
+  margin: 8px 0 6px;
+}
+.recording-config-panel .search-heading p {
+  font-size: 12px;
+  color: #8c96a7;
+  margin: 0;
+}
+.recording-config-panel .settings-tabs {
+  display: flex;
+  gap: 4px;
+  margin: 20px 24px 0;
+  padding: 4px;
+  border: 0;
+  border-radius: 11px;
+  background: #eef1f7;
+}
+.recording-config-panel .settings-tabs button {
+  flex: 1;
+  font-size: 12px;
+  padding: 10px 4px;
+  border: 0;
+  border-radius: 8px;
+  color: #78869d;
+  background: transparent;
+  white-space: nowrap;
+}
+.recording-config-panel .settings-tabs button[aria-pressed="true"] {
+  background: white;
+  color: #3e548e;
+  box-shadow: 0 1px 5px #25385c12;
+}
+.recording-config-panel > section {
+  padding: 24px 28px;
+}
+.recording-config-panel h3 {
+  font-size: 16px;
+  margin: 0 0 8px;
+}
+.config-panel-description {
+  font-size: 12px;
+  color: #8892a3;
+  line-height: 1.8;
+}
+.recording-config-panel .recording-plan-body {
+  padding: 12px 0 0;
+  border: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+.recording-config-panel .recording-plan-body > label {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 13px;
+  color: #53647d;
+}
+.recording-config-panel
+  .recording-plan-body
+  > label:has(input[type="checkbox"]) {
+  flex-direction: row;
+  align-items: center;
+}
+.recording-config-panel .recording-plan-body select {
+  width: 100%;
+}
+.recording-config-panel .recording-plan-body p {
+  font-size: 12px;
+  color: #8a95a6;
+  line-height: 1.8;
+}
+.recording-config-panel > .muted {
+  border-top: 1px solid var(--line);
+  margin: 0;
+  padding: 18px 28px;
+  font-size: 11px;
+  line-height: 1.8;
+  background: #fafbfe;
+}
+.recording-config-panel .meeting-brief-form {
+  padding: 14px 0;
+  border: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+@media (max-width: 850px) {
+  .recording-setup {
+    margin: 4px 20px 12px;
+  }
+  .recording-setup-cards {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+  }
+  button.recording-setup-card {
+    padding: 12px;
+    gap: 9px;
+  }
+  .setup-card-icon {
+    display: none;
+  }
+  .setup-card-copy strong {
+    font-size: 13px;
+  }
+}
+@media (max-width: 600px) {
+  .recording-setup {
+    margin: 4px 16px 10px;
+  }
+  .recording-setup-caption small {
+    display: none;
+  }
+  .setup-card-copy small {
+    display: none;
+  }
+  .recording-setup-card {
+    min-height: 70px;
+  }
+  .recording-config-panel {
+    border-radius: 0;
+  }
+  .recording-config-panel > .search-heading {
+    padding: 24px 20px;
+  }
+  .recording-config-panel > section {
+    padding: 20px;
+  }
+  .recording-config-panel .settings-tabs {
+    margin: 16px 16px 0;
+  }
+}
+.recording-workbench .workbench-topbar .recording-controls {
+  padding: 0;
+  border: 0;
+}
+@media (min-width: 851px) {
+  .recording-workbench .workbench-history-wrapper:not(.ended) {
+    min-height: 300px;
+  }
+}
+.note-capture-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.recording-workbench .note-capture-actions .mark-now {
+  margin: 0;
+  padding: 9px 10px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.recording-workbench .note-capture-actions .attention-quick-actions {
+  display: flex;
+  gap: 5px;
+  margin: 0;
+  padding: 0;
+}
+.recording-workbench .note-capture-actions .attention-quick-actions button {
+  padding: 9px 8px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.recording-workbench .live-note-list.empty {
+  flex: 0 0 auto;
+  height: auto;
+  min-height: 0;
+  border: 0;
+  padding: 0;
+  margin-top: 8px;
+}
+.recording-workbench .live-note-list.empty p {
+  padding: 2px 0;
+  margin: 0;
+  font-size: 11px;
+  color: #9aa3b2;
+}
+.recording-workbench .note-purpose-hint {
+  margin: 12px 0 8px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: #8894a5;
+}

@@ -1,3 +1,4 @@
+import RecordingSetupBar from "./RecordingSetupBar";
 import MeetingBriefForm, { emptyBrief } from "../meeting/MeetingBriefForm";
 import type { MeetingBrief, MeetingSummary } from "../../types";
 import { useEffect, useRef, useState } from "react";
@@ -131,11 +132,37 @@ export default function RecordingDialog({
     }
   });
   const [settingsOpen, setSettingsOpen] = useState(false),
-    [settingsTab, setSettingsTab] = useState<"recording" | "model">(
-      "recording",
-    );
+    [settingsTab, setSettingsTab] = useState<
+      "recording" | "model" | "outcome" | "preparation"
+    >("recording");
   const [keepAwake, setKeepAwake] = useState(preferences.keepAwake);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [inspectorOpen, setInspectorOpen] = useState(false),
+    [noteOptionsOpen, setNoteOptionsOpen] = useState(false);
+  const noteOptionsRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!noteOptionsOpen) return;
+    const outside = (event: PointerEvent) => {
+      if (
+        event.target instanceof Node &&
+        !noteOptionsRef.current?.contains(event.target)
+      )
+        setNoteOptionsOpen(false);
+    };
+    const escape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        setNoteOptionsOpen(false);
+      }
+    };
+    document.addEventListener("pointerdown", outside);
+    document.addEventListener("keydown", escape, true);
+    return () => {
+      document.removeEventListener("pointerdown", outside);
+      document.removeEventListener("keydown", escape, true);
+    };
+  }, [noteOptionsOpen]);
   const [preferencesSaved, setPreferencesSaved] = useState(true),
     [savedMeetingId, setSavedMeetingId] = useState(""),
     [savedEngine, setSavedEngine] = useState<"qwen" | "whisper">("whisper"),
@@ -1299,27 +1326,42 @@ export default function RecordingDialog({
             )}
         </div>
       </div>
-      <div className="workbench-config-summary">
-        <span>
-          {sourceLabel} · {engineName} ·{" "}
-          {draftEngine === "qwen" && streamEnabled
-            ? responsiveMode
-              ? "短片段模式"
-              : "逐字推送"
-            : "分段识别"}
-        </span>
-        <button
-          disabled={state !== "idle"}
-          onClick={() => setSettingsOpen(true)}
-        >
-          调整设置
-        </button>
-        <small>
-          {preferencesSaved
-            ? "设置已记住，下次自动恢复"
-            : "当前浏览器无法保存设置，本次仍可使用"}
-        </small>
-      </div>
+      <RecordingSetupBar
+        source={sourceLabel}
+        recognition={`${engineName} · ${draftEngine === "qwen" && streamEnabled ? (responsiveMode ? "短片段模式" : "逐字推送") : "分段识别"}`}
+        outcome={
+          completionMode === "none"
+            ? "仅保存录音与简记"
+            : postGoal === "minutes"
+              ? "文字稿＋AI 纪要"
+              : "生成会议文字稿"
+        }
+        processing={`${completionMode === "none" ? "暂不转写" : completionMode === "quick" ? "快速完成" : "精细处理"} · ${autoProcess ? "自动进入整理" : "手动选择"}`}
+        title={brief.title}
+        brief={
+          brief.interview?.role
+            ? `线上面试 · ${brief.interview.role}`
+            : brief.purpose
+        }
+        editable={state === "idle"}
+        preferencesSaved={preferencesSaved}
+        onCapture={() => {
+          setSettingsTab("recording");
+          setSettingsOpen(true);
+        }}
+        onOutcome={() => {
+          setSettingsTab("outcome");
+          setSettingsOpen(true);
+        }}
+        onBrief={
+          flowReady
+            ? () => {
+                setSettingsTab("preparation");
+                setSettingsOpen(true);
+              }
+            : undefined
+        }
+      />
       {state === "idle" &&
         (!engines.find((engine) => engine.id === draftEngine)?.ready ||
           (captureSource !== "browser" && !nativeCapability?.available)) && (
@@ -1327,120 +1369,6 @@ export default function RecordingDialog({
             上次选择的音源或模型暂不可用，请调整设置后开始。
           </p>
         )}
-      {state === "idle" && (
-        <div className="recording-session-plan">
-          <details className="recording-end-plan" aria-label="录音结束后的计划">
-            <summary>
-              结束后：
-              {completionMode === "none"
-                ? "仅保存录音"
-                : completionMode === "quick"
-                  ? "快速文字稿"
-                  : "精细文字稿"}
-              {postGoal === "minutes" && completionMode !== "none"
-                ? "＋AI 纪要"
-                : ""}{" "}
-              · {autoProcess ? "自动进入整理" : "手动选择"}
-            </summary>
-            <div className="recording-plan-body">
-              <label>
-                交付目标
-                <select
-                  aria-label="录音交付目标"
-                  value={postGoal}
-                  onChange={(e) => {
-                    setPostGoal(e.target.value as "transcript" | "minutes");
-                    if (
-                      e.target.value === "minutes" &&
-                      completionMode === "none"
-                    )
-                      setCompletionMode("quick");
-                  }}
-                >
-                  <option value="transcript">文字稿／录音资料</option>
-                  <option
-                    value="minutes"
-                    disabled={!minutesModel || !environment?.auto_minutes_ready}
-                  >
-                    文字稿＋AI 纪要（含待办候选）
-                  </option>
-                </select>
-              </label>
-              {postGoal === "minutes" && (
-                <label>
-                  纪要模型
-                  <select
-                    aria-label="自动纪要模型"
-                    value={minutesModel}
-                    onChange={(e) => onMinutesModel(e.target.value)}
-                  >
-                    {environment?.analysis.profiles.length
-                      ? environment.analysis.profiles.map((p) => (
-                          <option key={p.id} value={p.id}>
-                            {p.name} ·{" "}
-                            {p.provider_type === "cloud" ? "云端" : "本地"}
-                          </option>
-                        ))
-                      : environment?.analysis.models.map((m) => (
-                          <option key={m}>{m}</option>
-                        ))}
-                  </select>
-                </label>
-              )}
-              {postGoal === "minutes" &&
-                (!minutesModel || !environment?.auto_minutes_ready) && (
-                  <p role="alert">
-                    自动纪要模型或后台服务尚未就绪，请调整模型或选择仅文字稿。
-                  </p>
-                )}
-              <label>
-                结束后处理
-                <select
-                  aria-label="结束后处理"
-                  value={completionMode}
-                  onChange={(e) => {
-                    setCompletionMode(e.target.value as CompletionMode);
-                    if (e.target.value === "none") setPostGoal("transcript");
-                  }}
-                >
-                  <option value="quick">
-                    快速完成文字稿（复用
-                    {draftEngine === "qwen" ? "千问" : "Whisper"}实时结果）
-                  </option>
-                  <option value="full">精细处理文字稿（{engineLabel}）</option>
-                  <option value="none">仅保存录音和关注点</option>
-                </select>
-              </label>
-              <label>
-                <input
-                  type="checkbox"
-                  checked={autoProcess}
-                  onChange={(e) => setAutoProcess(e.target.checked)}
-                />
-                结束后自动进入会后整理
-              </label>
-              <p>
-                先保存录音，再完成文字稿；选择 AI
-                纪要时随后排队生成草稿，使用上次纪要模板与详略，行动项仍需核对。云端模型会在排队前再次确认；异常恢复的录音默认只处理文字稿。
-              </p>
-            </div>
-          </details>
-          {flowReady && (
-            <details className="recording-preparation">
-              <summary>
-                会议准备 · {brief.title || "可选"}
-                {!briefSaved && briefReady ? " · 保存中" : ""}
-              </summary>
-              <MeetingBriefForm
-                value={brief}
-                onChange={setBrief}
-                meetings={meetings}
-                disabled={!briefReady}
-              />
-            </details>
-          )}
-        </div>
-      )}
       {state === "finished" && (
         <section
           className="recording-finish-panel"
@@ -1563,78 +1491,99 @@ export default function RecordingDialog({
                   {notes.length ? `${notes.length} 条` : "原文永久保留"}
                 </span>
               </header>
-              <button
-                className="mark-now"
-                disabled={!recording}
-                onClick={() => markNow()}
-              >
-                ⚑ 标记此刻 <small>Alt+M</small>
-              </button>
-              <div className="attention-quick-actions">
-                {(
-                  [
-                    ["highlight", "标重点"],
-                    ["question", "记问题"],
-                    ["action", "记待办"],
-                    ["note", "随手记"],
-                  ] as const
-                ).map(([type, label]) => (
-                  <button
-                    key={type}
-                    disabled={!recording}
-                    onClick={() => {
-                      if (noteText.trim()) {
-                        setNotes((old) => [
-                          ...old,
-                          {
-                            captured_at: Math.max(0, currentSeconds()),
-                            note_type: type,
-                            raw_text: noteText.trim(),
-                            note_scope: "personal",
-                          },
-                        ]);
-                        setNoteText("");
-                      } else markNow(type);
-                    }}
-                  >
-                    {label}
-                  </button>
-                ))}
+              <div className="note-capture-actions">
+                <button
+                  className="mark-now"
+                  aria-label="标记此刻 Alt+M"
+                  title="标记此刻（Alt+M）"
+                  disabled={!recording}
+                  onClick={() => markNow()}
+                >
+                  ⚑ 标记
+                </button>
+                <div className="attention-quick-actions">
+                  {(
+                    [
+                      ["highlight", "标重点"],
+                      ["question", "记问题"],
+                      ["action", "记待办"],
+                      ["note", "随手记"],
+                    ] as const
+                  ).map(([type, label]) => (
+                    <button
+                      key={type}
+                      disabled={!recording}
+                      onClick={() => {
+                        if (noteText.trim()) {
+                          setNotes((old) => [
+                            ...old,
+                            {
+                              captured_at: Math.max(0, currentSeconds()),
+                              note_type: type,
+                              raw_text: noteText.trim(),
+                              note_scope: "personal",
+                            },
+                          ]);
+                          setNoteText("");
+                        } else markNow(type);
+                      }}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
               </div>
               <p className="note-purpose-hint">
-                先记关键词或标记时间，会后核对；个人备注默认不进入纪要。
+                随手记下关键词，系统会关联此刻的录音。
               </p>
-              <details className="live-note-options">
-                <summary>
-                  可选标签与用途 · {noteLabels[noteType]} /{" "}
-                  {noteScope === "personal" ? "个人备注" : "会议内容"}
-                </summary>
-                <select
-                  aria-label="记录用途"
-                  value={noteScope}
-                  onChange={(e) =>
-                    setNoteScope(e.target.value as typeof noteScope)
-                  }
+              <div className="live-note-options" ref={noteOptionsRef}>
+                <button
+                  className="note-options-trigger"
                   disabled={!recording}
+                  aria-expanded={noteOptionsOpen}
+                  onClick={() => setNoteOptionsOpen(!noteOptionsOpen)}
                 >
-                  <option value="personal">个人备注</option>
-                  <option value="meeting">会议内容（待核对）</option>
-                </select>
-                <select
-                  aria-label="简记类型"
-                  value={noteType}
-                  disabled={!recording}
-                  onChange={(event) =>
-                    setNoteType(event.target.value as MeetingNoteType)
-                  }
-                >
-                  {Object.entries(noteLabels).map(([value, label]) => (
-                    <option value={value} key={value}>
-                      {label}
-                    </option>
-                  ))}
-                </select>
-              </details>
+                  {noteLabels[noteType]} ·{" "}
+                  {noteScope === "personal" ? "个人备注" : "会议内容"}{" "}
+                  <span>调整用途</span>
+                </button>
+                {noteOptionsOpen && (
+                  <div
+                    className="note-options-popover"
+                    role="group"
+                    aria-label="简记标签与用途"
+                  >
+                    <select
+                      aria-label="记录用途"
+                      value={noteScope}
+                      onChange={(e) =>
+                        setNoteScope(e.target.value as typeof noteScope)
+                      }
+                      disabled={!recording}
+                    >
+                      <option value="personal">个人备注</option>
+                      <option value="meeting">会议内容（待核对）</option>
+                    </select>
+                    <select
+                      aria-label="简记类型"
+                      value={noteType}
+                      disabled={!recording}
+                      onChange={(event) =>
+                        setNoteType(event.target.value as MeetingNoteType)
+                      }
+                    >
+                      {Object.entries(noteLabels).map(([value, label]) => (
+                        <option value={value} key={value}>
+                          {label}
+                        </option>
+                      ))}
+                    </select>
+                    <button onClick={() => setNoteOptionsOpen(false)}>
+                      完成
+                    </button>
+                  </div>
+                )}
+              </div>
               <div className="live-note-form">
                 <textarea
                   aria-label="会议简记"
@@ -1661,10 +1610,8 @@ export default function RecordingDialog({
                   保存关注点
                 </button>
               </div>
-              <div className="live-note-list">
-                {!notes.length && (
-                  <p>简记会自动绑定当前录音时间，支持 ⌘/Ctrl + Enter 添加。</p>
-                )}
+              <div className={`live-note-list${!notes.length ? " empty" : ""}`}>
+                {!notes.length && <p>⌘ / Ctrl + Enter 保存简记</p>}
                 {notes.map((note, index) => (
                   <article key={`${note.captured_at}-${index}`}>
                     <button
@@ -1722,9 +1669,6 @@ export default function RecordingDialog({
             录音时保持亮屏
           </label>
           <span role="status">{awakeStatus}</span>
-          <small>
-            暂停期间保持，结束后释放；合盖、手动睡眠或断电仍会中断录音。
-          </small>
         </div>
         <RecordingWaveform
           tracks={
@@ -1761,8 +1705,26 @@ export default function RecordingDialog({
               : undefined
           }
         />
-        <details className="workbench-details">
-          <summary>运行详情 · {coverageStatus}</summary>
+        <button
+          className="recording-inspector-trigger"
+          onClick={() => setInspectorOpen(true)}
+        >
+          运行详情 <span>识别覆盖与保存状态 ↗</span>
+        </button>
+      </div>
+      {inspectorOpen && (
+        <Modal
+          className="recording-inspector"
+          ariaLabel="录音运行详情"
+          onClose={() => setInspectorOpen(false)}
+        >
+          <div className="search-heading">
+            <div>
+              <h2>运行详情</h2>
+              <p>{coverageStatus}</p>
+            </div>
+            <button onClick={() => setInspectorOpen(false)}>关闭</button>
+          </div>{" "}
           <p>{draftStatus}</p>
           {draftEngine === "qwen" && streamEnabled && (
             <p className="native-capture-hint">
@@ -1841,31 +1803,149 @@ export default function RecordingDialog({
                 </small>
               </details>
             )}
-        </details>
-      </div>
+        </Modal>
+      )}
       {settingsOpen && (
         <Modal
-          className="recording-settings-dialog"
+          className="recording-settings-dialog recording-config-panel"
+          ariaLabel="本次录音配置"
           onClose={() => setSettingsOpen(false)}
         >
           <div className="search-heading">
-            <h2>录音设置</h2>
+            <div>
+              <span className="config-panel-eyebrow">本次会议</span>
+              <h2>录音方案</h2>
+              <p>调整当前方案，主工作区保持原位。</p>
+            </div>
             <button onClick={() => setSettingsOpen(false)}>完成</button>
           </div>
-          <div className="settings-tabs">
-            <button
-              aria-pressed={settingsTab === "recording"}
-              onClick={() => setSettingsTab("recording")}
-            >
-              音源与权限
-            </button>
-            <button
-              aria-pressed={settingsTab === "model"}
-              onClick={() => setSettingsTab("model")}
-            >
-              模型与识别
-            </button>
+          <div className="settings-tabs" aria-label="录音配置分类">
+            {(
+              [
+                ["recording", "音源与权限"],
+                ["model", "实时识别"],
+                ["outcome", "会后产物"],
+                ...(flowReady ? [["preparation", "会议准备"]] : []),
+              ] as [typeof settingsTab, string][]
+            ).map(([tab, label]) => (
+              <button
+                key={tab}
+                aria-pressed={settingsTab === tab}
+                onClick={() => setSettingsTab(tab)}
+              >
+                {label}
+              </button>
+            ))}
           </div>
+          {settingsTab === "outcome" && (
+            <section className="config-panel-section">
+              <h3>结束录音后，你希望得到什么？</h3>
+              <p className="config-panel-description">
+                原音与简记先保存，再按此方案继续整理。
+              </p>{" "}
+              <div className="recording-plan-body">
+                <label>
+                  交付目标
+                  <select
+                    aria-label="录音交付目标"
+                    value={postGoal}
+                    onChange={(e) => {
+                      setPostGoal(e.target.value as "transcript" | "minutes");
+                      if (
+                        e.target.value === "minutes" &&
+                        completionMode === "none"
+                      )
+                        setCompletionMode("quick");
+                    }}
+                  >
+                    <option value="transcript">文字稿／录音资料</option>
+                    <option
+                      value="minutes"
+                      disabled={
+                        !minutesModel || !environment?.auto_minutes_ready
+                      }
+                    >
+                      文字稿＋AI 纪要（含待办候选）
+                    </option>
+                  </select>
+                </label>
+                {postGoal === "minutes" && (
+                  <label>
+                    纪要模型
+                    <select
+                      aria-label="自动纪要模型"
+                      value={minutesModel}
+                      onChange={(e) => onMinutesModel(e.target.value)}
+                    >
+                      {environment?.analysis.profiles.length
+                        ? environment.analysis.profiles.map((p) => (
+                            <option key={p.id} value={p.id}>
+                              {p.name} ·{" "}
+                              {p.provider_type === "cloud" ? "云端" : "本地"}
+                            </option>
+                          ))
+                        : environment?.analysis.models.map((m) => (
+                            <option key={m}>{m}</option>
+                          ))}
+                    </select>
+                  </label>
+                )}
+                {postGoal === "minutes" &&
+                  (!minutesModel || !environment?.auto_minutes_ready) && (
+                    <p role="alert">
+                      自动纪要模型或后台服务尚未就绪，请调整模型或选择仅文字稿。
+                    </p>
+                  )}
+                <label>
+                  结束后处理
+                  <select
+                    aria-label="结束后处理"
+                    value={completionMode}
+                    onChange={(e) => {
+                      setCompletionMode(e.target.value as CompletionMode);
+                      if (e.target.value === "none") setPostGoal("transcript");
+                    }}
+                  >
+                    <option value="quick">
+                      快速完成文字稿（复用
+                      {draftEngine === "qwen" ? "千问" : "Whisper"}实时结果）
+                    </option>
+                    <option value="full">
+                      精细处理文字稿（{engineLabel}）
+                    </option>
+                    <option value="none">仅保存录音和关注点</option>
+                  </select>
+                </label>
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={autoProcess}
+                    onChange={(e) => setAutoProcess(e.target.checked)}
+                  />
+                  结束后自动进入会后整理
+                </label>
+                <p>
+                  先保存录音，再完成文字稿；选择 AI
+                  纪要时随后排队生成草稿，使用上次纪要模板与详略，行动项仍需核对。云端模型会在排队前再次确认；异常恢复的录音默认只处理文字稿。
+                </p>
+              </div>
+            </section>
+          )}
+          {settingsTab === "preparation" && flowReady && (
+            <section className="config-panel-section">
+              <h3>给这场会议一点背景</h3>
+              <p className="config-panel-description">
+                可选填写，帮助会后整理理解本次目标。
+                {briefSaved ? "已保存到本机。" : "正在保存…"}
+              </p>{" "}
+              <MeetingBriefForm
+                value={brief}
+                onChange={setBrief}
+                meetings={meetings}
+                disabled={!briefReady}
+              />
+            </section>
+          )}
           {settingsTab === "recording" && (
             <section>
               <label className="capture-source">
