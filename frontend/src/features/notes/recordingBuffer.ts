@@ -99,9 +99,13 @@ export function syncRecording(id: string): Promise<void> {
   syncing.set(id, task);
   return task;
 }
-export async function recoverableRecordings() {
+export async function recoveryInventorySnapshot() {
   // A disabled/full browser store must not hide audio already saved on the server.
-  const local = await all<RecordingSession>("sessions").catch(() => []);
+  let localAvailable = true;
+  const local = await all<RecordingSession>("sessions").catch(() => {
+    localAvailable = false;
+    return [];
+  });
   try {
     const remote = await api.recordings();
     const known = new Set(remote.map((s) => s.id));
@@ -117,10 +121,22 @@ export async function recoverableRecordings() {
             },
       ),
     );
-    return mergeRecordingInventory(checked, remote);
+    return {
+      sessions: mergeRecordingInventory(checked, remote),
+      serverAvailable: true,
+      localAvailable,
+    };
   } catch {
-    return mergeRecordingInventory(local, []);
+    return {
+      sessions: mergeRecordingInventory(local, []),
+      serverAvailable: false,
+      localAvailable,
+    };
   }
+}
+
+export async function recoverableRecordings() {
+  return (await recoveryInventorySnapshot()).sessions;
 }
 
 export async function pendingRecordingChunks(id: string): Promise<number> {

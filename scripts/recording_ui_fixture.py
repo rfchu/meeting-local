@@ -34,6 +34,7 @@ def main():
     import argparse
     import uvicorn
     parser=argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--recovery-center-demo',action='store_true',help='Recoverable browser chunks plus failed empty native session')
     parser.add_argument('--interview-demo',action='store_true',help='Synthetic interview context, evidence and review; no real model')
     parser.add_argument('--empty-recovery-demo',action='store_true',help='Seed a failed native start with no saved material')
     parser.add_argument('--port',type=int,default=8766)
@@ -51,11 +52,14 @@ def main():
         session=recordings.create('audio/webm')
         recordings.metadata(session['id'],[{'captured_at':4,'raw_text':'验证用简记：核对中断后恢复','note_type':'note','note_scope':'personal'}],15,3)
         recordings.chunk(session['id'],0,b'fixture-head');recordings.chunk(session['id'],2,b'fixture-tail')
-        if args.empty_recovery_demo:
+        if args.empty_recovery_demo or args.recovery_center_demo:
             session['state']='completed';recordings.write(recordings.folder(session['id'])/'session.json',session)
             empty=recordings.create('audio/wav');empty['source']='macos'
             recordings.write(recordings.folder(empty['id'])/'session.json',empty)
             recordings.write(recordings.folder(empty['id'])/'capture.json',{'state':'failed','duration':0,'error':'请在系统设置 → 隐私与安全性 → 屏幕与系统音频录制中允许听记采集器，然后重新开始'})
+        if args.recovery_center_demo:
+            saved=recordings.create('audio/webm');recordings.metadata(saved['id'],[{'captured_at':3,'raw_text':'合成恢复验收简记','note_type':'note','note_scope':'personal'}],12,2)
+            recordings.chunk(saved['id'],0,b'synthetic-head');recordings.chunk(saved['id'],1,b'synthetic-tail')
         if args.automatic_demo or args.interview_demo:args.flow_demo=True
         if args.review_demo or args.qa_demo or args.flow_demo or args.recovery_demo:
             import wave

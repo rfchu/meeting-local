@@ -1,3 +1,4 @@
+import RecordingRecoveryCenter from "./features/notes/RecordingRecoveryCenter";
 import { recordingRecoveryCount } from "./features/notes/recordingInventory";
 import MinutesDeliveryPanel from "./features/minutes/MinutesDeliveryPanel";
 import ReviewSourcePane from "./features/meeting/ReviewSourcePane";
@@ -143,12 +144,13 @@ export default function App() {
     [environmentOpen, setEnvironmentOpen] = useState(false),
     [modelsOpen, setModelsOpen] = useState(false),
     [previewOpen, setPreviewOpen] = useState(false),
-    [recordingOpen, setRecordingOpen] = useState(false);
+    [recordingOpen, setRecordingOpen] = useState(false),
+    [recoveryOpen, setRecoveryOpen] = useState(false);
   const recoveryQuery = useQuery({
     queryKey: ["recording-recoveries"],
     queryFn: recoverableRecordings,
     refetchInterval: 30000,
-    enabled: !recordingOpen,
+    enabled: !recordingOpen && !recoveryOpen,
   });
   const [reviewFocus, setReviewFocus] = useState<number | null>(null);
   const [reviewFocusVersion, setReviewFocusVersion] = useState(0);
@@ -793,6 +795,8 @@ export default function App() {
             : toast("跨会议跟进需在录音和任务结束后更新服务，现有内容已保留。")
         }
         onEnvironment={() => setEnvironmentOpen(true)}
+        recoveryCount={recordingRecoveryCount(recoveryQuery.data || [])}
+        onRecovery={() => setRecoveryOpen(true)}
       />
       <main>
         <header>
@@ -803,7 +807,7 @@ export default function App() {
             <span className="dot" /> 转写本地处理 · 分析引擎可配置
           </div>
         </header>
-        {!!recordingRecoveryCount(recoveryQuery.data || []) && (
+        {!meeting && !!recordingRecoveryCount(recoveryQuery.data || []) && (
           <section
             className="recording-recovery-banner"
             aria-label="录音恢复提醒"
@@ -812,7 +816,7 @@ export default function App() {
               发现 {recordingRecoveryCount(recoveryQuery.data || [])}{" "}
               条录音会话待检查，请核对已保存内容。
             </span>
-            <button onClick={() => setRecordingOpen(true)}>打开恢复中心</button>
+            <button onClick={() => setRecoveryOpen(true)}>查看录音恢复</button>
           </section>
         )}
         {!meeting ? (
@@ -1447,6 +1451,26 @@ export default function App() {
           onOpen={async (id) => {
             await openMeeting(id);
             setWorkspace("minutes");
+          }}
+        />
+      )}
+      {recoveryOpen && (
+        <RecordingRecoveryCenter
+          defaultEngine={engine === "qwen" ? "qwen" : "whisper"}
+          toast={toast}
+          onClose={() => {
+            setRecoveryOpen(false);
+            void client.invalidateQueries({
+              queryKey: ["recording-recoveries"],
+            });
+            void client.invalidateQueries({ queryKey: ["meetings"] });
+          }}
+          onComplete={async (id, options) => {
+            await completeRecording(id, options);
+            setRecoveryOpen(false);
+            void client.invalidateQueries({
+              queryKey: ["recording-recoveries"],
+            });
           }}
         />
       )}

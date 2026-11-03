@@ -23,7 +23,6 @@ import Modal from "../../components/Modal";
 import { encodeLiveWav } from "./liveAudio";
 import RecordingWaveform from "./RecordingWaveform";
 import RecordingHealthPanel from "./RecordingHealthPanel";
-import RecordingRecoveryList from "./RecordingRecoveryList";
 import { clientRecordingDiagnostics } from "./recordingInventory";
 import { stopRecorder } from "./stopRecorder";
 import LiveDraftList from "./LiveDraftList";
@@ -35,7 +34,6 @@ import {
   bufferRecording,
   flushRecording,
   forgetRecording,
-  recoverableRecordings,
   pendingRecordingChunks,
   syncRecording,
 } from "./recordingBuffer";
@@ -191,7 +189,6 @@ export default function RecordingDialog({
     [coverageStatus, setCoverageStatus] = useState("开始识别后保存覆盖情况"),
     [draftStatus, setDraftStatus] = useState("开始录音后自动生成"),
     [saveStatus, setSaveStatus] = useState("录音分段会自动保存到本机"),
-    [recoveries, setRecoveries] = useState<RecordingSession[]>([]),
     [captureSource, setCaptureSource] = useState<
       "browser" | "macos-system" | "macos-both"
     >(preferences.captureSource),
@@ -425,31 +422,6 @@ export default function RecordingDialog({
   useEffect(() => {
     void checkCapture();
   }, []);
-  useEffect(() => {
-    if (state !== "idle") return;
-    let active = true,
-      busy = false;
-    const refresh = async () => {
-      if (!active || busy) return;
-      busy = true;
-      try {
-        const rows = await recoverableRecordings();
-        if (active) setRecoveries(rows);
-      } catch (error) {
-        if (active) toast((error as Error).message);
-      } finally {
-        busy = false;
-      }
-    };
-    void refresh();
-    const timer = window.setInterval(() => void refresh(), 15000);
-    const unwatch = watchRecordingRecovery(() => void refresh());
-    return () => {
-      active = false;
-      window.clearInterval(timer);
-      unwatch();
-    };
-  }, [state]);
   useEffect(() => {
     if (
       !sessionRef.current ||
@@ -732,27 +704,6 @@ export default function RecordingDialog({
       toast(`录音已保留，请重试完成保存：${(error as Error).message}`);
     }
   };
-  const recover = async (session: RecordingSession) => {
-    if (
-      !confirm(
-        "请确认这段录音已停止。恢复会把已保存的分段整理为会议，缺失的最后一段无法补回。",
-      )
-    )
-      return;
-    if (session.health?.native_running) {
-      toast("此会话仍在采集，请先结束录音");
-      return;
-    }
-    setPostGoal("transcript");
-    setBrief(session.brief || emptyBrief);
-    briefRef.current = session.brief || emptyBrief;
-    setNotes(session.notes);
-    notesRef.current = session.notes;
-    accruedRef.current = session.duration;
-    setElapsed(session.duration);
-    await finish(session, session.draft_engine || draftEngine);
-  };
-
   useEffect(() => {
     if (state !== "recording") return;
     const timer = window.setInterval(() => setElapsed(currentSeconds()), 250);
@@ -1377,98 +1328,118 @@ export default function RecordingDialog({
           </p>
         )}
       {state === "idle" && (
-        <section className="recording-end-plan" aria-label="录音结束后的计划">
-          <label>
-            交付目标
-            <select
-              aria-label="录音交付目标"
-              value={postGoal}
-              onChange={(e) => {
-                setPostGoal(e.target.value as "transcript" | "minutes");
-                if (e.target.value === "minutes" && completionMode === "none")
-                  setCompletionMode("quick");
-              }}
-            >
-              <option value="transcript">文字稿／录音资料</option>
-              <option
-                value="minutes"
-                disabled={!minutesModel || !environment?.auto_minutes_ready}
-              >
-                文字稿＋AI 纪要（含待办候选）
-              </option>
-            </select>
-          </label>
-          {postGoal === "minutes" && (
-            <label>
-              纪要模型
-              <select
-                aria-label="自动纪要模型"
-                value={minutesModel}
-                onChange={(e) => onMinutesModel(e.target.value)}
-              >
-                {environment?.analysis.profiles.length
-                  ? environment.analysis.profiles.map((p) => (
-                      <option key={p.id} value={p.id}>
-                        {p.name} ·{" "}
-                        {p.provider_type === "cloud" ? "云端" : "本地"}
-                      </option>
-                    ))
-                  : environment?.analysis.models.map((m) => (
-                      <option key={m}>{m}</option>
-                    ))}
-              </select>
-            </label>
-          )}
-          {postGoal === "minutes" &&
-            (!minutesModel || !environment?.auto_minutes_ready) && (
-              <p role="alert">
-                自动纪要模型或后台服务尚未就绪，请调整模型或选择仅文字稿。
+        <div className="recording-session-plan">
+          <details className="recording-end-plan" aria-label="录音结束后的计划">
+            <summary>
+              结束后：
+              {completionMode === "none"
+                ? "仅保存录音"
+                : completionMode === "quick"
+                  ? "快速文字稿"
+                  : "精细文字稿"}
+              {postGoal === "minutes" && completionMode !== "none"
+                ? "＋AI 纪要"
+                : ""}{" "}
+              · {autoProcess ? "自动进入整理" : "手动选择"}
+            </summary>
+            <div className="recording-plan-body">
+              <label>
+                交付目标
+                <select
+                  aria-label="录音交付目标"
+                  value={postGoal}
+                  onChange={(e) => {
+                    setPostGoal(e.target.value as "transcript" | "minutes");
+                    if (
+                      e.target.value === "minutes" &&
+                      completionMode === "none"
+                    )
+                      setCompletionMode("quick");
+                  }}
+                >
+                  <option value="transcript">文字稿／录音资料</option>
+                  <option
+                    value="minutes"
+                    disabled={!minutesModel || !environment?.auto_minutes_ready}
+                  >
+                    文字稿＋AI 纪要（含待办候选）
+                  </option>
+                </select>
+              </label>
+              {postGoal === "minutes" && (
+                <label>
+                  纪要模型
+                  <select
+                    aria-label="自动纪要模型"
+                    value={minutesModel}
+                    onChange={(e) => onMinutesModel(e.target.value)}
+                  >
+                    {environment?.analysis.profiles.length
+                      ? environment.analysis.profiles.map((p) => (
+                          <option key={p.id} value={p.id}>
+                            {p.name} ·{" "}
+                            {p.provider_type === "cloud" ? "云端" : "本地"}
+                          </option>
+                        ))
+                      : environment?.analysis.models.map((m) => (
+                          <option key={m}>{m}</option>
+                        ))}
+                  </select>
+                </label>
+              )}
+              {postGoal === "minutes" &&
+                (!minutesModel || !environment?.auto_minutes_ready) && (
+                  <p role="alert">
+                    自动纪要模型或后台服务尚未就绪，请调整模型或选择仅文字稿。
+                  </p>
+                )}
+              <label>
+                结束后处理
+                <select
+                  aria-label="结束后处理"
+                  value={completionMode}
+                  onChange={(e) => {
+                    setCompletionMode(e.target.value as CompletionMode);
+                    if (e.target.value === "none") setPostGoal("transcript");
+                  }}
+                >
+                  <option value="quick">
+                    快速完成文字稿（复用
+                    {draftEngine === "qwen" ? "千问" : "Whisper"}实时结果）
+                  </option>
+                  <option value="full">精细处理文字稿（{engineLabel}）</option>
+                  <option value="none">仅保存录音和关注点</option>
+                </select>
+              </label>
+              <label>
+                <input
+                  type="checkbox"
+                  checked={autoProcess}
+                  onChange={(e) => setAutoProcess(e.target.checked)}
+                />
+                结束后自动进入会后整理
+              </label>
+              <p>
+                先保存录音，再完成文字稿；选择 AI
+                纪要时随后排队生成草稿，使用上次纪要模板与详略，行动项仍需核对。云端模型会在排队前再次确认；异常恢复的录音默认只处理文字稿。
               </p>
-            )}
-          <label>
-            结束后处理
-            <select
-              aria-label="结束后处理"
-              value={completionMode}
-              onChange={(e) => {
-                setCompletionMode(e.target.value as CompletionMode);
-                if (e.target.value === "none") setPostGoal("transcript");
-              }}
-            >
-              <option value="quick">
-                快速完成文字稿（复用
-                {draftEngine === "qwen" ? "千问" : "Whisper"}实时结果）
-              </option>
-              <option value="full">精细处理文字稿（{engineLabel}）</option>
-              <option value="none">仅保存录音和关注点</option>
-            </select>
-          </label>
-          <label>
-            <input
-              type="checkbox"
-              checked={autoProcess}
-              onChange={(e) => setAutoProcess(e.target.checked)}
-            />
-            结束后自动进入会后整理
-          </label>
-          <p>
-            先保存录音，再完成文字稿；选择 AI
-            纪要时随后排队生成草稿，使用上次纪要模板与详略，行动项仍需核对。云端模型会在排队前再次确认；异常恢复的录音默认只处理文字稿。
-          </p>
-        </section>
-      )}
-      {state === "idle" && flowReady && (
-        <details className="recording-preparation">
-          <summary>
-            会议准备（可选） · {briefSaved ? "已保存到本机" : "保存中／待保存"}
-          </summary>
-          <MeetingBriefForm
-            value={brief}
-            onChange={setBrief}
-            meetings={meetings}
-            disabled={!briefReady}
-          />
-        </details>
+            </div>
+          </details>
+          {flowReady && (
+            <details className="recording-preparation">
+              <summary>
+                会议准备 · {brief.title || "可选"}
+                {!briefSaved && briefReady ? " · 保存中" : ""}
+              </summary>
+              <MeetingBriefForm
+                value={brief}
+                onChange={setBrief}
+                meetings={meetings}
+                disabled={!briefReady}
+              />
+            </details>
+          )}
+        </div>
       )}
       {state === "finished" && (
         <section
@@ -1542,23 +1513,6 @@ export default function RecordingDialog({
           </details>
           {completing && <p role="status">正在打开会议…</p>}
         </section>
-      )}
-      {state === "idle" && (
-        <RecordingRecoveryList
-          sessions={recoveries}
-          onArchive={async (id, archived) => {
-            try {
-              await api.archiveEmptyRecording(id, archived);
-              setRecoveries(await recoverableRecordings());
-            } catch (e) {
-              toast((e as Error).message);
-            }
-          }}
-          onRecover={(session) => void recover(session)}
-          onDiagnostics={(id) =>
-            void exportDiagnostics(id).catch((error) => toast(error.message))
-          }
-        />
       )}
       <div
         className={`workbench-history-wrapper${state === "finished" ? (historyOpen ? " ended open" : " ended") : ""}`}
