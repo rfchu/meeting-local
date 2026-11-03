@@ -59,6 +59,15 @@ class RecordingHealth:
             asr[engine]={'covered_seconds':round(covered/16000,2),
                          'failed_attempts':sum(r['state']=='failed' for r in rows),
                          'running_attempts':sum(r['state']=='running' for r in rows)}
+        failure_code=''
+        error=str(capture.get('error',''))
+        if native and capture.get('state')=='failed':
+            failure_code='permission_required' if '隐私与安全性' in error and '允许听记采集器' in error else 'capture_failed'
+        # Empty failed starts are not recordings. Keep metadata and offer reversible hiding.
+        has_preparation=bool(any(session.get('brief',{}).values()))
+        has_asr=bool(self.store.one('SELECT 1 FROM live_asr_ranges WHERE recording_id=? LIMIT 1',(rid,)))
+        extra_audio=any(file_bytes(p)>0 for pattern in ('*.tmp','*.wav') for p in folder.glob(pattern))
+        empty=native and not completed and not running and state in ('failed','interrupted','stopped') and not saved_bytes and not session.get('notes') and not has_preparation and not has_asr and not extra_audio
         warnings=[]
         if not saved_bytes:warnings.append('no_saved_audio')
         if missing and not native and not completed:warnings.append('missing_chunks')
@@ -71,4 +80,5 @@ class RecordingHealth:
                          'missing_chunk_indices':missing[:50] if not completed else [],
                          'contiguous_chunks':contiguous,'tracks':tracks,
                          'recoverable':not completed and not running and saved_bytes>0 and (native or not missing)},
-                'notes_count':len(session.get('notes',[])), 'asr':asr,'warning_codes':warnings}
+                'notes_count':len(session.get('notes',[])), 'empty_session':bool(empty),
+                'recovery_archived':bool(session.get('recovery_archived')),'capture_failure_code':failure_code, 'asr':asr,'warning_codes':warnings}

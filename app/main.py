@@ -591,6 +591,16 @@ def create_app(data_dir=None, start_worker=True):
         return rows
     @app.get('/api/recordings')
     def list_recordings():return [row|{'health':recording_health.snapshot(row['id'])} for row in recordings.list()]
+    @app.post('/api/recordings/{rid}/recovery-archive')
+    def archive_empty_recording(rid:str,archived:bool=True):
+        try:
+            with native_capture.lock,recordings.lock:
+                report=recording_health.snapshot(rid)
+                if not report['empty_session']:raise HTTPException(409,'仅可收起已停止且没有音频、简记、准备内容或识别结果的空会话')
+                value=recordings.read(rid);value['recovery_archived']=archived
+                recordings.write(recordings.folder(rid)/'session.json',value)
+            return {'ok':True}
+        except FileNotFoundError:raise HTTPException(404,'录音会话不存在')
     @app.get('/api/live-model')
     def live_model_status():return resident.status()|{'formal_job_running':bool(worker.busy_jid)}
 

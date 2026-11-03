@@ -1,3 +1,5 @@
+import { useState } from "react";
+import { emptyRecording, recordingRecoveryCount } from "./recordingInventory";
 import type { RecordingSession } from "../../types";
 import { clock } from "../../utils";
 
@@ -5,19 +7,27 @@ export default function RecordingRecoveryList({
   sessions,
   onRecover,
   onDiagnostics,
+  onArchive,
 }: {
   sessions: RecordingSession[];
   onRecover: (session: RecordingSession) => void;
   onDiagnostics: (id: string) => void;
+  onArchive: (id: string, archived: boolean) => Promise<void>;
 }) {
   if (!sessions.length) return null;
+  const empty = sessions.filter(emptyRecording);
+  const visible = sessions.filter((s) => !emptyRecording(s));
   return (
     <section className="recording-recovery" aria-label="未完成录音恢复中心">
-      <h3>未完成录音恢复中心 · {sessions.length} 条</h3>
+      <h3>
+        {recordingRecoveryCount(visible)
+          ? `未完成录音恢复中心 · ${recordingRecoveryCount(visible)} 条`
+          : "没有待恢复的录音"}
+      </h3>
       <p>
         只整理已保存的内容，中断期间和未落盘的尾段无法补回；不会重新开始采集。
       </p>
-      {sessions.map((session) => {
+      {visible.map((session) => {
         const health = session.health,
           running = health?.native_running;
         const hasAudio =
@@ -38,7 +48,9 @@ export default function RecordingRecoveryList({
                 : "状态待核对"}{" "}
               · {session.notes.length} 条简记 ·
               {health
-                ? ` 本机缺段 ${health.audio.missing_chunk_count} 个`
+                ? session.source === "macos"
+                  ? " 按已存音轨核对"
+                  : ` 本机缺段 ${health.audio.missing_chunk_count} 个`
                 : " 保存状态未确认"}
             </p>
             {running ? (
@@ -89,9 +101,92 @@ export default function RecordingRecoveryList({
           </article>
         );
       })}
+      {empty.length > 0 && (
+        <details>
+          <summary>
+            未保存音频的会话 ·{" "}
+            {empty.filter((s) => !s.health?.recovery_archived).length} 条
+            {empty.some((s) => s.health?.recovery_archived)
+              ? "（含已收起记录）"
+              : ""}
+          </summary>
+          {empty
+            .filter((s) => !s.health?.recovery_archived)
+            .map((session) => (
+              <EmptySession
+                key={session.id}
+                session={session}
+                onArchive={onArchive}
+                onDiagnostics={onDiagnostics}
+              />
+            ))}
+          {empty.some((s) => s.health?.recovery_archived) && (
+            <details>
+              <summary>已收起记录</summary>
+              {empty
+                .filter((s) => s.health?.recovery_archived)
+                .map((session) => (
+                  <EmptySession
+                    key={session.id}
+                    session={session}
+                    onArchive={onArchive}
+                    onDiagnostics={onDiagnostics}
+                  />
+                ))}
+            </details>
+          )}
+        </details>
+      )}
       <small>
         诊断仅含状态、计数和耗时，不包含音频、文字稿、简记正文或密钥。
       </small>
     </section>
+  );
+}
+
+function EmptySession({
+  session,
+  onArchive,
+  onDiagnostics,
+}: {
+  session: RecordingSession;
+  onArchive: (id: string, archived: boolean) => Promise<void>;
+  onDiagnostics: (id: string) => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const archived = !!session.health?.recovery_archived;
+  return (
+    <article>
+      <strong>
+        {new Date(session.created * 1000).toLocaleString("zh-CN", {
+          hour12: false,
+        })}{" "}
+        · {archived ? "已收起的空会话" : "未保存音频"}
+      </strong>
+      <p>
+        {session.health?.capture_failure_code === "permission_required"
+          ? "采集启动失败：当时未获得屏幕与系统音频录制权限。"
+          : "采集未留下音频，也没有已保存的简记或会议准备。"}
+        此条没有可恢复的录音。
+      </p>
+      {session.health?.empty_session && (
+        <button
+          disabled={busy}
+          onClick={async () => {
+            setBusy(true);
+            try {
+              await onArchive(session.id, !archived);
+            } finally {
+              setBusy(false);
+            }
+          }}
+        >
+          {archived ? "恢复显示" : "收起空记录"}
+        </button>
+      )}
+      <button className="text-btn" onClick={() => onDiagnostics(session.id)}>
+        导出脱敏诊断
+      </button>
+    </article>
   );
 }

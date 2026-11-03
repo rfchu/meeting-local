@@ -116,6 +116,10 @@ export const api = {
     request<RecordingSession[]>("/recordings", {
       signal: AbortSignal.timeout(10000),
     }),
+  archiveEmptyRecording: (id: string, archived: boolean) =>
+    request(`/recordings/${id}/recovery-archive?archived=${archived}`, {
+      method: "POST",
+    }),
   recordingHealth: (id: string) =>
     request<RecordingHealth>(`/recordings/${id}/health`, {
       signal: AbortSignal.timeout(10000),

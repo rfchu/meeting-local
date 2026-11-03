@@ -1,3 +1,4 @@
+import { recordingRecoveryCount } from "./features/notes/recordingInventory";
 import MinutesDeliveryPanel from "./features/minutes/MinutesDeliveryPanel";
 import ReviewSourcePane from "./features/meeting/ReviewSourcePane";
 import {
@@ -802,14 +803,14 @@ export default function App() {
             <span className="dot" /> 转写本地处理 · 分析引擎可配置
           </div>
         </header>
-        {!!recoveryQuery.data?.length && (
+        {!!recordingRecoveryCount(recoveryQuery.data || []) && (
           <section
             className="recording-recovery-banner"
             aria-label="录音恢复提醒"
           >
             <span>
-              发现 {recoveryQuery.data.length}{" "}
-              条未完成录音，已有内容待核对保存。
+              发现 {recordingRecoveryCount(recoveryQuery.data || [])}{" "}
+              条录音会话待检查，请核对已保存内容。
             </span>
             <button onClick={() => setRecordingOpen(true)}>打开恢复中心</button>
           </section>

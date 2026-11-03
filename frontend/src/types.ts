@@ -154,6 +154,9 @@ export interface RecordingSession {
   health?: RecordingHealth;
 }
 export interface RecordingHealth {
+  empty_session?: boolean;
+  recovery_archived?: boolean;
+  capture_failure_code?: "permission_required" | "capture_failed" | "";
   schema_version: number;
   source: "browser" | "native";
   state: string;

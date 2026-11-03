@@ -68,3 +68,35 @@ export function clientRecordingDiagnostics(
     },
   };
 }
+
+/** A known failed native start with no saved material is never counted as a recording. */
+export function emptyRecording(session: RecordingSession): boolean {
+  const h = session.health;
+  if (
+    !h ||
+    session.source !== "macos" ||
+    h.native_running ||
+    !["failed", "interrupted", "stopped"].includes(h.state)
+  )
+    return false;
+  if (
+    h.audio.saved_bytes ||
+    session.native_audio_saved ||
+    session.chunk_count ||
+    session.notes.length ||
+    Object.values(session.brief || {}).some(Boolean)
+  )
+    return false;
+  if (h.empty_session !== undefined) return h.empty_session;
+  return !Object.values(h.asr || {}).some(
+    (a) => a.covered_seconds || a.running_attempts,
+  );
+}
+export function recordingRecoveryCount(sessions: RecordingSession[]) {
+  return sessions.filter(
+    (s) =>
+      !s.health?.native_running &&
+      !s.health?.recovery_archived &&
+      !emptyRecording(s),
+  ).length;
+}

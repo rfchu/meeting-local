@@ -1546,6 +1546,14 @@ export default function RecordingDialog({
       {state === "idle" && (
         <RecordingRecoveryList
           sessions={recoveries}
+          onArchive={async (id, archived) => {
+            try {
+              await api.archiveEmptyRecording(id, archived);
+              setRecoveries(await recoverableRecordings());
+            } catch (e) {
+              toast((e as Error).message);
+            }
+          }}
           onRecover={(session) => void recover(session)}
           onDiagnostics={(id) =>
             void exportDiagnostics(id).catch((error) => toast(error.message))

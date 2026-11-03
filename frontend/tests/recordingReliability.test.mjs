@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {build} from 'esbuild';
 async function load(path){const compiled=await build({entryPoints:[new URL(path,import.meta.url).pathname],bundle:true,format:'esm',write:false});return import('data:text/javascript;base64,'+Buffer.from(compiled.outputFiles[0].text).toString('base64'));}
-const {mergeRecordingInventory,clientRecordingDiagnostics}=await load('../src/features/notes/recordingInventory.ts');
+const {mergeRecordingInventory,clientRecordingDiagnostics,emptyRecording,recordingRecoveryCount}=await load('../src/features/notes/recordingInventory.ts');
 const {stopRecorder}=await load('../src/features/notes/stopRecorder.ts');
 const {recoverableRecordings}=await load('../src/features/notes/recordingBuffer.ts');
 const fixture={id:'recording',created:1,updated:10,duration:15,chunk_count:3,state:'recording',notes:[]};
@@ -46,4 +46,23 @@ test('Stopping waits for final data; an automatically stopped recorder never wai
   await stopRecorder(recorder);assert.equal(recorder.calls,1);
   const alreadyStopped=new Recorder();alreadyStopped.state='inactive';await stopRecorder(alreadyStopped);
   assert.equal(alreadyStopped.calls,0);
+});
+
+test('Failed empty native starts do not count as saved recordings; active capture stays separate',()=>{
+  const empty={...fixture,source:'macos',chunk_count:0,duration:0,health:{state:'failed',native_running:false,audio:{saved_bytes:0},asr:{}}};
+  assert.equal(emptyRecording(empty),true);
+  assert.equal(recordingRecoveryCount([empty]),0);
+  assert.equal(emptyRecording({...empty,health:undefined}),false);
+  const active={...empty,health:{...empty.health,state:'recording',native_running:true}};
+  assert.equal(emptyRecording(active),false);
+  assert.equal(recordingRecoveryCount([active]),0);
+  for(const patch of [{notes:[{raw_text:'local unsynced note'}]},{chunk_count:1},{native_audio_saved:true},{brief:{purpose:'meeting preparation'}}]){
+    const retained={...empty,...patch};assert.equal(emptyRecording(retained),false);assert.equal(recordingRecoveryCount([retained]),1);
+  }
+  assert.equal(emptyRecording({...empty,health:{...empty.health,empty_session:false}}),false);
+});
+test('Archived empty records remain available to restore but never create a recovery banner',()=>{
+  const empty={...fixture,source:'macos',chunk_count:0,health:{state:'failed',native_running:false,empty_session:true,recovery_archived:true,audio:{saved_bytes:0},asr:{}}};
+  const rows=mergeRecordingInventory([], [empty]);assert.equal(rows.length,1);
+  assert.equal(recordingRecoveryCount(rows),0);
 });

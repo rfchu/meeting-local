@@ -100,3 +100,50 @@ def test_api_diagnostics_download_and_inventory_are_read_only(tmp_path):
         assert client.get(f'/api/recordings/{rid}/health').json()['audio']['saved_chunks']==1
         assert (tmp_path/'recordings'/rid/'session.json').read_bytes()==before
         assert client.get('/api/recordings/'+'0'*32+'/health').status_code==404
+
+
+def test_failed_empty_native_start_is_not_recoverable_and_reason_is_allowlisted(inventory):
+    store,recordings,native,health=inventory
+    session=recordings.create('audio/wav');rid=session['id'];session['source']='macos'
+    recordings.write(recordings.folder(rid)/'session.json',session)
+    recordings.write(recordings.folder(rid)/'capture.json',{'state':'failed','duration':0,'error':'请在系统设置 → 隐私与安全性 中允许听记采集器，PRIVATE-SENTINEL'})
+    before=(recordings.folder(rid)/'session.json').read_bytes()
+    report=health.snapshot(rid)
+    assert report['empty_session'] and not report['audio']['recoverable']
+    assert report['capture_failure_code']=='permission_required'
+    assert 'PRIVATE-SENTINEL' not in json.dumps(report)
+    assert (recordings.folder(rid)/'session.json').read_bytes()==before
+    native.is_running.return_value=True
+    assert not health.snapshot(rid)['empty_session']
+
+
+@pytest.mark.parametrize('material',['pcm','note','brief','asr','temporary'])
+def test_empty_classification_preserves_any_saved_material(inventory,material):
+    store,recordings,_,health=inventory
+    session=recordings.create('audio/wav');rid=session['id'];folder=recordings.folder(rid)
+    session['source']='macos'
+    if material=='note':session['notes']=[{'raw_text':'保留的笔记'}]
+    if material=='brief':session['brief']={'purpose':'保留的准备'}
+    recordings.write(folder/'session.json',session)
+    recordings.write(folder/'capture.json',{'state':'failed','duration':0})
+    if material=='pcm':(folder/'system.pcm').write_bytes(b'\0\0')
+    if material=='temporary':(folder/'audio.tmp').write_bytes(b'tail')
+    if material=='asr':LiveResults(store,recordings).begin(rid,'native','qwen',0,1,b'x',{})
+    assert not health.snapshot(rid)['empty_session']
+
+
+def test_empty_archive_is_reversible_and_cannot_hide_material(tmp_path):
+    with TestClient(create_app(tmp_path,start_worker=False)) as client:
+        app=client.app;recordings=RecordingStore(app.state.store)
+        session=recordings.create('audio/wav');rid=session['id'];folder=recordings.folder(rid)
+        session['source']='macos';recordings.write(folder/'session.json',session)
+        recordings.write(folder/'capture.json',{'state':'failed','duration':0})
+        endpoint=f'/api/recordings/{rid}/recovery-archive'
+        assert client.post(endpoint).status_code==200
+        assert client.get('/api/recordings').json()[0]['health']['recovery_archived']
+        assert client.post(endpoint+'?archived=false').status_code==200
+        assert not client.get('/api/recordings').json()[0]['health']['recovery_archived']
+        (folder/'system.pcm').write_bytes(b'\0\0')
+        assert client.post(endpoint).status_code==409
+        assert (folder/'system.pcm').read_bytes()==b'\0\0'
+        assert client.post('/api/recordings/'+'0'*32+'/recovery-archive').status_code==404
