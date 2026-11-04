@@ -151,3 +151,12 @@ def test_stream_timeout_returns_reason_and_leaves_range_uncovered(setup,monkeypa
     result=events(client,rid)
     assert result[-1]['type']=='error' and '超时' in result[-1]['message']
     assert client.get(f'/api/recordings/{rid}/live-results?engine=qwen').json()['covered_seconds']==0
+
+def test_context_hints_are_part_of_cache_identity_and_return_reviewable_ranges(setup):
+    client,rid,provider=setup
+    def request(terms):
+        response=client.post('/api/live-transcribe/stream',data={'recording_id':rid,'offset':0,'terms':terms},files={'file':('chunk.wav',wav(),'audio/wav')})
+        return json.loads(response.text.splitlines()[-1])['result']
+    first=request('听记');assert first['context_used'] and first['segments'][0]['live_range_id']
+    assert request('听记')['cached'] and provider.calls==1
+    assert not request('新术语')['cached'] and provider.calls==2

@@ -4,6 +4,7 @@ from pathlib import Path
 import anyio
 from contextlib import aclosing
 from .db import uid
+from .live_context import recognition_context
 
 def inspect_audio(payload):
     if not payload or len(payload)>4*1024*1024:raise ValueError('实时音频为空或超过 4MB')
@@ -27,12 +28,16 @@ async def terminate(process):
         except ProcessLookupError:pass
         await process.wait()
 
-async def disposable_events(provider,audio,output):
+async def disposable_events(provider,audio,output,context=""):
     process=None
     try:
         with (output.parent/'stderr.log').open('wb') as stderr:
             with anyio.CancelScope(shield=True):
-                process=await asyncio.create_subprocess_exec(*provider.stream_command(audio,output),
+                command=provider.stream_command(audio,output)
+                if context:
+                    hints=output.parent/'context.txt';hints.write_text(context)
+                    command += ['--context-file',str(hints)]
+                process=await asyncio.create_subprocess_exec(*command,
                     stdout=asyncio.subprocess.PIPE,stderr=stderr,limit=256*1024)
             async with asyncio.timeout(90):
                 while line:=await process.stdout.readline():
@@ -45,7 +50,7 @@ async def disposable_events(provider,audio,output):
     finally:
         with anyio.CancelScope(shield=True):await terminate(process)
 
-async def qwen_events(provider,cache,lock,payload,offset,rid,source,root,window=None,resident=None,confirmed=True):
+async def qwen_events(provider,cache,lock,payload,offset,rid,source,root,window=None,resident=None,confirmed=True,context_enabled=True,terms=""):
     duration,silent=inspect_audio(payload);started=time.monotonic();aid=None;locked=False
     request_id=uid();sequence=0;last_text=None;first_text_ms=None
     def event(kind,**data):
@@ -55,7 +60,10 @@ async def qwen_events(provider,cache,lock,payload,offset,rid,source,root,window=
         sequence+=1;return json.dumps(item,ensure_ascii=False)+'\n'
     try:
         cached=None
-        if rid:aid,cached=cache.begin(rid,source,'qwen',offset,duration,payload,provider.identity())
+        context=recognition_context(cache,rid,offset,terms,context_enabled)
+        identity=provider.identity()
+        if context:identity={"model":identity,"context":context,"live_version":2}
+        if rid:aid,cached=cache.begin(rid,source,'qwen',offset,duration,payload,identity)
         yield event('start',confirmed=confirmed)
         if cached is not None:segments=cached;confirmed=True
         elif silent:segments=[]
@@ -66,7 +74,7 @@ async def qwen_events(provider,cache,lock,payload,offset,rid,source,root,window=
             with tempfile.TemporaryDirectory(prefix='meeting-stream-',dir=root) as folder_name:
                 folder=Path(folder_name);audio=folder/'chunk.wav';output=folder/'result.qwen.json';audio.write_bytes(payload)
                 result=None
-                iterator=resident.generate(provider,audio) if resident and hasattr(provider,'resident_command') else disposable_events(provider,audio,output)
+                iterator=resident.generate(provider,audio,context=context) if resident and hasattr(provider,'resident_command') else disposable_events(provider,audio,output,context)
                 async with aclosing(iterator):
                     async for item in iterator:
                         if item['type']=='qwen_partial':
@@ -81,10 +89,12 @@ async def qwen_events(provider,cache,lock,payload,offset,rid,source,root,window=
                 segments=[{'start':offset+max(0,min(duration,s['start'])),
                            'end':offset+max(0,min(duration,s['end'])),'text':s['text']} for s in result['segments'] if s['text'].strip()]
         if aid:
-            if confirmed:cache.complete(aid,segments)
+            if confirmed:
+                cache.complete(aid,segments)
+                segments=[dict(s,live_range_id=aid,live_segment_index=i) for i,s in enumerate(segments)]
             else:cache.preview(aid)
         result={**(window or {}),'segments':segments,'duration':duration,'engine':'qwen','confirmed':confirmed,
-                'processing_ms':round((time.monotonic()-started)*1000),'first_text_ms':first_text_ms,'cached':cached is not None,'persisted':bool(rid) and confirmed}
+                'context_used':bool(context),'processing_ms':round((time.monotonic()-started)*1000),'first_text_ms':first_text_ms,'cached':cached is not None,'persisted':bool(rid) and confirmed}
         yield event('final',result=result)
     except asyncio.CancelledError:
         if aid:cache.fail(aid,'流式连接中断，部分文字未确认为完整覆盖')

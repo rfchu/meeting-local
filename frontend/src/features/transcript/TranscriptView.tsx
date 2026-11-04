@@ -3,6 +3,7 @@ import { api } from "../../api";
 import Modal from "../../components/Modal";
 import type { Meeting, Revision, Segment } from "../../types";
 import { clock, revisionLabel } from "../../utils";
+import LiveCorrectionReview from "../notes/LiveCorrectionReview";
 import TranscriptList from "./TranscriptList";
 import SpeakerReviewDialog from "./SpeakerReviewDialog";
 
@@ -108,6 +109,21 @@ export default function TranscriptView({
   onRefresh,
   toast,
 }: Props) {
+  const [liveReviewOpen, setLiveReviewOpen] = useState(false);
+  const [hasLiveReview, setHasLiveReview] = useState(false);
+  useEffect(() => {
+    let valid = true;
+    setHasLiveReview(false);
+    api
+      .liveCorrections(meeting.id)
+      .then((rows) => {
+        if (valid) setHasLiveReview(rows.length > 0);
+      })
+      .catch(() => {});
+    return () => {
+      valid = false;
+    };
+  }, [meeting.id, meeting.revision]);
   const [search, setSearch] = useState(""),
     [speakerOpen, setSpeakerOpen] = useState(false),
     [compareOpen, setCompareOpen] = useState(false),
@@ -222,6 +238,9 @@ export default function TranscriptView({
           管理发言人
         </button>
         <button onClick={mergeShort}>合并连续短句</button>
+        {hasLiveReview && (
+          <button onClick={() => setLiveReviewOpen(true)}>实时纠错记录</button>
+        )}
         <button
           disabled={!meeting.segments.length}
           onClick={() => setReviewOpen(true)}
@@ -270,6 +289,12 @@ export default function TranscriptView({
           <h3>录音已就位</h3>
           <p>点击“开始转写”，文字稿将在这里出现。</p>
         </div>
+      )}
+      {liveReviewOpen && (
+        <LiveCorrectionReview
+          recordingId={meeting.id}
+          onClose={() => setLiveReviewOpen(false)}
+        />
       )}
       {speakerOpen && (
         <Modal id="speakerDialog" onClose={() => setSpeakerOpen(false)}>

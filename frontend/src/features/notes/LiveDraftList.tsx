@@ -89,7 +89,12 @@ export default function LiveDraftList({
             }
           >
             <b>{clock(draft.start)}</b>
-            <p>{draft.text}</p>
+            <p>
+              {draft.text}
+              {draft.live_correction_id && (
+                <small className="live-corrected-badge">已校对</small>
+              )}
+            </p>
             <button
               className="text-btn"
               disabled={!canAddNote}
@@ -110,9 +115,9 @@ export default function LiveDraftList({
               <span className="stream-caret" aria-hidden="true" />
             </p>
             <small>
-              生成中
+              正在识别
               <br />
-              未确认
+              尾部可修订
             </small>
           </article>
         )}

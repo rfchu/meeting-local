@@ -76,12 +76,12 @@ class QwenResident:
             try:await self._ensure(provider)
             finally:self.busy=False;self.last_used=time.monotonic()
             return self.status()
-    async def generate(self,provider,audio):
+    async def generate(self,provider,audio,context=""):
         async with self.lock:
             self.busy=True;completed=False;rid=uid()
             try:
                 await self._ensure(provider)
-                self.process.stdin.write((json.dumps({'id':rid,'audio':str(audio)})+'\n').encode());await self.process.stdin.drain()
+                self.process.stdin.write((json.dumps({'id':rid,'audio':str(audio),'context':context})+'\n').encode());await self.process.stdin.drain()
                 async with asyncio.timeout(90):
                     while line:=await self.process.stdout.readline():
                         try:event=json.loads(line)

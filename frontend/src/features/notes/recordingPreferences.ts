@@ -1,6 +1,10 @@
 export type CompletionMode = "quick" | "full" | "none";
 export interface RecordingPreferences {
   version: 1;
+  contextEnabled: boolean;
+  recognitionTerms: string;
+  correctionEnabled: boolean;
+  correctionProfileId: string;
   keepAwake: boolean;
   autoProcess: boolean;
   postGoal: "transcript" | "minutes";
@@ -13,13 +17,17 @@ export interface RecordingPreferences {
 export const RECORDING_PREFERENCES_KEY = "tingji.recording.preferences.v1";
 export const DEFAULT_RECORDING_PREFERENCES: RecordingPreferences = {
   version: 1,
+  contextEnabled: true,
+  recognitionTerms: "",
+  correctionEnabled: false,
+  correctionProfileId: "",
   keepAwake: true,
   autoProcess: true,
   postGoal: "transcript",
   captureSource: "browser",
   draftEngine: "whisper",
   streamEnabled: true,
-  responsiveMode: false,
+  responsiveMode: true,
   completionMode: "quick",
 };
 export function readRecordingPreferences(
@@ -33,6 +41,17 @@ export function readRecordingPreferences(
       return { ...DEFAULT_RECORDING_PREFERENCES };
     return {
       ...DEFAULT_RECORDING_PREFERENCES,
+      contextEnabled:
+        typeof value.contextEnabled === "boolean" ? value.contextEnabled : true,
+      recognitionTerms:
+        typeof value.recognitionTerms === "string"
+          ? value.recognitionTerms.slice(0, 1000)
+          : "",
+      correctionEnabled: value.correctionEnabled === true,
+      correctionProfileId:
+        typeof value.correctionProfileId === "string"
+          ? value.correctionProfileId
+          : "",
       postGoal: value.postGoal === "minutes" ? "minutes" : "transcript",
       autoProcess:
         typeof value.autoProcess === "boolean" ? value.autoProcess : true,
@@ -46,9 +65,7 @@ export function readRecordingPreferences(
       streamEnabled:
         typeof value.streamEnabled === "boolean" ? value.streamEnabled : true,
       responsiveMode:
-        typeof value.responsiveMode === "boolean"
-          ? value.responsiveMode
-          : false,
+        typeof value.responsiveMode === "boolean" ? value.responsiveMode : true,
       completionMode: ["quick", "full", "none"].includes(value.completionMode)
         ? value.completionMode
         : "quick",

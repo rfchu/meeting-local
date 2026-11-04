@@ -164,7 +164,21 @@ export interface NoteReview {
   revision: number;
   segments: Segment[];
 }
+export interface LiveCorrection {
+  id: string;
+  range_id: string;
+  segment_index: number;
+  profile_id: string;
+  model: string;
+  original_text: string;
+  edits: { original: string; replacement: string; reason: string }[];
+  state: "suggested" | "accepted" | "rejected" | "unchanged";
+}
 export interface LiveDraftSegment {
+  live_range_id?: string;
+  live_segment_index?: number;
+  asr_original_text?: string;
+  live_correction_id?: string;
   start: number;
   end: number;
   text: string;

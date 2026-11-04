@@ -68,6 +68,12 @@ class Store:
               audio_hash TEXT NOT NULL, identity TEXT NOT NULL, state TEXT NOT NULL,
               segments TEXT NOT NULL DEFAULT '[]', error TEXT NOT NULL DEFAULT '',
               created TEXT DEFAULT CURRENT_TIMESTAMP, updated TEXT DEFAULT CURRENT_TIMESTAMP);
+            CREATE TABLE IF NOT EXISTS live_corrections (
+              id TEXT PRIMARY KEY,recording_id TEXT NOT NULL,range_id TEXT NOT NULL,segment_index INTEGER NOT NULL,
+              profile_id TEXT NOT NULL,model TEXT NOT NULL,original_text TEXT NOT NULL,edits TEXT NOT NULL,
+              state TEXT NOT NULL,created TEXT DEFAULT CURRENT_TIMESTAMP,updated TEXT DEFAULT CURRENT_TIMESTAMP,
+              UNIQUE(range_id,segment_index,profile_id));
+            CREATE INDEX IF NOT EXISTS live_corrections_recording ON live_corrections(recording_id);
             CREATE INDEX IF NOT EXISTS live_asr_recording_range ON live_asr_ranges(recording_id,engine,start_frame);
             CREATE INDEX IF NOT EXISTS meeting_notes_meeting_time
               ON meeting_notes(meeting_id,captured_at,created);
@@ -122,7 +128,7 @@ class Store:
                 id TEXT PRIMARY KEY,meeting_id TEXT NOT NULL,artifact_id TEXT NOT NULL,
                 payload TEXT NOT NULL,created TEXT DEFAULT CURRENT_TIMESTAMP);
                 CREATE INDEX IF NOT EXISTS minutes_deliveries_meeting ON minutes_deliveries(meeting_id);""")
-            db.execute('PRAGMA user_version=15')
+            db.execute('PRAGMA user_version=16')
         os.chmod(self.path,0o600)
     @contextmanager
     def connect(self):

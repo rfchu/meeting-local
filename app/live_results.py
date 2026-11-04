@@ -34,7 +34,7 @@ class LiveResults:
         with self.store.connect() as db:
             db.execute('BEGIN IMMEDIATE')
             cached=db.execute("SELECT * FROM live_asr_ranges WHERE recording_id=? AND source=? AND engine=? AND start_frame=? AND end_frame=? AND audio_hash=? AND identity=? AND state='completed' ORDER BY rowid DESC LIMIT 1",(rid,source,engine,start,end,digest,identity)).fetchone()
-            if cached:return None,json.loads(cached['segments'])
+            if cached:return None,[dict(s,live_range_id=cached['id'],live_segment_index=i) for i,s in enumerate(json.loads(cached['segments']))]
             aid=uid()
             db.execute('INSERT INTO live_asr_ranges(id,recording_id,source,engine,start_frame,end_frame,audio_hash,identity,state) VALUES(?,?,?,?,?,?,?,?,?)',
                        (aid,rid,source,engine,start,end,digest,identity,'running'))
@@ -47,11 +47,20 @@ class LiveResults:
         self.store.execute("UPDATE live_asr_ranges SET state='failed',error=?,updated=CURRENT_TIMESTAMP WHERE id=? AND state='running'",(str(error)[:1000],aid))
     def snapshot(self,rid,engine):
         rows=self.store.all("SELECT * FROM live_asr_ranges WHERE recording_id=? AND engine=? AND state='completed' ORDER BY rowid DESC",(rid,engine))
+        accepted={}
+        for correction in self.store.all("SELECT * FROM live_corrections WHERE recording_id=? AND state='accepted'",(rid,)):
+            accepted.setdefault(correction['range_id'],[]).append(correction)
         seen=set();result=[]
         for row in rows:
             key=(row['start_frame'],row['end_frame'])
             if key in seen:continue
-            seen.add(key);row['segments']=json.loads(row['segments']);result.append(row)
+            seen.add(key);row['segments']=json.loads(row['segments'])
+            from .live_corrections import apply_edits
+            for correction in accepted.get(row['id'],[]):
+                i=correction['segment_index']
+                if i<len(row['segments']) and row['segments'][i]['text']==correction['original_text']:
+                    row['segments'][i]=dict(row['segments'][i],text=apply_edits(correction['original_text'],json.loads(correction['edits'])),asr_original_text=correction['original_text'],live_correction_id=correction['id'])
+            result.append(row)
         return result
     def overview(self,rid,engine,duration=None):
         session=self.recordings.read(rid)

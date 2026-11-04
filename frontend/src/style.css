@@ -3362,3 +3362,86 @@ button.note-options-trigger {
   line-height: 1.6;
   color: #8894a5;
 }
+
+.live-context-settings {
+  margin: 18px 0;
+  padding: 16px;
+  border: 1px solid #e2e8f0;
+  border-radius: 14px;
+  display: grid;
+  gap: 14px;
+}
+.live-context-settings legend {
+  font-weight: 650;
+  padding: 0 6px;
+}
+.live-context-settings label {
+  display: block;
+  font-size: 14px;
+}
+.live-context-settings textarea,
+.live-context-settings select {
+  display: block;
+  width: 100%;
+  margin-top: 7px;
+}
+.live-context-settings small,
+.live-correction-bar small {
+  color: #64748b;
+  font-size: 12px;
+}
+.live-correction-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 0 16px 8px;
+}
+.live-correction-bar button {
+  white-space: nowrap;
+  font-size: 12px;
+}
+.live-correction-review {
+  width: min(760px, 94vw);
+}
+.live-correction-item {
+  padding: 18px 0;
+  border-top: 1px solid #e2e8f0;
+}
+.live-correction-item header {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+.live-correction-item small {
+  color: #64748b;
+}
+.live-correction-item del {
+  color: #9f4a4a;
+  text-decoration-color: #d4a1a1;
+}
+.live-correction-item ins {
+  color: #16624c;
+  background: #edf8f2;
+  text-decoration: none;
+}
+.live-correction-original {
+  color: #64748b;
+  white-space: pre-wrap;
+}
+.live-correction-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 14px;
+}
+.live-corrected-badge {
+  display: inline-block;
+  margin-left: 8px;
+  color: #16805c;
+  font-size: 11px;
+}
+
+.live-correction-review .search-heading button {
+  flex-shrink: 0;
+  white-space: nowrap;
+}

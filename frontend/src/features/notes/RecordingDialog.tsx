@@ -1,3 +1,5 @@
+import { useLiveCorrections } from "./useLiveCorrections";
+import LiveCorrectionReview from "./LiveCorrectionReview";
 import RecordingSetupBar from "./RecordingSetupBar";
 import MeetingBriefForm, { emptyBrief } from "../meeting/MeetingBriefForm";
 import type { MeetingBrief, MeetingSummary } from "../../types";
@@ -190,6 +192,17 @@ export default function RecordingDialog({
       lagMs: null as number | null,
       revisions: 0,
     }),
+    [contextEnabled, setContextEnabled] = useState(preferences.contextEnabled),
+    [recognitionTerms, setRecognitionTerms] = useState(
+      preferences.recognitionTerms,
+    ),
+    [correctionEnabled, setCorrectionEnabled] = useState(
+      preferences.correctionEnabled,
+    ),
+    [correctionProfileId, setCorrectionProfileId] = useState(
+      preferences.correctionProfileId,
+    ),
+    [correctionReviewOpen, setCorrectionReviewOpen] = useState(false),
     [responsiveMode, setResponsiveMode] = useState(preferences.responsiveMode),
     [modelStatus, setModelStatus] = useState<Awaited<
       ReturnType<typeof api.liveModelStatus>
@@ -270,6 +283,10 @@ export default function RecordingDialog({
         captureSource,
         draftEngine,
         streamEnabled,
+        contextEnabled,
+        recognitionTerms,
+        correctionEnabled,
+        correctionProfileId,
         responsiveMode,
         completionMode: mode,
       });
@@ -285,11 +302,49 @@ export default function RecordingDialog({
     draftEngine,
     streamEnabled,
     responsiveMode,
+    contextEnabled,
+    recognitionTerms,
+    correctionEnabled,
+    correctionProfileId,
     completionMode,
     postGoal,
     autoProcess,
     keepAwake,
   ]);
+  const correctionSessionId = nativeSessionId || sessionRef.current?.id;
+  const liveCorrection = useLiveCorrections(
+    correctionSessionId,
+    drafts,
+    correctionEnabled && draftEngine === "qwen" && streamEnabled,
+    correctionProfileId,
+    state === "recording" || state === "paused",
+  );
+  const displayDrafts = drafts.map((draft) => {
+    const correction = liveCorrection.corrections.find(
+      (c) =>
+        c.range_id === draft.live_range_id &&
+        c.segment_index === (draft.live_segment_index || 0) &&
+        c.state === "accepted",
+    );
+    if (!correction || correction.original_text !== draft.text) return draft;
+    let text = draft.text;
+    const edits = [...correction.edits].sort(
+      (a, b) => draft.text.indexOf(b.original) - draft.text.indexOf(a.original),
+    );
+    for (const edit of edits) {
+      const start = text.indexOf(edit.original);
+      text =
+        text.slice(0, start) +
+        edit.replacement +
+        text.slice(start + edit.original.length);
+    }
+    return {
+      ...draft,
+      text,
+      asr_original_text: draft.text,
+      live_correction_id: correction.id,
+    };
+  });
   const handingOff = useRef(false);
   const handoffSaved = async (
     id: string,
@@ -533,6 +588,8 @@ export default function RecordingDialog({
                 controller.signal,
                 responsiveMode,
                 responsiveMode ? nativePreviewGoalRef.current : 15,
+                contextEnabled,
+                recognitionTerms,
               )
             : await api.nativeDraft(
                 nativeSessionId,
@@ -584,6 +641,8 @@ export default function RecordingDialog({
     draftEngine,
     streamEnabled,
     responsiveMode,
+    contextEnabled,
+    recognitionTerms,
   ]);
   useEffect(() => {
     if (!sessionRef.current || state === "idle") return;
@@ -815,6 +874,8 @@ export default function RecordingDialog({
                 },
                 controller.signal,
                 plan.confirmed,
+                contextEnabled,
+                recognitionTerms,
               )
             : await api.liveTranscribe(
                 file,
@@ -1462,8 +1523,30 @@ export default function RecordingDialog({
                 <h3>实时草稿</h3>
                 <span>{draftStatus}</span>
               </header>
+              {draftEngine === "qwen" && streamEnabled && (
+                <div className="live-correction-bar">
+                  <small>
+                    {liveCorrection.status ||
+                      (contextEnabled
+                        ? "上下文辅助识别已开启 · 临时尾部可修订"
+                        : "临时尾部可修订")}
+                  </small>
+                  <button
+                    className="text-btn"
+                    disabled={!correctionSessionId}
+                    onClick={() => setCorrectionReviewOpen(true)}
+                  >
+                    纠错记录
+                    {liveCorrection.corrections.filter(
+                      (c) => c.state === "suggested",
+                    ).length
+                      ? ` · ${liveCorrection.corrections.filter((c) => c.state === "suggested").length} 待确认`
+                      : ""}
+                  </button>
+                </div>
+              )}
               <LiveDraftList
-                drafts={drafts}
+                drafts={displayDrafts}
                 canAddNote={recording}
                 partial={partialDraft}
                 emptyText={
@@ -1712,6 +1795,16 @@ export default function RecordingDialog({
           运行详情 <span>识别覆盖与保存状态 ↗</span>
         </button>
       </div>
+      {correctionReviewOpen && correctionSessionId && (
+        <LiveCorrectionReview
+          recordingId={correctionSessionId}
+          canDecide={state === "recording" || state === "paused"}
+          drafts={drafts}
+          profileId={correctionEnabled ? correctionProfileId : ""}
+          onChange={liveCorrection.setCorrections}
+          onClose={() => setCorrectionReviewOpen(false)}
+        />
+      )}
       {inspectorOpen && (
         <Modal
           className="recording-inspector"
@@ -2132,6 +2225,64 @@ export default function RecordingDialog({
                     </small>
                   </div>
                 </>
+              )}
+              {draftEngine === "qwen" && streamEnabled && (
+                <fieldset
+                  className="live-context-settings"
+                  disabled={state !== "idle"}
+                >
+                  <legend>上下文与纠错</legend>
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={contextEnabled}
+                      onChange={(e) => setContextEnabled(e.target.checked)}
+                    />{" "}
+                    使用前文与会议准备辅助识别
+                  </label>
+                  <label>
+                    会议术语／姓名
+                    <textarea
+                      aria-label="识别参考术语"
+                      rows={2}
+                      maxLength={1000}
+                      value={recognitionTerms}
+                      placeholder="例如：听记、Qwen、项目代号、参会人姓名；仅作为词汇参考"
+                      onChange={(e) => setRecognitionTerms(e.target.value)}
+                    />
+                  </label>
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={correctionEnabled}
+                      onChange={(e) => setCorrectionEnabled(e.target.checked)}
+                    />{" "}
+                    已确认片段智能纠错（本地 LLM）
+                  </label>
+                  {correctionEnabled && (
+                    <label>
+                      纠错模型
+                      <select
+                        aria-label="实时纠错模型"
+                        value={correctionProfileId}
+                        onChange={(e) => setCorrectionProfileId(e.target.value)}
+                      >
+                        <option value="">请选择本地模型配置</option>
+                        {environment?.analysis.profiles
+                          .filter((p) => p.provider_type === "local")
+                          .map((p) => (
+                            <option key={p.id} value={p.id}>
+                              {p.name} · {p.model}
+                            </option>
+                          ))}
+                      </select>
+                    </label>
+                  )}
+                  <small>
+                    原始识别始终保存；内容修改需在“纠错记录”确认。校对失败不影响录音与转写。与
+                    ASR 同时运行本地 LLM 可能增加延迟。
+                  </small>
+                </fieldset>
               )}
             </section>
           )}

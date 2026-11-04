@@ -12,6 +12,7 @@ import type {
   LLMConfig,
   LLMConfigInput,
   LiveDraftSegment,
+  LiveCorrection,
   Meeting,
   MeetingMinutes,
   MeetingNoteInput,
@@ -173,6 +174,8 @@ export const api = {
     signal: AbortSignal,
     responsive = false,
     windowSeconds: 5 | 10 | 15 = 15,
+    contextEnabled = true,
+    terms = "",
   ) =>
     readLiveStream<
       LiveStreamResult & {
@@ -188,6 +191,8 @@ export const api = {
           engine: "qwen",
           responsive,
           window_seconds: windowSeconds,
+          context_enabled: contextEnabled,
+          terms,
         }),
         signal,
       },
@@ -326,6 +331,31 @@ export const api = {
     data.append("file", file);
     return request<Meeting>("/meetings", { method: "POST", body: data });
   },
+  liveCorrections: (id: string) =>
+    request<LiveCorrection[]>(`/recordings/${id}/corrections`),
+  proposeLiveCorrection: (
+    id: string,
+    rangeId: string,
+    index: number,
+    profileId: string,
+  ) =>
+    request<LiveCorrection>(
+      `/recordings/${id}/corrections`,
+      json("POST", {
+        range_id: rangeId,
+        segment_index: index,
+        profile_id: profileId,
+      }),
+    ),
+  decideLiveCorrection: (
+    id: string,
+    cid: string,
+    state: "accepted" | "rejected" | "suggested",
+  ) =>
+    request<LiveCorrection>(
+      `/recordings/${id}/corrections/${cid}`,
+      json("PUT", { state }),
+    ),
   liveTranscribeStream: (
     file: File,
     offset: number,
@@ -333,11 +363,15 @@ export const api = {
     onPartial: (partial: LivePartial) => void,
     signal: AbortSignal,
     confirmed = true,
+    contextEnabled = true,
+    terms = "",
   ) => {
     const data = new FormData();
     data.append("file", file);
     data.append("offset", String(offset));
     data.append("confirmed", String(confirmed));
+    data.append("context_enabled", String(contextEnabled));
+    data.append("terms", terms);
     if (recordingId) data.append("recording_id", recordingId);
     return readLiveStream<LiveStreamResult>(
       "/live-transcribe/stream",

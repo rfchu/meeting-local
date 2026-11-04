@@ -19,6 +19,7 @@ from .speaker_review import generate_review
 from .recordings import RecordingStore
 from .native_capture import NativeCapture
 from .live_results import LiveResults
+from .live_corrections import LiveCorrections
 from .live_stream import inspect_audio, qwen_events
 from .qwen_resident import QwenResident
 from .keep_awake import KeepAwake
@@ -168,10 +169,18 @@ class RecordingMetadata(MeetingNotesBatchInput):
 class RecordingFinish(BaseModel):
     chunk_count: int=Field(ge=1,le=100000)
 class NativeDraftInput(BaseModel):
+    context_enabled: bool=True
+    terms: str=Field(default="",max_length=1000)
     engine: Literal["whisper","qwen"]="whisper"
     offset: float=Field(default=0,ge=0,le=86400,allow_inf_nan=False)
     responsive: bool=False
     window_seconds: Literal[5,10,15]=15
+class LiveCorrectionInput(BaseModel):
+    range_id: str=Field(min_length=1,max_length=100)
+    segment_index: int=Field(ge=0,le=100)
+    profile_id: str=Field(min_length=1,max_length=100)
+class LiveCorrectionDecision(BaseModel):
+    state: Literal['accepted','rejected','suggested']
 class KeepAwakeInput(BaseModel):
     enabled: bool=True
 class ReviewCheckpointInput(BaseModel):
@@ -202,6 +211,7 @@ class AIMinutesGenerateInput(MinutesPolishInput):
 
 def create_app(data_dir=None, start_worker=True):
     store=Store(data_dir or os.getenv('MEETING_DATA',str(BASE/'data')))
+    live_corrections=LiveCorrections(store)
     minutes_generation=MinutesGeneration(store)
     worker=Worker(store)
     retrieval=Retrieval(store)
@@ -484,7 +494,8 @@ def create_app(data_dir=None, start_worker=True):
 
     @app.post('/api/live-transcribe/stream')
     async def live_transcribe_stream(file:UploadFile=File(...),offset:float=Form(default=0,ge=0,le=86400,allow_inf_nan=False),
-                                    recording_id:str|None=Form(default=None),confirmed:bool=Form(default=True)):
+                                    recording_id:str|None=Form(default=None),confirmed:bool=Form(default=True),
+                                    context_enabled:bool=Form(default=True),terms:str=Form(default="",max_length=1000)):
         try:
             payload=await file.read(4*1024*1024+1)
             inspect_audio(payload)
@@ -492,7 +503,7 @@ def create_app(data_dir=None, start_worker=True):
         except FileNotFoundError as error:raise HTTPException(404,str(error))
         except ValueError as error:raise HTTPException(400,str(error))
         finally:await file.close()
-        return stream_response(qwen_events(get_asr_provider('qwen'),live_results,live_asr_lock,payload,offset,recording_id,'browser',store.root,resident=resident,confirmed=confirmed))
+        return stream_response(qwen_events(get_asr_provider('qwen'),live_results,live_asr_lock,payload,offset,recording_id,'browser',store.root,resident=resident,confirmed=confirmed,context_enabled=context_enabled,terms=terms))
 
     def llm_config(cid):
         row=store.one('SELECT * FROM llm_configs WHERE id=?',(cid,))
@@ -654,7 +665,7 @@ def create_app(data_dir=None, start_worker=True):
                     'result':window|{'segments':[],'duration':0,'processing_ms':0}})+'\n'
             return stream_response(waiting())
         payload=window.pop('payload');window.pop('silent')
-        return stream_response(qwen_events(get_asr_provider('qwen'),live_results,live_asr_lock,payload,window['offset'],rid,'native',store.root,window,resident=resident,confirmed=window.get('confirmed',True)))
+        return stream_response(qwen_events(get_asr_provider('qwen'),live_results,live_asr_lock,payload,window['offset'],rid,'native',store.root,window,resident=resident,confirmed=window.get('confirmed',True),context_enabled=body.context_enabled,terms=body.terms))
 
     @app.post('/api/native-capture/{rid}/command')
     def native_command(rid:str,body:NativeCommandInput):
@@ -667,6 +678,21 @@ def create_app(data_dir=None, start_worker=True):
             mid=native_capture.finish(rid);keep_awake.release(rid);return decorated(meeting(mid))
         except FileNotFoundError as error:raise HTTPException(404,str(error))
         except (ValueError,RuntimeError,subprocess.SubprocessError) as error:raise HTTPException(409,str(error))
+    @app.get('/api/recordings/{rid}/corrections')
+    def correction_history(rid:str):
+        try:recordings.read(rid)
+        except FileNotFoundError:raise HTTPException(404,'录音会话不存在')
+        return live_corrections.list(rid)
+    @app.post('/api/recordings/{rid}/corrections')
+    def propose_live_correction(rid:str,body:LiveCorrectionInput):
+        try:return live_corrections.propose(rid,body.range_id,body.segment_index,llm_config(body.profile_id))
+        except HTTPException:raise
+        except (ValueError,RuntimeError,TimeoutError) as error:raise HTTPException(409,str(error))
+        except Exception:raise HTTPException(503,'本地纠错服务暂时不可用，原始识别结果已保留')
+    @app.put('/api/recordings/{rid}/corrections/{cid}')
+    def decide_live_correction(rid:str,cid:str,body:LiveCorrectionDecision):
+        try:return live_corrections.decide(rid,cid,body.state)
+        except ValueError as error:raise HTTPException(409,str(error))
     @app.get('/api/recordings/{rid}/live-results')
     def recording_live_results(rid:str,engine:Literal['whisper','qwen']='whisper'):
         try:return live_results.overview(rid,engine)
@@ -939,6 +965,7 @@ def create_app(data_dir=None, start_worker=True):
             if db.execute('SELECT 1 FROM meeting_task_links l JOIN note_todos t ON t.id=l.task_id WHERE t.meeting_id=? AND l.meeting_id!=?',(mid,mid)).fetchone():
                 raise HTTPException(409,'该会议有带入其他会议的跟进项，请先在关联会议移除关联后再删除')
             db.execute('DELETE FROM live_asr_ranges WHERE recording_id=?',(mid,))
+            db.execute('DELETE FROM live_corrections WHERE recording_id=?',(mid,))
             QA.forget_meeting(db,mid)
             for table in ['minutes_deliveries','minutes_task_bindings','meeting_task_links','minutes_selection','meeting_briefs','attention_reviews','meeting_reviews','note_todos','retrieval_units','meeting_notes','artifacts','revisions','jobs','meetings']:
                 key='id' if table=='meetings' else 'meeting_id'

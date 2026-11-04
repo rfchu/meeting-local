@@ -46,13 +46,13 @@ def transcribe_adaptive(model,samples,rate,max_tokens=MAX_TOKENS,depth=0):
     return '\n'.join(x for x in (left,right) if x),[attempt,*left_attempts,*right_attempts]
 
 
-def transcribe_streamed(model,samples,rate,max_tokens=MAX_TOKENS,emit=None):
+def transcribe_streamed(model,samples,rate,max_tokens=MAX_TOKENS,emit=None,context=""):
     """Emit genuine cumulative token decodes; hold incomplete Unicode bytes."""
     from mlx_audio.lm.sample_utils import make_sampler
     emit=emit or (lambda event:print(json.dumps(event,ensure_ascii=False),flush=True))
     tokens=[];last=''
     for token,_ in model.stream_generate(samples,language='Chinese',max_tokens=max_tokens,
-                                         sampler=make_sampler(0.0),verbose=False):
+                                         sampler=make_sampler(0.0),verbose=False,**({"system_prompt":context} if context else {})):
         tokens.append(int(token))
         text=model._tokenizer.decode(tokens,skip_special_tokens=True).strip()
         if '\ufffd' not in text and text!=last:
@@ -69,6 +69,7 @@ def main():
     for name in ('model','aligner','audio','output'):p.add_argument('--'+name,required=True)
     p.add_argument('--draft',action='store_true',help='实时草稿跳过强制对齐，时间戳仅表示音频块范围')
     p.add_argument('--stream-events',action='store_true')
+    p.add_argument('--context-file')
     args=p.parse_args()
     if args.stream_events and not args.draft:p.error('--stream-events 必须配合 --draft')
     for directory in (args.model,args.aligner):
@@ -85,7 +86,7 @@ def main():
     mx.random.seed(0)
     output=Path(args.output);audio_hash=hashlib.sha256(Path(args.audio).read_bytes()).hexdigest()
     model=load(str(Path(args.model).resolve()))
-    text,attempts=transcribe_streamed(model,samples,rate) if args.stream_events else transcribe_adaptive(model,samples,rate)
+    text,attempts=transcribe_streamed(model,samples,rate,context=Path(args.context_file).read_text()[:5000] if args.context_file else "") if args.stream_events else transcribe_adaptive(model,samples,rate)
     raw={'engine':'qwen','model':Path(args.model).name,'text':text,'duration':duration,'asr_attempts':attempts,'audio_hash':audio_hash,'alignment':[]}
     output.with_suffix('.raw.json').write_text(json.dumps(raw,ensure_ascii=False,indent=2))
     del model;gc.collect();mx.clear_cache()

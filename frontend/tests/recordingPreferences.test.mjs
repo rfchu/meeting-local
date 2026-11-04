@@ -5,7 +5,7 @@ const compiled=await build({entryPoints:[new URL('../src/features/notes/recordin
 const {readRecordingPreferences,saveRecordingPreferences,DEFAULT_RECORDING_PREFERENCES,transcriptionOptions}=await import('data:text/javascript;base64,'+Buffer.from(compiled.outputFiles[0].text).toString('base64'));
 test('Last used source, engine, streaming and completion choice survive reopening',()=>{
   let raw=null;const storage={getItem:()=>raw,setItem:(_,value)=>{raw=value;}};
-  const selected={version:1,keepAwake:true,autoProcess:true,postGoal:"transcript",captureSource:'macos-both',draftEngine:'qwen',streamEnabled:true,responsiveMode:true,completionMode:'none'};
+  const selected={...DEFAULT_RECORDING_PREFERENCES,version:1,keepAwake:true,autoProcess:true,postGoal:"transcript",captureSource:'macos-both',draftEngine:'qwen',streamEnabled:true,responsiveMode:true,completionMode:'none'};
   assert.equal(saveRecordingPreferences(storage,selected),true);
   assert.deepEqual(readRecordingPreferences(storage),selected);
 });
@@ -35,4 +35,15 @@ test('post-recording automatic handoff defaults on and persists explicit opt-out
 test('automatic minutes goal persists without changing the legacy default',()=>{
   assert.equal(readRecordingPreferences({getItem:()=>JSON.stringify({version:1,postGoal:'minutes'})}).postGoal,'minutes');
   assert.equal(readRecordingPreferences({getItem:()=>JSON.stringify({version:1})}).postGoal,'transcript');
+});
+test('Context and optional local correction choices persist; old settings retain explicit responsive choice',()=>{
+  const choices={...DEFAULT_RECORDING_PREFERENCES,contextEnabled:false,recognitionTerms:'听记、Qwen',correctionEnabled:true,correctionProfileId:'local-fixture',responsiveMode:false};
+  let raw;const storage={getItem:()=>raw,setItem:(_,value)=>raw=value};
+  saveRecordingPreferences(storage,choices);
+  assert.deepEqual(readRecordingPreferences(storage),choices);
+  const legacy=readRecordingPreferences({getItem:()=>JSON.stringify({version:1,responsiveMode:false})});
+  assert.equal(legacy.responsiveMode,false);
+  assert.equal(legacy.contextEnabled,true);
+  assert.equal(legacy.correctionEnabled,false);
+  assert.equal(legacy.correctionProfileId,'');
 });
