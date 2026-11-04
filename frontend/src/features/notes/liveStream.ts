@@ -1,5 +1,22 @@
+export interface DecoderMetrics {
+  mode?: "full" | "prefix";
+  prefix_tokens?: number;
+  generated_tokens?: number;
+  feature_cache_hit?: boolean;
+  feature_cache_bytes?: number;
+  fallback?: boolean;
+  final_verified?: boolean;
+  kv_cache_reused?: boolean;
+}
+export interface DecoderTotals {
+  prefix_rounds?: number;
+  feature_hits?: number;
+  fallbacks?: number;
+}
 import type { LiveDraftSegment } from "../../types";
 export interface LiveStreamResult {
+  decoder?: DecoderMetrics;
+  decoder_totals?: DecoderTotals;
   confirmed?: boolean;
   first_text_ms?: number | null;
   segments: LiveDraftSegment[];

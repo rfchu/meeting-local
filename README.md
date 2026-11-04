@@ -369,3 +369,14 @@ npm --prefix frontend run test:stream
 ```bash
 PYTHONPATH=. .venv/bin/python scripts/live_correction_ui_fixture.py
 ```
+
+### MLX 前缀续写与编码复用
+
+在“采集与识别 → 实时识别”开启短片段模式后，可选择“前缀续写与尾部回退（试用）”，选择会记住。只有同一录音窗口、相同上下文、音频严格延长、已有至少两轮连续预览且前缀一致时，才保留前缀，并回退至少 8 个 token 重新生成尾部。模型进程重启、更换窗口、音频不一致时重新完整识别。最终确认始终关闭前缀约束并完整复核；续写异常时回退到整窗解码，私有接口不兼容时改用原始 MLX 路径。
+
+常驻进程只缓存最近一份完全相同音频的编码结果，最多 64 MiB。该缓存可用于预览后对相同音频的完整复核；音频增长后重新编码，每轮均重建 KV 状态。运行详情显示本轮模式、保留 token 数、缓存命中与回退次数。它不代表跨音频的增量编码或 KV 复用。
+
+合成测试音频 A/B 基准（不使用应用数据库，不应传入真实会议录音作为公开验收材料）：
+```bash
+PYTHONPATH=. .venv/bin/python scripts/benchmark_qwen_prefix.py --audio synthetic-16k.wav --output benchmark.json
+```

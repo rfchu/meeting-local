@@ -1,3 +1,4 @@
+import type { SessionSnapshot } from "./liveSession";
 import { useLiveSession } from "./useLiveSession";
 import { useLiveCorrections } from "./useLiveCorrections";
 import LiveCorrectionReview from "./LiveCorrectionReview";
@@ -193,6 +194,8 @@ export default function RecordingDialog({
       lagMs: null as number | null,
       revisions: 0,
     }),
+    [decodeReport, setDecodeReport] = useState<SessionSnapshot["metrics"]>({}),
+    [prefixEnabled, setPrefixEnabled] = useState(preferences.prefixEnabled),
     [contextEnabled, setContextEnabled] = useState(preferences.contextEnabled),
     [recognitionTerms, setRecognitionTerms] = useState(
       preferences.recognitionTerms,
@@ -284,6 +287,7 @@ export default function RecordingDialog({
         draftEngine,
         streamEnabled,
         contextEnabled,
+        prefixEnabled,
         recognitionTerms,
         correctionEnabled,
         correctionProfileId,
@@ -303,6 +307,7 @@ export default function RecordingDialog({
     streamEnabled,
     responsiveMode,
     contextEnabled,
+    prefixEnabled,
     recognitionTerms,
     correctionEnabled,
     correctionProfileId,
@@ -320,9 +325,11 @@ export default function RecordingDialog({
       responsive: responsiveMode,
       context_enabled: contextEnabled,
       terms: recognitionTerms,
+      prefix_enabled: prefixEnabled,
     },
     (event) => {
       if (event.type === "snapshot") {
+        setDecodeReport(event.metrics);
         setDrafts(event.segments);
         setPartialDraft(
           "text" in event.partial ? (event.partial as LiveDraftSegment) : null,
@@ -334,9 +341,14 @@ export default function RecordingDialog({
             : "后端持续识别 · 已同步保存结果",
         );
       } else if (event.type === "partial") {
+        if (event.metrics) setDecodeReport(event.metrics);
         updatePartial(event.partial);
         setDraftStatus("实时预览 · 浅色尾部仍可修订");
       } else if (event.type === "final") {
+        setDecodeReport({
+          decoder: event.result.decoder,
+          decoder_totals: event.result.decoder_totals,
+        });
         setPartialDraft(null);
         nativeDraftOffsetRef.current = event.result.next_offset;
         trackResult(event.result, event.result.next_offset);
@@ -425,6 +437,7 @@ export default function RecordingDialog({
     setStreamEnabled(true);
     setResponsiveMode(entry.config.responsive);
     setContextEnabled(entry.config.context_enabled);
+    setPrefixEnabled(entry.config.prefix_enabled !== false);
     setRecognitionTerms(entry.config.terms);
     accruedRef.current = session.duration;
     activeSinceRef.current = performance.now();
@@ -980,6 +993,7 @@ export default function RecordingDialog({
     setSettingsOpen(false);
     persistPreferences();
     setPartialDraft(null);
+    setDecodeReport({});
     priorPreviewRef.current = null;
     setLiveMetrics({
       firstMs: null,
@@ -1842,6 +1856,22 @@ export default function RecordingDialog({
           </div>{" "}
           <p>{draftStatus}</p>
           {managedMode && <p>{backendLive.connection}</p>}
+          {managedMode && decodeReport.decoder?.mode && (
+            <p className="native-capture-hint">
+              本轮
+              {decodeReport.decoder.mode === "prefix"
+                ? `保留 ${decodeReport.decoder.prefix_tokens || 0} 个前缀 token，续写尾部`
+                : "完整识别窗口"}
+              {decodeReport.decoder.feature_cache_hit
+                ? " · 复用相同音频编码"
+                : ""}
+              {decodeReport.decoder.final_verified ? " · 确认前已完整复核" : ""}
+              <br />
+              累计前缀续写 {decodeReport.decoder_totals?.prefix_rounds || 0} 次
+              · 编码缓存命中 {decodeReport.decoder_totals?.feature_hits || 0} 次
+              · 回退 {decodeReport.decoder_totals?.fallbacks || 0} 次
+            </p>
+          )}
           {draftEngine === "qwen" && streamEnabled && (
             <p className="native-capture-hint">
               {liveMetrics.firstMs !== null
@@ -2205,6 +2235,23 @@ export default function RecordingDialog({
                       ? "约 3 秒开始预览，后端自适应调度；静音、暂停或最长 15 秒后确认。能量静音检测可能提前分段，建议与标准模式对比。"
                       : "标准模式：约 15 秒一段，完成后确认。"}
                   </p>
+                  {responsiveMode && (
+                    <label className="capture-source">
+                      <input
+                        type="checkbox"
+                        aria-label="前缀续写与尾部回退"
+                        checked={prefixEnabled}
+                        disabled={state !== "idle"}
+                        onChange={(event) =>
+                          setPrefixEnabled(event.target.checked)
+                        }
+                      />
+                      前缀续写与尾部回退（试用）
+                      <small>
+                        连续预览稳定后保留前缀，重新生成尾部；确认时完整复核。音频相同可复用编码，音频增长后重新编码。
+                      </small>
+                    </label>
+                  )}
                   <div className="capture-preflight">
                     <span>
                       Qwen 模型：

@@ -2,6 +2,7 @@
 import argparse,json,gc,sys,time
 from pathlib import Path
 from qwen_transcribe import transcribe_streamed
+from qwen_stream_decoder import MLXStreamDecoder,PrefixHistory,decode_with_fallback
 
 def main():
     parser=argparse.ArgumentParser();parser.add_argument('--model',required=True);args=parser.parse_args()
@@ -9,7 +10,7 @@ def main():
     import mlx.core as mx
     import soundfile as sf
     from mlx_audio.stt import load
-    started=time.monotonic();model=load(str(Path(args.model).resolve()))
+    started=time.monotonic();model=load(str(Path(args.model).resolve()));decoder=MLXStreamDecoder();history=PrefixHistory()
     def send(value):print(json.dumps(value,ensure_ascii=False),flush=True)
     send({'type':'ready','load_ms':round((time.monotonic()-started)*1000),'memory_gb':mx.get_active_memory()/1e9,'peak_memory_gb':mx.get_peak_memory()/1e9})
     for line in sys.stdin:
@@ -18,12 +19,23 @@ def main():
             samples,rate=sf.read(request['audio'],dtype='float32')
             if rate!=16000 or samples.ndim!=1 or not .5<=len(samples)/rate<=45:raise RuntimeError('常驻识别只接受 0.5–45 秒单声道 16kHz 音频')
             mx.random.seed(0)
-            text,attempts=transcribe_streamed(model,samples,rate,context=str(request.get('context',''))[:5000],emit=lambda event:send({**event,'id':rid}))
+            context=str(request.get('context',''))[:5000];continuation=request.get('continuation') or {}
+            prefix=history.choose(model._tokenizer,continuation,samples.tobytes(),context) if decoder.enabled else []
+            def decode(adapter,prefix_ids):
+                mx.random.seed(0)
+                return transcribe_streamed(model,samples,rate,context=context,decoder=adapter,prefix_tokens=prefix_ids,emit=lambda event:send({**event,'id':rid}))
+            text,attempts,prefix,fallback_reason=decode_with_fallback(decode,decoder,prefix)
+            if fallback_reason:history.clear()
+            metrics={**(decoder.metrics if decoder.enabled else {}),'mode':'prefix' if prefix else 'full','prefix_tokens':len(prefix),
+                     'generated_tokens':attempts[0]['generation_tokens'],'fallback':bool(fallback_reason),'fallback_reason':fallback_reason,
+                     'final_verified':bool(continuation.get('confirmed',True)) and not prefix}
+            history.update(continuation,samples.tobytes(),context,text)
             duration=len(samples)/rate
             send({'type':'qwen_final','id':rid,'segments':[{'start':0,'end':duration,'text':text}] if text else [],
-                  'peak_memory_gb':mx.get_peak_memory()/1e9,'tokens':attempts[0]['generation_tokens']})
+                  'peak_memory_gb':mx.get_peak_memory()/1e9,'tokens':attempts[0]['generation_tokens'],'decoder':metrics})
             del samples;gc.collect();mx.clear_cache()
         except Exception as error:
+            decoder.clear();history.clear()
             send({'type':'qwen_error','id':rid,'message':str(error)});gc.collect();mx.clear_cache()
 
 if __name__=='__main__':main()

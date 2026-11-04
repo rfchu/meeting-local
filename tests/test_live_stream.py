@@ -21,7 +21,7 @@ time.sleep(float(sys.argv[2]))
 print(json.dumps({'type':'qwen_partial','text':'会议确认交付。'},ensure_ascii=False),flush=True)
 if sys.argv[3]=='failure':sys.exit(1)
 text='不一致' if sys.argv[3]=='mismatch' else '会议确认交付。'
-output.write_text(json.dumps({'segments':[{'start':0,'end':15,'text':text}]}))
+output.write_text(json.dumps({'segments':[{'start':0,'end':15,'text':text}],'decoder':{'mode':'prefix','final_verified':False} if sys.argv[3]=='unsafe_prefix' else {}}))
 """
         return [sys.executable,'-c',script,str(output),str(self.delay),self.mode]
 
@@ -160,3 +160,9 @@ def test_context_hints_are_part_of_cache_identity_and_return_reviewable_ranges(s
     first=request('听记');assert first['context_used'] and first['segments'][0]['live_range_id']
     assert request('听记')['cached'] and provider.calls==1
     assert not request('新术语')['cached'] and provider.calls==2
+
+def test_prefix_only_output_cannot_be_committed_as_confirmed_coverage(setup):
+    client,rid,provider=setup;provider.mode='unsafe_prefix'
+    response=events(client,rid)
+    assert response[-1]['type']=='error' and '全量复核' in response[-1]['message']
+    assert client.get(f'/api/recordings/{rid}/live-results?engine=qwen').json()['covered_seconds']==0

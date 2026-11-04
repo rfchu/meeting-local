@@ -47,3 +47,7 @@ test('Context and optional local correction choices persist; old settings retain
   assert.equal(legacy.correctionEnabled,false);
   assert.equal(legacy.correctionProfileId,'');
 });
+test('Prefix continuation defaults on for old preferences and remembers explicit opt-out',()=>{
+  assert.equal(readRecordingPreferences({getItem:()=>JSON.stringify({version:1})}).prefixEnabled,true);
+  assert.equal(readRecordingPreferences({getItem:()=>JSON.stringify({version:1,prefixEnabled:false})}).prefixEnabled,false);
+});

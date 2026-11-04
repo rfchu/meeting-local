@@ -5,6 +5,7 @@ import anyio
 from .db import uid
 
 class QwenResident:
+    supports_continuation=True
     def __init__(self,root,idle_seconds=180):
         self.root=Path(root);self.idle_seconds=idle_seconds;self.lock=asyncio.Lock()
         self.process=None;self.log=None;self.identity=None;self.ready=False;self.busy=False
@@ -76,12 +77,12 @@ class QwenResident:
             try:await self._ensure(provider)
             finally:self.busy=False;self.last_used=time.monotonic()
             return self.status()
-    async def generate(self,provider,audio,context=""):
+    async def generate(self,provider,audio,context="",continuation=None):
         async with self.lock:
             self.busy=True;completed=False;rid=uid()
             try:
                 await self._ensure(provider)
-                self.process.stdin.write((json.dumps({'id':rid,'audio':str(audio),'context':context})+'\n').encode());await self.process.stdin.drain()
+                self.process.stdin.write((json.dumps({'id':rid,'audio':str(audio),'context':context,'continuation':continuation})+'\n').encode());await self.process.stdin.drain()
                 async with asyncio.timeout(90):
                     while line:=await self.process.stdout.readline():
                         try:event=json.loads(line)

@@ -177,6 +177,7 @@ class NativeDraftInput(BaseModel):
     responsive: bool=False
     window_seconds: Literal[5,10,15]=15
 class LiveSessionInput(BaseModel):
+    prefix_enabled: bool=True
     responsive: bool=True
     context_enabled: bool=True
     terms: str=Field(default='',max_length=1000)

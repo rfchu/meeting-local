@@ -63,13 +63,14 @@ class LiveSessions:
                 'source':row['source'],'config':json.loads(row['config'])}
     async def start(self,rid,config):
         if self.closed:raise ValueError('服务正在关闭')
+        config={'prefix_enabled':True,**config}
         session=self.recordings.read(rid)
         if session['state']=='completed' or self.store.one('SELECT id FROM meetings WHERE id=?',(rid,)):raise ValueError('录音已保存，不能重启实时识别')
         source='native' if session.get('source')=='macos' else 'browser'
         if source=='native' and self.native.status(rid,touch=False).get('state') not in ('recording','paused'):raise ValueError('原生采集未运行，已有结果仍可查看')
         row=self.store.one('SELECT * FROM live_sessions WHERE recording_id=?',(rid,))
         if row and row['status']=='stopped':raise ValueError('实时会话已结束，已有结果仍可查看')
-        if row and json.loads(row['config'])!=config:raise ValueError('正在运行的实时会话不能更换识别配置')
+        if row and {'prefix_enabled':True,**json.loads(row['config'])}!=config:raise ValueError('正在运行的实时会话不能更换识别配置')
         if not row:
             # Adopt old completed ranges without re-recognizing them after an upgrade.
             ranges,_=plan_ranges(self.cache.snapshot(rid,'qwen'),86400)
@@ -139,6 +140,7 @@ class LiveSessions:
                 'payload':pcm_wav(raw),'confirmed':confirmed}
     async def run(self,rid):
         previous='';stable='';preview_end=0;next_target=3;errors=0
+        totals=dict(json.loads(self.row(rid)['metrics']).get('decoder_totals',{}))
         try:
             while not self.closed:
                 row=self.row(rid)
@@ -165,7 +167,8 @@ class LiveSessions:
                 if draining:window['confirmed']=True
                 payload=window.pop('payload');window.pop('silent',None);result=None;failure=None;last_sent=0
                 iterator=qwen_events(self.provider(),self.cache,self.asr_lock,payload,window['offset'],rid,row['source'],self.store.root,window,
-                    resident=self.resident,confirmed=window['confirmed'],context_enabled=config['context_enabled'],terms=config['terms'])
+                    resident=self.resident,confirmed=window['confirmed'],context_enabled=config['context_enabled'],terms=config['terms'],continuation={'key':rid+':'+str(round(window['offset']*RATE)),'enabled':config.get('prefix_enabled',True) and config['responsive'],
+                    'confirmed':window['confirmed'],'previous_text':previous,'stable_text':stable})
                 async with aclosing(iterator):
                     async for line in iterator:
                         event=json.loads(line)
@@ -181,7 +184,12 @@ class LiveSessions:
                     await asyncio.sleep(min(8,2**min(errors,3)));continue
                 errors=0;text=''.join(s['text'] for s in result['segments'])
                 stable=stable_prefix(previous,text);previous=text;preview_end=end
-                metrics={k:result.get(k) for k in ('processing_ms','first_text_ms','duration','confirmed','skipped_seconds')}
+                metrics={k:result.get(k) for k in ('processing_ms','first_text_ms','duration','confirmed','skipped_seconds','decoder')}
+                decoder=result.get('decoder',{})
+                if decoder:
+                    for key,hit in [('prefix_rounds',decoder.get('mode')=='prefix'),('feature_hits',decoder.get('feature_cache_hit',False)),('fallbacks',decoder.get('fallback',False))]:
+                        totals[key]=totals.get(key,0)+int(bool(hit))
+                metrics['decoder_totals']=dict(totals);result['decoder_totals']=dict(totals)
                 metrics['preview_step_seconds']=preview_step(result['processing_ms'])
                 if result['confirmed']:
                     self.checkpoint(rid,cursor=end,partial={},metrics=metrics)

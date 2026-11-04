@@ -67,7 +67,7 @@ class QwenMLX:
         return Path(self.python).is_file() and self.runtime.is_file() and self.model_ready(self.model) and self.model_ready(self.aligner)
 
     def identity(self):
-        files=[Path(self.python),self.runtime,BASE/'scripts/qwen_transcribe.py',BASE/'scripts/qwen_live_server.py',BASE/'app/alignment.py']
+        files=[Path(self.python),self.runtime,BASE/'scripts/qwen_transcribe.py',BASE/'scripts/qwen_live_server.py',BASE/'scripts/qwen_stream_decoder.py',BASE/'app/alignment.py']
         for directory in (self.model,self.aligner):
             path=Path(directory)
             files.extend(p for p in sorted(path.glob('*')) if p.suffix in ('.json','.safetensors','.txt','.model'))

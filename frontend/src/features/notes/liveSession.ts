@@ -1,9 +1,14 @@
 import type { LiveDraftSegment } from "../../types";
-import type { LiveStreamResult } from "./liveStream";
+import type {
+  DecoderMetrics,
+  DecoderTotals,
+  LiveStreamResult,
+} from "./liveStream";
 export interface SessionConfig {
   responsive: boolean;
   context_enabled: boolean;
   terms: string;
+  prefix_enabled?: boolean;
 }
 export interface SessionSnapshot {
   type: "snapshot";
@@ -19,11 +24,18 @@ export interface SessionSnapshot {
     first_text_ms?: number | null;
     duration?: number;
     preview_step_seconds?: number;
+    decoder?: DecoderMetrics;
+    decoder_totals?: DecoderTotals;
   };
 }
 export type SessionEvent =
   | SessionSnapshot
-  | { type: "partial"; seq: number; partial: LiveDraftSegment }
+  | {
+      type: "partial";
+      seq: number;
+      partial: LiveDraftSegment;
+      metrics?: SessionSnapshot["metrics"];
+    }
   | {
       type: "final";
       seq: number;

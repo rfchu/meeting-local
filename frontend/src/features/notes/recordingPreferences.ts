@@ -2,6 +2,7 @@ export type CompletionMode = "quick" | "full" | "none";
 export interface RecordingPreferences {
   version: 1;
   contextEnabled: boolean;
+  prefixEnabled: boolean;
   recognitionTerms: string;
   correctionEnabled: boolean;
   correctionProfileId: string;
@@ -18,6 +19,7 @@ export const RECORDING_PREFERENCES_KEY = "tingji.recording.preferences.v1";
 export const DEFAULT_RECORDING_PREFERENCES: RecordingPreferences = {
   version: 1,
   contextEnabled: true,
+  prefixEnabled: true,
   recognitionTerms: "",
   correctionEnabled: false,
   correctionProfileId: "",
@@ -41,6 +43,8 @@ export function readRecordingPreferences(
       return { ...DEFAULT_RECORDING_PREFERENCES };
     return {
       ...DEFAULT_RECORDING_PREFERENCES,
+      prefixEnabled:
+        typeof value.prefixEnabled === "boolean" ? value.prefixEnabled : true,
       contextEnabled:
         typeof value.contextEnabled === "boolean" ? value.contextEnabled : true,
       recognitionTerms:
