@@ -23,7 +23,7 @@ class SyntheticCapture(NativeCapture):
     def write_status(self,rid):
         status={'state':self.states.get(rid,'interrupted'),'duration':12,'error':'','system_frames':192000,'system_levels':[.02,.05,.1,.04]*18,'microphone_levels':[]}
         self.recordings.write(self.recordings.folder(rid)/'capture.json',status);return status
-    def status(self,rid):
+    def status(self,rid,touch=True):
         status=self.write_status(rid)
         status['health']={'stalled':False,'tracks':[{'name':'system','state':'paused' if status['state']=='paused' else 'receiving','saved_seconds':12}]}
         return status

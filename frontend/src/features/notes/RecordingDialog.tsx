@@ -1,3 +1,4 @@
+import { useLiveSession } from "./useLiveSession";
 import { useLiveCorrections } from "./useLiveCorrections";
 import LiveCorrectionReview from "./LiveCorrectionReview";
 import RecordingSetupBar from "./RecordingSetupBar";
@@ -32,7 +33,7 @@ import LiveDraftList from "./LiveDraftList";
 import { useRecordingAwake } from "./useRecordingAwake";
 import { watchRecordingRecovery } from "./recordingRecovery";
 import { queueAwake } from "./awakeQueue";
-import { responsivePlan, takeFrames } from "./rollingAudio";
+import { takeFrames } from "./rollingAudio";
 import {
   bufferRecording,
   flushRecording,
@@ -260,7 +261,6 @@ export default function RecordingDialog({
     pcmSamplesRef = useRef(0),
     draftOffsetRef = useRef(0),
     nativeDraftOffsetRef = useRef(0),
-    nativePreviewGoalRef = useRef<5 | 10 | 15>(5),
     priorPreviewRef = useRef<LiveDraftSegment | null>(null),
     lastVoiceSampleRef = useRef(0),
     lastPreviewSampleRef = useRef(0),
@@ -312,6 +312,55 @@ export default function RecordingDialog({
     keepAwake,
   ]);
   const correctionSessionId = nativeSessionId || sessionRef.current?.id;
+  const managedMode = draftEngine === "qwen" && streamEnabled;
+  const backendLive = useLiveSession(
+    correctionSessionId,
+    managedMode && ["recording", "paused"].includes(state),
+    {
+      responsive: responsiveMode,
+      context_enabled: contextEnabled,
+      terms: recognitionTerms,
+    },
+    (event) => {
+      if (event.type === "snapshot") {
+        setDrafts(event.segments);
+        setPartialDraft(
+          "text" in event.partial ? (event.partial as LiveDraftSegment) : null,
+        );
+        nativeDraftOffsetRef.current = event.cursor;
+        setDraftStatus(
+          event.status === "stopped"
+            ? "实时会话已结束"
+            : "后端持续识别 · 已同步保存结果",
+        );
+      } else if (event.type === "partial") {
+        updatePartial(event.partial);
+        setDraftStatus("实时预览 · 浅色尾部仍可修订");
+      } else if (event.type === "final") {
+        setPartialDraft(null);
+        nativeDraftOffsetRef.current = event.result.next_offset;
+        trackResult(event.result, event.result.next_offset);
+        setDrafts((old) => [
+          ...old,
+          ...event.result.segments.filter(
+            (s) =>
+              !old.some(
+                (x) =>
+                  x.live_range_id === s.live_range_id &&
+                  x.live_segment_index === s.live_segment_index,
+              ),
+          ),
+        ]);
+        setDraftStatus(
+          event.result.skipped_seconds > 0
+            ? "已跟随最近语音，积压范围保留待补识别"
+            : "本段已确认并保存",
+        );
+      } else if (event.type === "status") setDraftStatus(event.message);
+    },
+    setDraftStatus,
+  );
+
   const liveCorrection = useLiveCorrections(
     correctionSessionId,
     drafts,
@@ -345,6 +394,46 @@ export default function RecordingDialog({
       live_correction_id: correction.id,
     };
   });
+  const [runningSessions, setRunningSessions] = useState<
+    Awaited<ReturnType<typeof api.liveSessions>>
+  >([]);
+  useEffect(() => {
+    if (state !== "idle") return;
+    let valid = true;
+    api
+      .liveSessions()
+      .then((rows) => {
+        if (valid) setRunningSessions(rows);
+      })
+      .catch(() => {});
+    return () => {
+      valid = false;
+    };
+  }, [state]);
+  const attachRunning = (
+    entry: Awaited<ReturnType<typeof api.liveSessions>>[number],
+  ) => {
+    const session = entry.recording;
+    sessionRef.current = session;
+    notesRef.current = session.notes || [];
+    setNotes(session.notes || []);
+    setBrief(session.brief || emptyBrief);
+    setCaptureSource(
+      session.include_microphone ? "macos-both" : "macos-system",
+    );
+    setDraftEngine("qwen");
+    setStreamEnabled(true);
+    setResponsiveMode(entry.config.responsive);
+    setContextEnabled(entry.config.context_enabled);
+    setRecognitionTerms(entry.config.terms);
+    accruedRef.current = session.duration;
+    activeSinceRef.current = performance.now();
+    draftEnabledRef.current = true;
+    stateRef.current = "requesting";
+    setState("requesting");
+    setNativeSessionId(session.id);
+    setRunningSessions([]);
+  };
   const handingOff = useRef(false);
   const handoffSaved = async (
     id: string,
@@ -526,9 +615,12 @@ export default function RecordingDialog({
         setCaptureHealth(status.health);
         setSystemLevels(status.system_levels || []);
         setMicrophoneLevels(status.microphone_levels || []);
-        if (status.state === "recording" && stateRef.current === "requesting") {
-          stateRef.current = "recording";
-          setState("recording");
+        if (
+          ["recording", "paused"].includes(status.state) &&
+          stateRef.current === "requesting"
+        ) {
+          stateRef.current = status.state as "recording" | "paused";
+          setState(status.state as "recording" | "paused");
         }
         setSaveStatus(
           status.state === "starting"
@@ -561,10 +653,9 @@ export default function RecordingDialog({
     };
   }, [state, captureSource, nativeSessionId]);
   useEffect(() => {
-    if (!nativeSessionId || captureSource === "browser" || !sessionRef.current)
-      return;
+    if (!nativeSessionId || captureSource === "browser" || managedMode) return;
     let active = true;
-    const pollDraft = async () => {
+    const poll = async () => {
       if (
         nativeDraftBusyRef.current ||
         !["recording", "paused"].includes(stateRef.current)
@@ -572,78 +663,34 @@ export default function RecordingDialog({
         return;
       nativeDraftBusyRef.current = true;
       try {
-        const controller = new AbortController();
-        streamAbortRef.current = controller;
-        const result =
-          draftEngine === "qwen" && streamEnabled
-            ? await api.nativeDraftStream(
-                nativeSessionId,
-                nativeDraftOffsetRef.current,
-                (partial) => {
-                  if (active && draftEnabledRef.current) {
-                    updatePartial(partial);
-                    setDraftStatus("Qwen 正在逐步生成 · 部分文字尚未确认");
-                  }
-                },
-                controller.signal,
-                responsiveMode,
-                responsiveMode ? nativePreviewGoalRef.current : 15,
-                contextEnabled,
-                recognitionTerms,
-              )
-            : await api.nativeDraft(
-                nativeSessionId,
-                nativeDraftOffsetRef.current,
-                draftEngine,
-              );
-        if (!active || !draftEnabledRef.current) return;
-        if (result.ready) {
-          trackResult(result, result.next_offset);
-          if ("confirmed" in result && result.confirmed === false) {
-            if (result.segments[0]) setPartialDraft(result.segments[0]);
-            nativePreviewGoalRef.current = Math.min(
-              15,
-              nativePreviewGoalRef.current + 5,
-            ) as 5 | 10 | 15;
-            setDraftStatus("临时尾部已更新 · 等待更多上下文或静音确认");
-          } else {
-            setPartialDraft(null);
-            nativePreviewGoalRef.current = 5;
-            nativeDraftOffsetRef.current = result.next_offset;
-            if (result.segments.length)
-              setDrafts((old) => [...old, ...result.segments]);
-            setDraftStatus(
-              result.skipped_seconds > 0
-                ? `积压跳过 ${Math.round(result.skipped_seconds)}s，原音保留`
-                : "本段已确认",
-            );
-          }
-        }
+        const result = await api.nativeDraft(
+          nativeSessionId,
+          nativeDraftOffsetRef.current,
+          draftEngine,
+        );
+        if (!active || !draftEnabledRef.current || !result.ready) return;
+        trackResult(result, result.next_offset);
+        nativeDraftOffsetRef.current = result.next_offset;
+        setDrafts((old) => [...old, ...result.segments]);
+        setDraftStatus(
+          result.skipped_seconds > 0
+            ? "已跟随最近语音，积压音频保留"
+            : "本段已确认",
+        );
       } catch (error) {
-        if (active && draftEnabledRef.current) setPartialDraft(null);
-        if (active && draftEnabledRef.current)
-          setDraftStatus(
-            `暂时不可用 · ${(error as Error).message}；正式转写不受影响`,
-          );
+        if (active)
+          setDraftStatus(`实时识别暂时不可用 · ${(error as Error).message}`);
       } finally {
         nativeDraftBusyRef.current = false;
       }
     };
-    void pollDraft();
-    const timer = window.setInterval(() => void pollDraft(), 2000);
+    void poll();
+    const timer = window.setInterval(() => void poll(), 2000);
     return () => {
       active = false;
       window.clearInterval(timer);
     };
-  }, [
-    nativeSessionId,
-    captureSource,
-    draftEngine,
-    streamEnabled,
-    responsiveMode,
-    contextEnabled,
-    recognitionTerms,
-  ]);
+  }, [nativeSessionId, captureSource, draftEngine, managedMode]);
   useEffect(() => {
     if (!sessionRef.current || state === "idle") return;
     let active = true;
@@ -811,96 +858,48 @@ export default function RecordingDialog({
   const queueDraft = (final = false) => {
     const context = audioContextRef.current,
       sampleCount = pcmSamplesRef.current;
-    if (!context) return draftQueueRef.current;
-    const responsive =
-      responsiveMode && draftEngine === "qwen" && streamEnabled;
-    const plan = responsive
-      ? responsivePlan(
-          sampleCount,
-          context.sampleRate,
-          lastVoiceSampleRef.current,
-          lastPreviewSampleRef.current,
-          final,
-        )
-      : sampleCount >= context.sampleRate * (final ? 0.5 : 12)
-        ? { count: sampleCount, confirmed: true }
-        : null;
-    if (!plan) return draftQueueRef.current;
-    const { selected, remaining } = takeFrames(
-      pcmFramesRef.current,
-      plan.count,
+    if (
+      !context ||
+      sampleCount < context.sampleRate * (final ? 0.5 : managedMode ? 2 : 15)
+    )
+      return draftQueueRef.current;
+    const count = Math.min(
+      sampleCount,
+      context.sampleRate * (managedMode ? 10 : 15),
     );
-    if (plan.confirmed) {
-      pcmFramesRef.current = remaining;
-      pcmSamplesRef.current -= plan.count;
-      lastVoiceSampleRef.current = Math.max(
-        0,
-        lastVoiceSampleRef.current - plan.count,
-      );
-      lastPreviewSampleRef.current = 0;
-    } else lastPreviewSampleRef.current = plan.count;
+    const { selected, remaining } = takeFrames(pcmFramesRef.current, count);
+    pcmFramesRef.current = remaining;
+    pcmSamplesRef.current -= count;
     const encoded = encodeLiveWav(selected, context.sampleRate),
       offset = draftOffsetRef.current;
-    if (plan.confirmed) draftOffsetRef.current += encoded.duration;
+    draftOffsetRef.current += encoded.duration;
     const file = new File([encoded.blob], `live-${offset.toFixed(1)}.wav`, {
       type: "audio/wav",
     });
     draftPendingRef.current++;
-    setDraftStatus("正在识别最近一段…");
     const task = draftQueueRef.current.then(async () => {
-      if (!draftEnabledRef.current) {
-        draftPendingRef.current--;
-        return;
-      }
       try {
-        const controller = new AbortController();
-        streamAbortRef.current = controller;
-        const result =
-          draftEngine === "qwen" && streamEnabled
-            ? await api.liveTranscribeStream(
-                file,
-                offset,
-                sessionRef.current?.id,
-                (partial) => {
-                  if (
-                    draftEnabledRef.current &&
-                    (!responsive ||
-                      plan.confirmed ||
-                      offset >= draftOffsetRef.current - 0.01)
-                  ) {
-                    updatePartial(partial);
-                    setDraftStatus("Qwen 正在逐步生成 · 部分文字尚未确认");
-                  }
-                },
-                controller.signal,
-                plan.confirmed,
-                contextEnabled,
-                recognitionTerms,
-              )
-            : await api.liveTranscribe(
-                file,
-                offset,
-                draftEngine,
-                sessionRef.current?.id,
-              );
-        if (!draftEnabledRef.current) return;
-        trackResult(result, offset + encoded.duration);
-        if ("confirmed" in result && result.confirmed === false) {
-          if (offset >= draftOffsetRef.current - 0.01 && result.segments[0])
-            setPartialDraft(result.segments[0]);
-          setDraftStatus("临时尾部已更新 · 等待更多上下文或静音确认");
+        if (!draftEnabledRef.current || !sessionRef.current) return;
+        if (managedMode) {
+          await backendLive.ensure(sessionRef.current.id);
+          await api.uploadLiveAudio(sessionRef.current.id, file, offset);
         } else {
-          setPartialDraft(null);
-          if (result.segments.length)
-            setDrafts((old) => [...old, ...result.segments]);
-          setDraftStatus(
-            result.segments.length ? "本段已确认" : "这一段没有识别到语音",
+          const result = await api.liveTranscribe(
+            file,
+            offset,
+            draftEngine,
+            sessionRef.current.id,
           );
+          if (!draftEnabledRef.current) return;
+          trackResult(result, offset + encoded.duration);
+          setDrafts((old) => [...old, ...result.segments]);
+          setDraftStatus("本段已确认");
         }
       } catch (error) {
-        if (draftEnabledRef.current) setPartialDraft(null);
         if (draftEnabledRef.current)
-          setDraftStatus(`暂时不可用 · ${(error as Error).message}`);
+          setDraftStatus(
+            `实时音频同步暂时不可用 · ${(error as Error).message}；完整录音已保留`,
+          );
       } finally {
         draftPendingRef.current--;
         if (
@@ -947,16 +946,8 @@ export default function RecordingDialog({
         setDraftStatus("识别积压，优先跟随最近语音；完整录音已保留");
       }
       if (
-        responsiveMode && draftEngine === "qwen" && streamEnabled
-          ? draftPendingRef.current < 1 &&
-            responsivePlan(
-              pcmSamplesRef.current,
-              context.sampleRate,
-              lastVoiceSampleRef.current,
-              lastPreviewSampleRef.current,
-            ) !== null
-          : pcmSamplesRef.current >= context.sampleRate * 15 &&
-            draftPendingRef.current < 2
+        pcmSamplesRef.current >= context.sampleRate * (managedMode ? 2 : 15) &&
+        draftPendingRef.current < 2
       )
         void queueDraft();
     };
@@ -1015,7 +1006,6 @@ export default function RecordingDialog({
         activeSinceRef.current = performance.now();
         draftEnabledRef.current = true;
         nativeDraftOffsetRef.current = 0;
-        nativePreviewGoalRef.current = 5;
         setDraftStatus(
           `${draftEngine === "qwen" ? "Qwen-ASR" : "Whisper"} ${draftEngine === "qwen" && responsiveMode && streamEnabled ? "短片段预览与修订" : "约 15 秒识别"}，仅作会议跟随参考`,
         );
@@ -1139,6 +1129,16 @@ export default function RecordingDialog({
     setElapsed(accruedRef.current);
     stateRef.current = "paused";
     setState("paused");
+    if (managedMode && sessionRef.current) {
+      const rid = sessionRef.current.id;
+      void queueDraft(true)
+        .then(() =>
+          stateRef.current === "paused"
+            ? api.liveSessionState(rid, true)
+            : undefined,
+        )
+        .catch(() => {});
+    }
   };
   const resume = () => {
     if (sessionRef.current?.source === "macos") {
@@ -1159,6 +1159,8 @@ export default function RecordingDialog({
       return toast("请先重试保存，再继续录音");
     activeSinceRef.current = performance.now();
     recorder.resume();
+    if (managedMode && sessionRef.current)
+      void api.liveSessionState(sessionRef.current.id, false).catch(() => {});
     stateRef.current = "recording";
     setState("recording");
   };
@@ -1265,6 +1267,13 @@ export default function RecordingDialog({
     stateRef.current = "saving";
     setState("saving");
     await stopRecorder(recorder);
+    if (managedMode) {
+      // Wait only for bounded local audio transport, never an unbounded inference queue.
+      await Promise.race([
+        queueDraft(true),
+        new Promise((resolve) => setTimeout(resolve, 1500)),
+      ]);
+    }
     // Saving the full recording must not wait for optional draft inference.
     draftEnabledRef.current = false;
     streamAbortRef.current?.abort();
@@ -1503,6 +1512,19 @@ export default function RecordingDialog({
           {completing && <p role="status">正在打开会议…</p>}
         </section>
       )}
+      {state === "idle" && runningSessions.length > 0 && (
+        <div className="live-session-resume" role="status">
+          <span>有正在运行的原生录音，后端识别仍在继续。</span>
+          {runningSessions.map((entry) => (
+            <button
+              key={entry.recording.id}
+              onClick={() => attachRunning(entry)}
+            >
+              继续查看 {clock(entry.recording.duration)}
+            </button>
+          ))}
+        </div>
+      )}
       <div
         className={`workbench-history-wrapper${state === "finished" ? (historyOpen ? " ended open" : " ended") : ""}`}
       >
@@ -1551,7 +1573,7 @@ export default function RecordingDialog({
                 partial={partialDraft}
                 emptyText={
                   responsiveMode && draftEngine === "qwen" && streamEnabled
-                    ? "约 5 秒开始预览，临时尾部会随上下文修订。"
+                    ? "约 3 秒开始预览，后端根据识别速度调整更新节奏。"
                     : undefined
                 }
                 onAddNote={(draft) =>
@@ -1819,6 +1841,7 @@ export default function RecordingDialog({
             <button onClick={() => setInspectorOpen(false)}>关闭</button>
           </div>{" "}
           <p>{draftStatus}</p>
+          {managedMode && <p>{backendLive.connection}</p>}
           {draftEngine === "qwen" && streamEnabled && (
             <p className="native-capture-hint">
               {liveMetrics.firstMs !== null
@@ -2179,7 +2202,7 @@ export default function RecordingDialog({
                   </label>
                   <p className="native-capture-hint">
                     {responsiveMode
-                      ? "约 5 秒开始预览，更多上下文会修订同一临时尾部；静音、暂停或最长 15 秒后确认。能量静音检测可能提前分段，建议与标准模式对比。"
+                      ? "约 3 秒开始预览，后端自适应调度；静音、暂停或最长 15 秒后确认。能量静音检测可能提前分段，建议与标准模式对比。"
                       : "标准模式：约 15 秒一段，完成后确认。"}
                   </p>
                   <div className="capture-preflight">

@@ -17,12 +17,12 @@ class StreamingFixture:
         code="import sys,json,time;from pathlib import Path;print(json.dumps({'type':'qwen_partial','text':'请打开'},ensure_ascii=False),flush=True);time.sleep(.15);print(json.dumps({'type':'qwen_partial','text':'请打开听季查看会议记录。'},ensure_ascii=False),flush=True);Path(sys.argv[1]).write_text(json.dumps({'segments':[{'start':0,'end':12,'text':'请打开听季查看会议记录。'}]}))"
         return [sys.executable,'-c',code,str(output)]
 
-def synthetic_window(self,rid,offset,window_seconds=15,responsive=False):
+def synthetic_window(self,rid,offset,window_seconds=15,responsive=False,allow_stopped=False):
     if offset>=12:return {'ready':False,'next_offset':offset,'skipped_seconds':0}
     duration=min(12,window_seconds);out=io.BytesIO()
     with wave.open(out,'wb') as wav:
         wav.setnchannels(1);wav.setsampwidth(2);wav.setframerate(16000);wav.writeframes(b'\1\0'*16000*duration)
-    return {'ready':True,'offset':0,'next_offset':duration,'skipped_seconds':0,'silent':False,'payload':out.getvalue(),'confirmed':window_seconds>=15}
+    return {'ready':True,'offset':0,'next_offset':duration,'skipped_seconds':0,'silent':False,'payload':out.getvalue(),'confirmed':window_seconds>=15 or self.states.get(rid) in ('paused','stopped')}
 
 def fake_request(*args,**kwargs):
     return {'choices':[{'finish_reason':'stop','message':{'content':encode({'edits':[{'original':'听季','replacement':'听记','reason':'参考术语为听记；请确认后采用。'}]})}}]}

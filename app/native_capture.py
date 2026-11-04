@@ -64,10 +64,11 @@ class NativeCapture:
                 process=subprocess.Popen(args,stdin=subprocess.PIPE,stdout=log,stderr=log)
             self.processes[rid]=process;self.last_seen[rid]=time.monotonic();return session
 
-    def status(self,rid):
+    def status(self,rid,touch=True):
         session=self.recordings.read(rid)
         if session.get('source')!='macos':raise ValueError('不是原生录音会话')
-        self.last_seen[rid]=time.monotonic();path=self.recordings.folder(rid)/'capture.json'
+        if touch:self.last_seen[rid]=time.monotonic()
+        path=self.recordings.folder(rid)/'capture.json'
         try:status=json.loads(path.read_text())
         except (FileNotFoundError,ValueError):status={'state':'starting','duration':0,'error':''}
         process=self.processes.get(rid)
@@ -98,15 +99,15 @@ class NativeCapture:
             tracks.append({'name':name,'state':signal,'saved_seconds':round(frames/16000,1)})
         return {'stalled':stalled,'tracks':tracks}
 
-    def draft_window(self,rid,offset,window_seconds=15,responsive=False):
+    def draft_window(self,rid,offset,window_seconds=15,responsive=False,allow_stopped=False):
         """Read a bounded snapshot from original PCM; never advance shared cursors."""
         if not math.isfinite(offset) or offset<0 or offset>86400:raise ValueError('草稿时间无效')
         with self.lock:
             session=self.recordings.read(rid)
             if session.get('source')!='macos':raise ValueError('不是原生录音会话')
             if session['state']=='completed':raise ValueError('录音已完成，请查看正式文字稿')
-            status=self.status(rid)
-            if status['state'] not in ('recording','paused'):raise ValueError('采集尚未就绪或已经停止')
+            status=self.status(rid,touch=not allow_stopped)
+            if status['state'] not in (('recording','paused','stopped','interrupted','failed') if allow_stopped else ('recording','paused')):raise ValueError('采集尚未就绪或已经停止')
             # Reported frame positions are the audio timeline, not a wall clock estimate.
             available_frames=max(status.get('system_frames',0),status.get('microphone_frames',0))
             horizon=min(status.get('duration',0),available_frames/16000)
@@ -117,10 +118,10 @@ class NativeCapture:
             quiet=responsive and all(status.get('silence_seconds',{}).get(name,0)>=.8 for name in names)
             if quiet and available_frames>0:
                 horizon=status.get('duration',horizon);end=round(horizon*16000)
-            confirmed=not responsive or status['state']=='paused' or quiet or end-begin>=15*16000
+            confirmed=not responsive or status['state'] in ('paused','stopped','interrupted','failed') or quiet or end-begin>=15*16000
             maximum=15 if confirmed else window_seconds
             count=min(maximum*16000,max(0,end-begin))
-            minimum=8000 if status['state']=='paused' else (3 if quiet else maximum)*16000
+            minimum=8000 if status['state'] in ('paused','stopped','interrupted','failed') else (3 if quiet else maximum)*16000
             if count<minimum:return {'ready':False,'next_offset':offset,'skipped_seconds':0}
             folder=self.recordings.folder(rid);tracks=[]
             for name in ('system','microphone') if session.get('include_microphone') else ('system',):

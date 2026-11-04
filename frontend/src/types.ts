@@ -175,6 +175,7 @@ export interface LiveCorrection {
   state: "suggested" | "accepted" | "rejected" | "unchanged";
 }
 export interface LiveDraftSegment {
+  stable_text?: string;
   live_range_id?: string;
   live_segment_index?: number;
   asr_original_text?: string;
@@ -184,6 +185,7 @@ export interface LiveDraftSegment {
   text: string;
 }
 export interface RecordingSession {
+  include_microphone?: boolean;
   brief?: MeetingBrief;
   id: string;
   mime_type: string;

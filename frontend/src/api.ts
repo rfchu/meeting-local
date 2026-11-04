@@ -1,3 +1,7 @@
+import type {
+  SessionConfig,
+  SessionSnapshot,
+} from "./features/notes/liveSession";
 import type { MeetingBrief, MeetingFlow, NoteTodo, NoteReview } from "./types";
 import type { SearchHit, SearchStatus } from "./features/SearchDialog";
 import type { QARun, QAPrepare } from "./features/qaTypes";
@@ -155,6 +159,32 @@ export const api = {
     request<NativeCaptureStatus>(`/native-capture/${id}`, {
       signal: AbortSignal.timeout(10000),
     }),
+  liveSessions: () =>
+    request<{ recording: RecordingSession; config: SessionConfig }[]>(
+      "/live-sessions",
+    ),
+  startLiveSession: (id: string, config: SessionConfig) =>
+    request<SessionSnapshot>(
+      `/recordings/${id}/live-session`,
+      json("PUT", config),
+    ),
+  finishLiveSession: (id: string) =>
+    request<SessionSnapshot>(
+      `/recordings/${id}/live-session/finish`,
+      json("POST", {}),
+    ),
+  liveSessionState: (id: string, paused: boolean) =>
+    request(`/recordings/${id}/live-session/state`, json("POST", { paused })),
+  uploadLiveAudio: (id: string, file: File, offset: number) => {
+    const data = new FormData();
+    data.append("file", file);
+    data.append("offset", String(offset));
+    return request(`/recordings/${id}/live-session/audio`, {
+      method: "POST",
+      body: data,
+      signal: AbortSignal.timeout(10000),
+    });
+  },
   nativeDraft: (
     id: string,
     offset: number,

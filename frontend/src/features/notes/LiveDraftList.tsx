@@ -111,13 +111,23 @@ export default function LiveDraftList({
           >
             <b>{clock(partial.start)}</b>
             <p>
-              {partial.text}
+              {partial.stable_text &&
+              partial.text.startsWith(partial.stable_text) ? (
+                <>
+                  <span className="live-stable-prefix">
+                    {partial.stable_text}
+                  </span>
+                  <span>{partial.text.slice(partial.stable_text.length)}</span>
+                </>
+              ) : (
+                partial.text
+              )}
               <span className="stream-caret" aria-hidden="true" />
             </p>
             <small>
               正在识别
               <br />
-              尾部可修订
+              {partial.stable_text ? "前缀趋稳 · 尾部可修订" : "尾部可修订"}
             </small>
           </article>
         )}

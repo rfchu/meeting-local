@@ -3445,3 +3445,18 @@ button.note-options-trigger {
   flex-shrink: 0;
   white-space: nowrap;
 }
+.live-draft-partial .live-stable-prefix {
+  color: #334155;
+}
+.live-session-resume {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 16px;
+  margin: 12px 0;
+  border: 1px solid #cfe4dd;
+  border-radius: 12px;
+  background: #f0f8f4;
+  font-size: 13px;
+}

@@ -68,6 +68,17 @@ class Store:
               audio_hash TEXT NOT NULL, identity TEXT NOT NULL, state TEXT NOT NULL,
               segments TEXT NOT NULL DEFAULT '[]', error TEXT NOT NULL DEFAULT '',
               created TEXT DEFAULT CURRENT_TIMESTAMP, updated TEXT DEFAULT CURRENT_TIMESTAMP);
+            CREATE TABLE IF NOT EXISTS live_sessions (
+              recording_id TEXT PRIMARY KEY,source TEXT NOT NULL,config TEXT NOT NULL,
+              status TEXT NOT NULL DEFAULT 'running',cursor INTEGER NOT NULL DEFAULT 0,
+              seq INTEGER NOT NULL DEFAULT 0,partial TEXT NOT NULL DEFAULT '{}',metrics TEXT NOT NULL DEFAULT '{}',
+              updated TEXT DEFAULT CURRENT_TIMESTAMP);
+            CREATE TABLE IF NOT EXISTS live_session_events (
+              recording_id TEXT NOT NULL,seq INTEGER NOT NULL,payload TEXT NOT NULL,
+              PRIMARY KEY(recording_id,seq));
+            CREATE TABLE IF NOT EXISTS live_pcm_inputs (
+              recording_id TEXT NOT NULL,start_frame INTEGER NOT NULL,end_frame INTEGER NOT NULL,digest TEXT NOT NULL,
+              PRIMARY KEY(recording_id,start_frame));
             CREATE TABLE IF NOT EXISTS live_corrections (
               id TEXT PRIMARY KEY,recording_id TEXT NOT NULL,range_id TEXT NOT NULL,segment_index INTEGER NOT NULL,
               profile_id TEXT NOT NULL,model TEXT NOT NULL,original_text TEXT NOT NULL,edits TEXT NOT NULL,
@@ -128,7 +139,7 @@ class Store:
                 id TEXT PRIMARY KEY,meeting_id TEXT NOT NULL,artifact_id TEXT NOT NULL,
                 payload TEXT NOT NULL,created TEXT DEFAULT CURRENT_TIMESTAMP);
                 CREATE INDEX IF NOT EXISTS minutes_deliveries_meeting ON minutes_deliveries(meeting_id);""")
-            db.execute('PRAGMA user_version=16')
+            db.execute('PRAGMA user_version=17')
         os.chmod(self.path,0o600)
     @contextmanager
     def connect(self):

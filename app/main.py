@@ -18,6 +18,7 @@ from .minutes_templates import MinutesTemplate
 from .speaker_review import generate_review
 from .recordings import RecordingStore
 from .native_capture import NativeCapture
+from .live_session import LiveSessions
 from .live_results import LiveResults
 from .live_corrections import LiveCorrections
 from .live_stream import inspect_audio, qwen_events
@@ -175,6 +176,12 @@ class NativeDraftInput(BaseModel):
     offset: float=Field(default=0,ge=0,le=86400,allow_inf_nan=False)
     responsive: bool=False
     window_seconds: Literal[5,10,15]=15
+class LiveSessionInput(BaseModel):
+    responsive: bool=True
+    context_enabled: bool=True
+    terms: str=Field(default='',max_length=1000)
+class LiveSessionState(BaseModel):
+    paused: bool=False
 class LiveCorrectionInput(BaseModel):
     range_id: str=Field(min_length=1,max_length=100)
     segment_index: int=Field(ge=0,le=100)
@@ -223,9 +230,11 @@ def create_app(data_dir=None, start_worker=True):
         if start_worker: worker.start()
         resident.start_monitor()
         store.execute("UPDATE live_asr_ranges SET state='failed',error='服务重启，识别未完成；快速完成会补识别该范围' WHERE state='running'")
+        await live_sessions.resume()
         native_capture.start_monitor()
         keep_awake.start_monitor()
         yield
+        await live_sessions.close()
         await run_in_threadpool(keep_awake.close)
         await run_in_threadpool(native_capture.close)
         await run_in_threadpool(worker.close)
@@ -247,6 +256,8 @@ def create_app(data_dir=None, start_worker=True):
     live_results=LiveResults(store,recordings)
     live_asr_lock=threading.Lock()
     resident=QwenResident(store.root)
+    live_sessions=LiveSessions(store,recordings,native_capture,live_results,live_asr_lock,resident,lambda:get_asr_provider("qwen"))
+    app.state.live_sessions=live_sessions
 
     @app.middleware('http')
     async def local_only(request:Request,call_next):
@@ -673,11 +684,56 @@ def create_app(data_dir=None, start_worker=True):
         except FileNotFoundError as error:raise HTTPException(404,str(error))
         except (ValueError,RuntimeError) as error:raise HTTPException(409,str(error))
     @app.post('/api/native-capture/{rid}/finish')
-    def native_finish(rid:str):
+    async def native_finish(rid:str):
         try:
-            mid=native_capture.finish(rid);keep_awake.release(rid);return decorated(meeting(mid))
+            await live_sessions.finish(rid)
+            mid=await run_in_threadpool(native_capture.finish,rid);keep_awake.release(rid);return decorated(meeting(mid))
         except FileNotFoundError as error:raise HTTPException(404,str(error))
         except (ValueError,RuntimeError,subprocess.SubprocessError) as error:raise HTTPException(409,str(error))
+    @app.get('/api/live-sessions')
+    def active_live_sessions():
+        result=[]
+        for row in store.all("SELECT * FROM live_sessions WHERE status!='stopped' AND source='native'"):
+            try:
+                if native_capture.is_running(row['recording_id']):result.append({'recording':recordings.read(row['recording_id']),'config':json.loads(row['config'])})
+            except (OSError,ValueError):pass
+        return result
+    @app.put('/api/recordings/{rid}/live-session')
+    async def start_live_session(rid:str,body:LiveSessionInput):
+        try:return await live_sessions.start(rid,body.model_dump())
+        except FileNotFoundError as error:raise HTTPException(404,str(error))
+        except ValueError as error:raise HTTPException(409,str(error))
+    @app.get('/api/recordings/{rid}/live-session')
+    def live_session_snapshot(rid:str):
+        try:return live_sessions.snapshot(rid)
+        except (FileNotFoundError,ValueError) as error:raise HTTPException(404,str(error))
+    @app.get('/api/recordings/{rid}/live-session/events')
+    async def live_session_events(rid:str,after:int=0):
+        if after<0:raise HTTPException(400,'事件序号无效')
+        try:live_sessions.row(rid)
+        except ValueError as error:raise HTTPException(404,str(error))
+        return stream_response(live_sessions.events(rid,after))
+    @app.post('/api/recordings/{rid}/live-session/audio')
+    async def live_session_audio(rid:str,file:UploadFile=File(...),offset:float=Form(ge=0,le=86400,allow_inf_nan=False)):
+        try:
+            payload=await file.read(4*1024*1024+1)
+            return await run_in_threadpool(live_sessions.ingest,rid,offset,payload)
+        except FileNotFoundError as error:raise HTTPException(404,str(error))
+        except ValueError as error:raise HTTPException(409,str(error))
+        finally:await file.close()
+    @app.post('/api/recordings/{rid}/live-session/state')
+    def live_session_state(rid:str,body:LiveSessionState):
+        try:
+            row=live_sessions.row(rid)
+            if row['source']!='browser' or row['status'] not in ('running','paused'):raise ValueError('当前会话不能切换状态')
+            live_sessions.checkpoint(rid,status='paused' if body.paused else 'running')
+            return {'ok':True}
+        except ValueError as error:raise HTTPException(409,str(error))
+    @app.post('/api/recordings/{rid}/live-session/finish')
+    async def finish_live_session(rid:str):
+        await live_sessions.finish(rid)
+        try:return live_sessions.snapshot(rid)
+        except (FileNotFoundError,ValueError):return {'status':'stopped'}
     @app.get('/api/recordings/{rid}/corrections')
     def correction_history(rid:str):
         try:recordings.read(rid)
@@ -734,9 +790,13 @@ def create_app(data_dir=None, start_worker=True):
         except ValueError as error:raise HTTPException(409,str(error))
         finally:file.file.close()
     @app.post('/api/recordings/{rid}/finish')
-    def finish_recording(rid:str,body:RecordingFinish):
+    async def finish_recording(rid:str,body:RecordingFinish):
         try:
-            mid=recordings.finish(rid,body.chunk_count);keep_awake.release(rid);return decorated(meeting(mid))
+            await live_sessions.finish(rid)
+            mid=await run_in_threadpool(recordings.finish,rid,body.chunk_count);keep_awake.release(rid)
+            try:await run_in_threadpool(live_sessions.published,rid)
+            except (OSError,sqlite3.Error):pass
+            return decorated(meeting(mid))
         except FileNotFoundError as error:raise HTTPException(404,str(error))
         except ValueError as error:raise HTTPException(409,str(error))
     @app.post('/api/meetings',status_code=201)
@@ -966,6 +1026,7 @@ def create_app(data_dir=None, start_worker=True):
                 raise HTTPException(409,'该会议有带入其他会议的跟进项，请先在关联会议移除关联后再删除')
             db.execute('DELETE FROM live_asr_ranges WHERE recording_id=?',(mid,))
             db.execute('DELETE FROM live_corrections WHERE recording_id=?',(mid,))
+            for table in ('live_sessions','live_session_events','live_pcm_inputs'):db.execute(f'DELETE FROM {table} WHERE recording_id=?',(mid,))
             QA.forget_meeting(db,mid)
             for table in ['minutes_deliveries','minutes_task_bindings','meeting_task_links','minutes_selection','meeting_briefs','attention_reviews','meeting_reviews','note_todos','retrieval_units','meeting_notes','artifacts','revisions','jobs','meetings']:
                 key='id' if table=='meetings' else 'meeting_id'
