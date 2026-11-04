@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from "react";
 import type { Meeting } from "../../types";
+import { paragraphs } from "../transcript/paragraphs";
 import TranscriptList from "../transcript/TranscriptList";
 export default function ReviewSourcePane({
   meeting,
@@ -25,11 +26,16 @@ export default function ReviewSourcePane({
       : meeting.segments.find(
           (s) => s.start <= focusTime && s.end > focusTime,
         ) || meeting.segments.find((s) => s.start >= focusTime);
+  const grouped = paragraphs(meeting.segments).map(({ parts, ...segment }) => ({
+    ...segment,
+    reading_parts: parts,
+  }));
   const segments = query
-    ? meeting.segments.filter(
-        (s) => s.text.includes(query) || s.speaker.includes(query),
-      )
-    : meeting.segments;
+    ? grouped.filter((s) => s.text.includes(query) || s.speaker.includes(query))
+    : grouped;
+  const focusedGroup = focused
+    ? grouped.find((s) => s.reading_parts.some((p) => p.id === focused.id))
+    : undefined;
   return (
     <section
       ref={pane}
@@ -57,8 +63,8 @@ export default function ReviewSourcePane({
           readOnly
           scrollRoot={pane}
           segments={segments}
-          total={meeting.segments.length}
-          jumpSegmentId={query ? undefined : focused?.id}
+          total={grouped.length}
+          jumpSegmentId={query ? undefined : focusedGroup?.id}
           onSeek={onSeek}
           onUpdate={() => {}}
           onEditingChange={() => {}}

@@ -90,7 +90,8 @@ async def qwen_events(provider,cache,lock,payload,offset,rid,source,root,window=
                 if last_text is not None and ''.join(s['text'] for s in result['segments']).strip()!=last_text.strip():
                     raise RuntimeError('流式文字与最终结果不一致，不能确认为完整覆盖')
                 segments=[{'start':offset+max(0,min(duration,s['start'])),
-                           'end':offset+max(0,min(duration,s['end'])),'text':s['text']} for s in result['segments'] if s['text'].strip()]
+                           'end':offset+max(0,min(duration,s['end'])),'text':s['text'],
+                           **{key:window[key] for key in ('continuation_id','continues_previous','continues_next','boundary_reason') if window and key in window}} for s in result['segments'] if s['text'].strip()]
         if aid:
             if confirmed:
                 cache.complete(aid,segments)

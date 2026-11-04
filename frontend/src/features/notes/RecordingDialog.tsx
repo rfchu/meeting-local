@@ -343,11 +343,17 @@ export default function RecordingDialog({
       } else if (event.type === "partial") {
         if (event.metrics) setDecodeReport(event.metrics);
         updatePartial(event.partial);
-        setDraftStatus("实时预览 · 浅色尾部仍可修订");
+        setDraftStatus(
+          event.metrics?.extending
+            ? "连续讲话中 · 正在延长窗口，实时文字继续更新"
+            : "实时预览 · 浅色尾部仍可修订",
+        );
       } else if (event.type === "final") {
         setDecodeReport({
           decoder: event.result.decoder,
           decoder_totals: event.result.decoder_totals,
+          boundary_reason: event.result.boundary_reason,
+          extending: event.result.extending,
         });
         setPartialDraft(null);
         nativeDraftOffsetRef.current = event.result.next_offset;
@@ -366,7 +372,9 @@ export default function RecordingDialog({
         setDraftStatus(
           event.result.skipped_seconds > 0
             ? "已跟随最近语音，积压范围保留待补识别"
-            : "本段已确认并保存",
+            : event.result.boundary_reason === "hard_limit"
+              ? "达到 25 秒上限，后续片段将关联阅读"
+              : "本段已确认并保存",
         );
       } else if (event.type === "status") setDraftStatus(event.message);
     },
@@ -1856,6 +1864,21 @@ export default function RecordingDialog({
           </div>{" "}
           <p>{draftStatus}</p>
           {managedMode && <p>{backendLive.connection}</p>}
+          {managedMode && decodeReport.boundary_reason && (
+            <p>
+              分段依据：
+              {(
+                {
+                  silence: "检测到自然停顿",
+                  pause: "用户暂停录音",
+                  stop: "录音结束收尾",
+                  hard_limit: "达到 25 秒上限，前后段连续关联",
+                  preview: "正在等待自然停顿",
+                  standard: "标准分段",
+                } as Record<string, string>
+              )[decodeReport.boundary_reason] || decodeReport.boundary_reason}
+            </p>
+          )}
           {managedMode && decodeReport.decoder?.mode && (
             <p className="native-capture-hint">
               本轮
@@ -2232,7 +2255,7 @@ export default function RecordingDialog({
                   </label>
                   <p className="native-capture-hint">
                     {responsiveMode
-                      ? "约 3 秒开始预览，后端自适应调度；静音、暂停或最长 15 秒后确认。能量静音检测可能提前分段，建议与标准模式对比。"
+                      ? "约 3 秒开始预览；优先在约 0.8 秒停顿处确认。15 秒为软目标，连续讲话可延长到 25 秒；硬切分的连续发言会合并阅读。"
                       : "标准模式：约 15 秒一段，完成后确认。"}
                   </p>
                   {responsiveMode && (

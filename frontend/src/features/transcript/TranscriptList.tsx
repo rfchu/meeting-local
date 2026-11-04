@@ -24,7 +24,7 @@ const Row = memo(function Row({
   readOnly = false,
 }: {
   readOnly?: boolean;
-  segment: Segment;
+  segment: Segment & { reading_parts?: Segment[] };
   onUpdate: (segment: Segment) => void;
   onSeek: (time: number) => void;
 }) {
@@ -81,14 +81,35 @@ const Row = memo(function Row({
             时间待校准：{segment.alignment_warning}
           </p>
         )}
-        <textarea
-          readOnly={readOnly}
-          ref={textRef}
-          aria-label={`转写文字 ${clock(segment.start)}`}
-          rows={Math.max(1, Math.ceil(segment.text.length / 42))}
-          value={segment.text}
-          onChange={(e) => onUpdate({ ...segment, text: e.target.value })}
-        />
+        {readOnly ? (
+          <>
+            <p className="reading-paragraph">{segment.text}</p>
+            {segment.reading_parts && segment.reading_parts.length > 1 && (
+              <div className="paragraph-source-times">
+                <small>连续发言 · 分段回听</small>
+                {segment.reading_parts.map((part) => (
+                  <button
+                    key={part.id}
+                    className="text-btn"
+                    aria-label={`回听片段 ${clock(part.start)}`}
+                    onClick={() => onSeek(part.start)}
+                  >
+                    {clock(part.start)}
+                  </button>
+                ))}
+              </div>
+            )}
+          </>
+        ) : (
+          <textarea
+            readOnly={readOnly}
+            ref={textRef}
+            aria-label={`转写文字 ${clock(segment.start)}`}
+            rows={Math.max(1, Math.ceil(segment.text.length / 42))}
+            value={segment.text}
+            onChange={(e) => onUpdate({ ...segment, text: e.target.value })}
+          />
+        )}
       </div>
     </div>
   );
@@ -106,7 +127,7 @@ export default function TranscriptList({
 }: {
   readOnly?: boolean;
   scrollRoot?: RefObject<HTMLElement | null>;
-  segments: Segment[];
+  segments: (Segment & { reading_parts?: Segment[] })[];
   total: number;
   onUpdate: (segment: Segment) => void;
   onSeek: (time: number) => void;

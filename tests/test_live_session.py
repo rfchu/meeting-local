@@ -63,11 +63,14 @@ def test_backend_runs_without_subscribers_and_reconnect_snapshot_does_not_restar
             manager.ingest(rid,3,audio(2))
             await until(lambda:bool(json.loads(manager.row(rid)['partial']).get('stable_text')))
             manager.ingest(rid,5,audio(10))
+            await until(lambda:json.loads(manager.row(rid)['metrics']).get('extending'))
+            assert manager.row(rid)['cursor']==0
+            manager.checkpoint(rid,status='paused')
             await until(lambda:manager.row(rid)['cursor']==15*16000)
             assert manager.cache.overview(rid,'qwen',15)['covered_seconds']==15
             reconnect=manager.snapshot(rid)
             assert len(reconnect['segments'])==1 and reconnect['segments'][0]['live_range_id']
-            assert not reconnect['partial'] and resident.calls==[3,5,15]
+            assert not reconnect['partial'] and resident.calls==[3,5,15,15]
             replay=manager.events(rid,snapshot['seq'])
             assert json.loads(await anext(replay))['seq']==snapshot['seq']+1
             await replay.aclose()

@@ -3,6 +3,7 @@ import io, json, math, os, platform, subprocess, threading, time, wave
 from array import array
 from pathlib import Path
 from .recordings import RecordingStore
+from .live_segmentation import elastic_plan,HARD_SECONDS
 
 BASE=Path(__file__).resolve().parents[1]
 HELPER=Path(os.getenv('TINGJI_CAPTURE_APP',str(Path.home()/'Library/Caches/cn.seeknow.tingji/TingjiCapture.app')))/'Contents/MacOS/TingjiCapture'
@@ -112,16 +113,18 @@ class NativeCapture:
             available_frames=max(status.get('system_frames',0),status.get('microphone_frames',0))
             horizon=min(status.get('duration',0),available_frames/16000)
             begin=round(offset*16000);end=int(horizon*16000);skipped=0
-            if end-begin>30*16000:
-                latest=max(begin,end-15*16000);skipped=(latest-begin)/16000;begin=latest
+            elastic=responsive and allow_stopped
+            limit=HARD_SECONDS if elastic else 15
+            if end-begin>2*limit*16000:
+                latest=max(begin,end-limit*16000);skipped=(latest-begin)/16000;begin=latest
             names=('system','microphone') if session.get('include_microphone') else ('system',)
             quiet=responsive and all(status.get('silence_seconds',{}).get(name,0)>=.8 for name in names)
             if quiet and available_frames>0:
                 horizon=status.get('duration',horizon);end=round(horizon*16000)
             confirmed=not responsive or status['state'] in ('paused','stopped','interrupted','failed') or quiet or end-begin>=15*16000
-            maximum=15 if confirmed else window_seconds
+            maximum=limit if elastic else (15 if confirmed else window_seconds)
             count=min(maximum*16000,max(0,end-begin))
-            minimum=8000 if status['state'] in ('paused','stopped','interrupted','failed') else (3 if quiet else maximum)*16000
+            minimum=8000 if status['state'] in ('paused','stopped','interrupted','failed') else (3 if quiet else min(window_seconds,limit) if elastic else maximum)*16000
             if count<minimum:return {'ready':False,'next_offset':offset,'skipped_seconds':0}
             folder=self.recordings.folder(rid);tracks=[]
             for name in ('system','microphone') if session.get('include_microphone') else ('system',):
@@ -132,11 +135,17 @@ class NativeCapture:
                         stream.seek(begin*2);raw=stream.read(count*2);samples.frombytes(raw[:len(raw)//2*2])
                 samples.extend([0]*(count-len(samples)));tracks.append(samples)
             mixed=tracks[0] if len(tracks)==1 else array('h',(max(-32768,min(32767,a+b)) for a,b in zip(*tracks)))
+            boundary={}
+            if elastic:
+                forced='pause' if status['state']=='paused' else 'stop' if status['state'] in ('stopped','interrupted','failed') else None
+                plan=elastic_plan(mixed.tobytes(),window_seconds,forced)
+                if plan is None:return {'ready':False,'next_offset':offset,'skipped_seconds':0}
+                count=plan.pop('count');confirmed=plan['confirmed'];mixed=mixed[:count];boundary=plan
             output=io.BytesIO()
             with wave.open(output,'wb') as wav:
                 wav.setnchannels(1);wav.setsampwidth(2);wav.setframerate(16000);wav.writeframes(mixed.tobytes())
             return {'ready':True,'offset':begin/16000,'next_offset':(begin+count)/16000,
-                    'skipped_seconds':skipped,'silent':not any(mixed),'payload':output.getvalue(),'confirmed':confirmed}
+                    'skipped_seconds':skipped,'silent':not any(mixed),'payload':output.getvalue(),'confirmed':confirmed,**boundary}
 
     def command(self,rid,command):
         with self.lock:

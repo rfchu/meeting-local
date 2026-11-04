@@ -15,6 +15,8 @@ export interface DecoderTotals {
 }
 import type { LiveDraftSegment } from "../../types";
 export interface LiveStreamResult {
+  boundary_reason?: string;
+  extending?: boolean;
   decoder?: DecoderMetrics;
   decoder_totals?: DecoderTotals;
   confirmed?: boolean;

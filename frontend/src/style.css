@@ -3460,3 +3460,23 @@ button.note-options-trigger {
   background: #f0f8f4;
   font-size: 13px;
 }
+.live-continuation-label {
+  display: inline-block;
+  margin-left: 8px;
+  font-size: 11px;
+  font-weight: 400;
+  color: #6c7a90;
+}
+.reading-paragraph {
+  white-space: pre-wrap;
+  line-height: 1.8;
+  margin: 8px 0;
+}
+.paragraph-source-times {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  color: #64748b;
+  font-size: 12px;
+}

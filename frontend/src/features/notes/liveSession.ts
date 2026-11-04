@@ -24,6 +24,8 @@ export interface SessionSnapshot {
     first_text_ms?: number | null;
     duration?: number;
     preview_step_seconds?: number;
+    extending?: boolean;
+    boundary_reason?: string;
     decoder?: DecoderMetrics;
     decoder_totals?: DecoderTotals;
   };

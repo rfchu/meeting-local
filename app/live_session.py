@@ -1,10 +1,10 @@
 """Recording-bound ASR supervisor. Subscribers never own inference lifetime."""
 import asyncio,hashlib,io,json,math,os,shutil,time,unicodedata,wave
-from array import array
 from contextlib import aclosing
 from .db import encode
 from .live_stream import qwen_events,inspect_audio
 from .live_results import RATE,plan_ranges
+from .live_segmentation import elastic_plan,HARD_SECONDS,PAUSE_SECONDS
 
 MAX_EVENTS=192
 
@@ -117,36 +117,50 @@ class LiveSessions:
             tmp.replace(path)
             db.execute('INSERT INTO live_pcm_inputs(recording_id,start_frame,end_frame,digest) VALUES(?,?,?,?)',(rid,start,end,digest))
         return {'ok':True,'cached':False}
-    def browser_window(self,rid,cursor,target,draining=False,paused=False):
+    def browser_window(self,rid,cursor,target,draining=False,paused=False,responsive=True):
         rows=self.store.all('SELECT * FROM live_pcm_inputs WHERE recording_id=? AND end_frame>? ORDER BY start_frame',(rid,cursor))
         if not rows:return {'ready':False}
         # Bound live backlog; skipped intervals remain gaps in durable coverage.
-        horizon=rows[-1]['end_frame'];begin=max(cursor,horizon-15*RATE) if horizon-cursor>30*RATE else cursor
+        limit=HARD_SECONDS if responsive else 15
+        horizon=rows[-1]['end_frame'];begin=max(cursor,horizon-limit*RATE) if horizon-cursor>2*limit*RATE else cursor
         begin=max(begin,rows[0]['start_frame']);raw=b'';position=begin
         for row in rows:
             if row['end_frame']<=position:continue
             if row['start_frame']>position:break
             with wave.open(str(self.recordings.folder(rid)/'live-input'/f"{row['start_frame']}-{row['end_frame']}.wav"),'rb') as wav:
-                wav.setpos(position-row['start_frame']);part=wav.readframes(min(row['end_frame']-position,15*RATE-len(raw)//2))
+                wav.setpos(position-row['start_frame']);part=wav.readframes(min(row['end_frame']-position,limit*RATE-len(raw)//2))
             raw+=part;position=begin+len(raw)//2
-            if len(raw)>=30*RATE:break
-        duration=len(raw)/2/RATE
-        if duration<(.5 if draining or paused else 3):return {'ready':False}
-        samples=array('h');samples.frombytes(raw[-round(.8*RATE)*2:])
-        quiet=bool(samples) and len(samples)>=.8*RATE and math.sqrt(sum(s*s for s in samples)/len(samples))/32768<.003
-        confirmed=draining or paused or quiet or duration>=15
-        if not confirmed and duration<target:return {'ready':False}
+            if len(raw)>=2*limit*RATE:break
+        if responsive:
+            plan=elastic_plan(raw,target,'stop' if draining else 'pause' if paused else None)
+            if plan is None:return {'ready':False}
+            count=plan.pop('count');raw=raw[:count*2];position=begin+count
+        else:
+            if len(raw)<round((.5 if draining or paused else 15)*RATE)*2:return {'ready':False}
+            plan={'confirmed':True,'boundary_reason':'standard','leading_silence_seconds':0,'extending':False}
         return {'ready':True,'offset':begin/RATE,'next_offset':position/RATE,'skipped_seconds':(begin-cursor)/RATE,
-                'payload':pcm_wav(raw),'confirmed':confirmed}
+                'payload':pcm_wav(raw),**plan}
+    def continuation(self,rid,window,break_at):
+        start=round(window['offset']*RATE)
+        previous=self.store.one("SELECT segments FROM live_asr_ranges WHERE recording_id=? AND engine='qwen' AND state='completed' AND end_frame=? ORDER BY rowid DESC LIMIT 1",(rid,start))
+        segments=json.loads(previous['segments']) if previous else []
+        last=segments[-1] if segments else {}
+        linked=bool(last.get('continuation_id') and last.get('continues_next') and window.get('leading_silence_seconds',0)<PAUSE_SECONDS and
+                    not window.get('skipped_seconds') and break_at!=start and round(last.get('end',-1)*RATE)==start)
+        return {'continuation_id':last['continuation_id'] if linked else rid+':'+str(start),
+                'continues_previous':linked,'continues_next':window.get('boundary_reason')=='hard_limit',
+                'boundary_reason':window.get('boundary_reason','standard')}
     async def run(self,rid):
-        previous='';stable='';preview_end=0;next_target=3;errors=0
-        totals=dict(json.loads(self.row(rid)['metrics']).get('decoder_totals',{}))
+        previous='';stable='';preview_end=0;preview_start=None;next_target=3;errors=0
+        saved_metrics=json.loads(self.row(rid)['metrics']);totals=dict(saved_metrics.get('decoder_totals',{}))
+        break_at=saved_metrics.get('continuation_break_at',-1)
         try:
             while not self.closed:
                 row=self.row(rid)
                 if row['status']=='stopped':return
                 session=self.recordings.read(rid)
                 if session['state']=='completed' or self.store.one('SELECT id FROM meetings WHERE id=?',(rid,)):break
+                break_at=max(break_at,json.loads(row['metrics']).get('continuation_break_at',-1))
                 draining=row['status']=='draining';config=json.loads(row['config']);cursor=row['cursor']
                 if row['source']=='native':
                     capture=await asyncio.to_thread(self.native.status,rid,touch=False)
@@ -154,17 +168,30 @@ class LiveSessions:
                         self.emit(rid,'status',message='采集已中断；已确认文字保留，剩余音频可在快速完成时补识别');break
                     if capture.get('state') in ('stopped','interrupted','failed'):draining=True
                     available=max(0,capture.get('duration',0)-cursor/RATE)
-                    target=min(15,max(next_target,math.floor(available))) if config['responsive'] else 15
+                    target=min(HARD_SECONDS,max(next_target,math.floor(available))) if config['responsive'] else 15
                     window=await asyncio.to_thread(self.native.draft_window,rid,cursor/RATE,target,config['responsive'],True)
+                    paused=capture.get('state')=='paused'
                 else:
-                    window=await asyncio.to_thread(self.browser_window,rid,cursor, next_target if config['responsive'] else 15,draining,row['status']=='paused')
+                    if not draining and row['status']=='running' and self.input_end(rid)<=preview_end:
+                        await asyncio.sleep(.3);continue
+                    window=await asyncio.to_thread(self.browser_window,rid,cursor, next_target if config['responsive'] else 15,draining,row['status']=='paused',config['responsive'])
+                    paused=row['status']=='paused'
                 if not window['ready']:
+                    if paused and break_at!=cursor:
+                        break_at=cursor
+                        state_metrics=json.loads(self.row(rid)['metrics']);state_metrics['continuation_break_at']=break_at
+                        self.checkpoint(rid,metrics=state_metrics)
                     if draining:break
                     await asyncio.sleep(.3);continue
+                start=round(window['offset']*RATE)
+                if preview_start!=start:previous='';stable='';preview_end=0;preview_start=start
                 end=round(window['next_offset']*RATE)
                 if end<=preview_end and not window['confirmed']:
                     await asyncio.sleep(.3);continue
-                if draining:window['confirmed']=True
+                if draining:
+                    window['confirmed']=True
+                    if window.get('boundary_reason')=='preview':window.update(boundary_reason='stop',extending=False)
+                window.update(self.continuation(rid,window,break_at))
                 payload=window.pop('payload');window.pop('silent',None);result=None;failure=None;last_sent=0
                 iterator=qwen_events(self.provider(),self.cache,self.asr_lock,payload,window['offset'],rid,row['source'],self.store.root,window,
                     resident=self.resident,confirmed=window['confirmed'],context_enabled=config['context_enabled'],terms=config['terms'],continuation={'key':rid+':'+str(round(window['offset']*RATE)),'enabled':config.get('prefix_enabled',True) and config['responsive'],
@@ -174,7 +201,7 @@ class LiveSessions:
                         event=json.loads(line)
                         if event['type']=='partial' and time.monotonic()-last_sent>=.15:
                             text=event['text'];prefix=stable if text.startswith(stable) else ''
-                            self.emit(rid,'partial',partial={'start':event['start'],'end':event['end'],'text':text,'stable_text':prefix})
+                            self.emit(rid,'partial',partial={'start':event['start'],'end':event['end'],'text':text,'stable_text':prefix,**{k:window[k] for k in ('continuation_id','continues_previous','continues_next','boundary_reason')}})
                             last_sent=time.monotonic()
                         elif event['type']=='final':result=event['result']
                         elif event['type']=='error':failure=event['message']
@@ -184,21 +211,22 @@ class LiveSessions:
                     await asyncio.sleep(min(8,2**min(errors,3)));continue
                 errors=0;text=''.join(s['text'] for s in result['segments'])
                 stable=stable_prefix(previous,text);previous=text;preview_end=end
-                metrics={k:result.get(k) for k in ('processing_ms','first_text_ms','duration','confirmed','skipped_seconds','decoder')}
+                metrics={k:result.get(k) for k in ('processing_ms','first_text_ms','duration','confirmed','skipped_seconds','decoder','boundary_reason','extending')}
                 decoder=result.get('decoder',{})
                 if decoder:
                     for key,hit in [('prefix_rounds',decoder.get('mode')=='prefix'),('feature_hits',decoder.get('feature_cache_hit',False)),('fallbacks',decoder.get('fallback',False))]:
                         totals[key]=totals.get(key,0)+int(bool(hit))
+                metrics['continuation_break_at']=break_at
                 metrics['decoder_totals']=dict(totals);result['decoder_totals']=dict(totals)
                 metrics['preview_step_seconds']=preview_step(result['processing_ms'])
                 if result['confirmed']:
                     self.checkpoint(rid,cursor=end,partial={},metrics=metrics)
-                    self.emit(rid,'final',result=result);previous='';stable='';preview_end=0;next_target=3
+                    self.emit(rid,'final',result=result);previous='';stable='';preview_end=0;preview_start=None;next_target=3
                 else:
-                    partial={'start':window['offset'],'end':window['next_offset'],'text':text,'stable_text':stable}
+                    partial={'start':window['offset'],'end':window['next_offset'],'text':text,'stable_text':stable,**{k:window[k] for k in ('continuation_id','continues_previous','continues_next','boundary_reason')}}
                     self.checkpoint(rid,partial=partial,metrics=metrics)
                     self.emit(rid,'partial',partial=partial,metrics=metrics)
-                    next_target=min(15,math.floor(window['next_offset']-window['offset'])+preview_step(result['processing_ms']))
+                    next_target=min(HARD_SECONDS,math.floor(window['next_offset']-window['offset'])+preview_step(result['processing_ms']))
         except asyncio.CancelledError:raise
         except (OSError,ValueError) as error:
             self.emit(rid,'status',message='实时会话暂时中断，原音与已确认文字保留：'+str(error)[:200])
@@ -208,6 +236,13 @@ class LiveSessions:
             if not self.closed:
                 self.checkpoint(rid,status='stopped',partial={})
                 self.emit(rid,'status',message='实时会话已结束，未覆盖音频可在快速完成时补识别')
+    def pause_boundary(self,rid,frame):
+        with self.store.connect() as db:
+            db.execute('BEGIN IMMEDIATE')
+            row=db.execute('SELECT metrics FROM live_sessions WHERE recording_id=?',(rid,)).fetchone()
+            if row:
+                metrics=json.loads(row['metrics']);metrics['continuation_break_at']=frame
+                db.execute('UPDATE live_sessions SET metrics=? WHERE recording_id=?',(encode(metrics),rid))
     async def finish(self,rid,timeout=4):
         row=self.store.one('SELECT * FROM live_sessions WHERE recording_id=?',(rid,))
         if not row or row['status']=='stopped':return

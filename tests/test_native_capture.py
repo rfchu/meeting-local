@@ -173,3 +173,23 @@ def test_native_short_utterance_uses_real_clock_silence_and_keeps_recording_tail
     capture.finish(rid)
     with wave.open(str(capture.store.directory(rid)/'system.wav'),'rb') as wav:
         assert wav.getnframes()==80000 and wav.readframes(80000)==prefix+b'\0\0'*64000
+
+def test_managed_native_window_extends_to_pause_or_25_seconds(capture):
+    from app.live_session import pcm_wav
+    rid,folder=running_window(capture,16,microphone=False)
+    voice=b'\x70\x17'
+    (folder/'system.pcm').write_bytes(voice*16*16000)
+    preview=capture.draft_window(rid,0,16,True,True)
+    assert not preview['confirmed'] and preview['extending'] and preview['next_offset']==16
+    RecordingStore.write(folder/'capture.json',{'state':'recording','duration':25,'system_frames':25*16000,'error':''})
+    (folder/'system.pcm').write_bytes(voice*25*16000)
+    hard=capture.draft_window(rid,0,25,True,True)
+    assert hard['confirmed'] and hard['next_offset']==25 and hard['boundary_reason']=='hard_limit'
+    RecordingStore.write(folder/'capture.json',{'state':'recording','duration':18.8,'system_frames':round(18.8*16000),'error':''})
+    (folder/'system.pcm').write_bytes(voice*18*16000+b'\0\0'*round(.8*16000))
+    natural=capture.draft_window(rid,0,20,True,True)
+    # The next preview target can be later than the quiet tail; capture metadata wakes it early.
+    if not natural['ready']:
+        RecordingStore.write(folder/'capture.json',{'state':'recording','duration':18.8,'system_frames':round(18.8*16000),'silence_seconds':{'system':.8},'error':''})
+        natural=capture.draft_window(rid,0,20,True,True)
+    assert natural['confirmed'] and natural['next_offset']==18.8 and natural['boundary_reason']=='silence'

@@ -1,5 +1,6 @@
 import { useLayoutEffect, useRef, useState } from "react";
 import type { LiveDraftSegment } from "../../types";
+import { paragraphs } from "../transcript/paragraphs";
 import { clock } from "../../utils";
 
 export default function LiveDraftList({
@@ -34,6 +35,7 @@ export default function LiveDraftList({
       setUnread(0);
     } else if (added) setUnread((old) => old + added);
   }, [drafts, partial?.text]);
+  const groups = paragraphs(drafts);
   return (
     <>
       <div className="live-draft-follow">
@@ -79,11 +81,11 @@ export default function LiveDraftList({
         {!drafts.length && !partial && (
           <p>{emptyText || "每约 15 秒更新一次，仅作会议跟随参考。"}</p>
         )}
-        {drafts.map((draft, index) => (
+        {groups.map((draft, index) => (
           <article
             key={`${draft.start}-${index}`}
             className={
-              index === drafts.length - 1 && !partial
+              index === groups.length - 1 && !partial
                 ? "live-draft-latest"
                 : undefined
             }
@@ -91,7 +93,12 @@ export default function LiveDraftList({
             <b>{clock(draft.start)}</b>
             <p>
               {draft.text}
-              {draft.live_correction_id && (
+              {draft.parts.length > 1 && (
+                <small className="live-continuation-label">
+                  连续发言 · {draft.parts.length} 个音频片段
+                </small>
+              )}
+              {draft.parts.some((part) => part.live_correction_id) && (
                 <small className="live-corrected-badge">已校对</small>
               )}
             </p>
@@ -109,7 +116,12 @@ export default function LiveDraftList({
             className="live-draft-latest live-draft-partial"
             aria-label="未确认的临时文字"
           >
-            <b>{clock(partial.start)}</b>
+            <b>
+              {clock(partial.start)}
+              {partial.continues_previous && (
+                <small className="live-continuation-label">延续上一段</small>
+              )}
+            </b>
             <p>
               {partial.stable_text &&
               partial.text.startsWith(partial.stable_text) ? (

@@ -5,6 +5,11 @@ export type JobState =
 export type MinutesStyle = "formal" | "brief" | "internal" | "ai";
 
 export interface Segment {
+  continuation_id?: string;
+  continues_previous?: boolean;
+  continues_next?: boolean;
+  boundary_reason?: string;
+
   id: string;
   start: number;
   end: number;
@@ -175,6 +180,11 @@ export interface LiveCorrection {
   state: "suggested" | "accepted" | "rejected" | "unchanged";
 }
 export interface LiveDraftSegment {
+  continuation_id?: string;
+  continues_previous?: boolean;
+  continues_next?: boolean;
+  boundary_reason?: string;
+
   stable_text?: string;
   live_range_id?: string;
   live_segment_index?: number;

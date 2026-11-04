@@ -19,6 +19,7 @@ from .speaker_review import generate_review
 from .recordings import RecordingStore
 from .native_capture import NativeCapture
 from .live_session import LiveSessions
+from .transcript_paragraphs import paragraphs
 from .live_results import LiveResults
 from .live_corrections import LiveCorrections
 from .live_stream import inspect_audio, qwen_events
@@ -47,6 +48,10 @@ class Segment(BaseModel):
     timestamp_precision: Literal['chunk','aligned'] | None=None
     alignment_warning: str=Field(default='',max_length=300)
     speaker_locked: bool=False
+    continuation_id: str=Field(default='',max_length=160)
+    continues_previous: bool=False
+    continues_next: bool=False
+    boundary_reason: str=Field(default='',max_length=30)
 class RevisionInput(BaseModel):
     revision: int
     segments: list[Segment]=Field(max_length=50000)
@@ -681,7 +686,10 @@ def create_app(data_dir=None, start_worker=True):
 
     @app.post('/api/native-capture/{rid}/command')
     def native_command(rid:str,body:NativeCommandInput):
-        try:return native_capture.command(rid,body.command)
+        try:
+            result=native_capture.command(rid,body.command)
+            if body.command=='pause':live_sessions.pause_boundary(rid,round(result['duration']*16000))
+            return result
         except FileNotFoundError as error:raise HTTPException(404,str(error))
         except (ValueError,RuntimeError) as error:raise HTTPException(409,str(error))
     @app.post('/api/native-capture/{rid}/finish')
@@ -728,6 +736,7 @@ def create_app(data_dir=None, start_worker=True):
             row=live_sessions.row(rid)
             if row['source']!='browser' or row['status'] not in ('running','paused'):raise ValueError('当前会话不能切换状态')
             live_sessions.checkpoint(rid,status='paused' if body.paused else 'running')
+            if body.paused:live_sessions.pause_boundary(rid,live_sessions.input_end(rid))
             return {'ok':True}
         except ValueError as error:raise HTTPException(409,str(error))
     @app.post('/api/recordings/{rid}/live-session/finish')
@@ -1110,7 +1119,7 @@ def create_app(data_dir=None, start_worker=True):
         row=meeting(mid)
         values=[x.model_dump() for x in body.segments]
         for value in values:
-            for key in ('timestamp_precision','alignment_warning'):
+            for key in ('timestamp_precision','alignment_warning','continuation_id','continues_previous','continues_next','boundary_reason'):
                 if not value.get(key):value.pop(key,None)
         if len({x['id'] for x in values})!=len(values): raise HTTPException(400,'片段 ID 重复')
         if any(x['end']<x['start'] or (row['duration'] and x['end']>row['duration']+1) for x in values): raise HTTPException(400,'时间戳超出录音范围')
@@ -1134,7 +1143,7 @@ def create_app(data_dir=None, start_worker=True):
         if format=='json': content=encode({'meeting':row['title'],'revision':row['revision'],'segments':segments})
         elif format=='srt': content='\n\n'.join(f"{i+1}\n{stamp(s['start'],True)} --> {stamp(s['end'],True)}\n{s['speaker']}：{s['text']}" for i,s in enumerate(segments))
         else:
-            content=('## ' if format=='md' else '')+row['title']+'\n\n'+'\n\n'.join(f"[{stamp(s['start'])}] {s['speaker']}\n{s['text']}" for s in segments)
+            content=('## ' if format=='md' else '')+row['title']+'\n\n'+'\n\n'.join(f"[{stamp(s['start'])}] {s['speaker']}\n{s['text']}" for s in paragraphs(segments))
         filename=quote(row['title'],safe='')+'.'+format
         return Response(content,media_type='application/json' if format=='json' else 'text/plain',headers={'Content-Disposition':f"attachment; filename*=UTF-8''{filename}"})
     @app.get('/api/meetings/{mid}/analysis/export/{format}')

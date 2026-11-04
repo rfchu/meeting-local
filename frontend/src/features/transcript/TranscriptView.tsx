@@ -193,6 +193,14 @@ export default function TranscriptView({
           (/[，。！？；：,.!?;:]$/.test(previous.text.trim()) ? "" : "，") +
           item.text.trim();
         previous.boundary_review ||= item.boundary_review;
+        if (previous.continuation_id === item.continuation_id) {
+          previous.continues_next = item.continues_next;
+          previous.boundary_reason = item.boundary_reason;
+        } else {
+          previous.continuation_id = undefined;
+          previous.continues_previous = false;
+          previous.continues_next = false;
+        }
         count++;
       } else merged.push(item);
     }
