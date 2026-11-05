@@ -1884,6 +1884,21 @@ dialog code {
 .recording-finish-panel p {
   margin: 6px 0 12px;
 }
+.recording-receipt {
+  display: grid;
+  gap: 10px;
+  margin: 14px 0;
+  padding: 14px 0;
+  border-block: 1px solid #d4e1d9;
+}
+.recording-receipt strong,
+.recording-receipt span {
+  display: block;
+}
+.recording-receipt span,
+.recording-receipt small {
+  color: var(--muted);
+}
 .finish-options {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));

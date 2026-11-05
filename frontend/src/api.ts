@@ -212,6 +212,24 @@ export const api = {
     request<RecordingHealth>(`/recordings/${id}/health`, {
       signal: AbortSignal.timeout(10000),
     }),
+  recordingCompletion: (id: string, engine: "whisper" | "qwen") =>
+    request<{
+      published: boolean;
+      audio_saved: boolean;
+      saved_bytes: number;
+      duration_seconds: number;
+      notes_count: number;
+      coverage: {
+        engine: string;
+        covered_seconds: number;
+        uncovered_seconds: number;
+        gaps: { start: number; end: number }[];
+        completed_ranges: number;
+        failed_attempts: number;
+      };
+    }>(`/recordings/${id}/completion?engine=${engine}`, {
+      signal: AbortSignal.timeout(10000),
+    }),
   recordingDiagnostics: (id: string) =>
     request<RecordingHealth>(`/recordings/${id}/diagnostics`, {
       signal: AbortSignal.timeout(10000),
@@ -535,6 +553,7 @@ export const api = {
       diarization: boolean;
       num_speakers: number;
       completion_mode?: "quick" | "full";
+      recording_handoff?: boolean;
       minutes_followup?: {
         profile_id?: string;
         model?: string;
@@ -548,7 +567,11 @@ export const api = {
         settings: import("./features/minutes/composition").MinutesOptions;
       };
     },
-  ) => request<{ id: string }>(`/meetings/${id}/jobs`, json("POST", body)),
+  ) =>
+    request<{ id: string; reused?: boolean }>(
+      `/meetings/${id}/jobs`,
+      json("POST", body),
+    ),
   jobAction: (id: string, action: "cancel" | "retry") =>
     request(`/jobs/${id}/${action}`, { method: "POST" }),
   saveTranscript: (id: string, revision: number, segments: unknown[]) =>

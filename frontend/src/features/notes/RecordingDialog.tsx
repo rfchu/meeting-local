@@ -34,6 +34,7 @@ import Modal from "../../components/Modal";
 import { encodeLiveWav } from "./liveAudio";
 import RecordingWaveform from "./RecordingWaveform";
 import RecordingHealthPanel from "./RecordingHealthPanel";
+import RecordingReceipt from "./RecordingReceipt";
 import { clientRecordingDiagnostics } from "./recordingInventory";
 import { stopRecorder } from "./stopRecorder";
 import LiveDraftList from "./LiveDraftList";
@@ -493,6 +494,9 @@ export default function RecordingDialog({
     setRunningSessions([]);
   };
   const handingOff = useRef(false);
+  const finishing = useRef(false);
+  const [finishStage, setFinishStage] = useState("正在收尾音频…");
+  const [handoffError, setHandoffError] = useState("");
   const handoffSaved = async (
     id: string,
     mode: CompletionMode,
@@ -500,6 +504,7 @@ export default function RecordingDialog({
   ) => {
     if (handingOff.current) return;
     handingOff.current = true;
+    setHandoffError("");
     setCompleting(true);
     try {
       await onComplete(id, {
@@ -508,6 +513,7 @@ export default function RecordingDialog({
         goal: mode === "none" ? "transcript" : postGoal,
       });
     } catch (error) {
+      setHandoffError((error as Error).message);
       toast(`录音已保存，后续处理未完成，可重试：${(error as Error).message}`);
     } finally {
       handingOff.current = false;
@@ -877,28 +883,53 @@ export default function RecordingDialog({
     reuseEngine = draftEngine,
     allowAutoProcess = false,
   ) => {
+    if (finishing.current) return;
+    finishing.current = true;
     setState("saving");
     stateRef.current = "saving";
     sessionRef.current = session;
     try {
+      setFinishStage("同步最后的音频与关注点…");
       await retrySync();
+      setFinishStage("创建本机会议文件，收尾实时识别…");
       const meeting =
         session.source === "macos"
           ? await api.nativeFinish(session.id)
           : await api.finishRecording(session.id, session.chunk_count);
-      await forgetRecording(session.id);
       setSaveStatus("录音和简记已保存到本机");
       setSavedMeetingId(meeting.id);
       setSavedEngine(reuseEngine);
       stateRef.current = "finished";
       setState("finished");
       setElapsed(accruedRef.current);
-      if (allowAutoProcess && autoProcess && !processingDeferredRef.current)
-        await handoffSaved(meeting.id, completionMode, reuseEngine);
+      // Publication is already durable. A local cleanup or report failure must
+      // never send the user back to the recording-save recovery state.
+      try {
+        await forgetRecording(session.id);
+      } catch {
+        setSaveStatus("本机会议已保存，浏览器暂存清理未完成");
+      }
+      if (allowAutoProcess && autoProcess && !processingDeferredRef.current) {
+        try {
+          const receipt = await api.recordingCompletion(
+            session.id,
+            reuseEngine,
+          );
+          if (!receipt.audio_saved)
+            throw new Error("本机文件核对未通过，请检查运行详情后继续");
+          await handoffSaved(meeting.id, completionMode, reuseEngine);
+        } catch {
+          setHandoffError(
+            "录音已保存，自动交接前的文件核对未完成，可重新核对或手动进入会后整理。",
+          );
+        }
+      }
     } catch (error) {
       setState("failed");
       stateRef.current = "failed";
       toast(`录音已保留，请重试完成保存：${(error as Error).message}`);
+    } finally {
+      finishing.current = false;
     }
   };
   useEffect(() => {
@@ -1317,8 +1348,9 @@ export default function RecordingDialog({
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
   }, [state]);
-  const stop = async () => {
+  const stopCapture = async () => {
     if (!recordingState(stateRef.current)) return;
+    setFinishStage("停止采集并收取音频尾段…");
     if (sessionRef.current)
       void api.pauseOverview(sessionRef.current.id).catch(() => {});
     if (sessionRef.current?.source === "macos") {
@@ -1360,20 +1392,6 @@ export default function RecordingDialog({
     setElapsed(accruedRef.current);
     stateRef.current = "saving";
     setState("saving");
-    await stopRecorder(recorder);
-    if (managedMode) {
-      // Wait only for bounded local audio transport, never an unbounded inference queue.
-      await Promise.race([
-        queueDraft(true),
-        new Promise((resolve) => setTimeout(resolve, 1500)),
-      ]);
-    }
-    // Saving the full recording must not wait for optional draft inference.
-    draftEnabledRef.current = false;
-    streamAbortRef.current?.abort();
-    setPartialDraft(null);
-    await closeDraftCapture();
-    streamRef.current?.getTracks().forEach((track) => track.stop());
     const savedNotes = [...notesRef.current];
     if (noteDraftRef.current.text.trim())
       savedNotes.push({
@@ -1385,8 +1403,39 @@ export default function RecordingDialog({
     notesRef.current = savedNotes;
     setNotes(savedNotes);
     setNoteText("");
+    await stopRecorder(recorder);
+    if (managedMode) {
+      // Wait only for bounded local audio transport, never an unbounded inference queue.
+      await Promise.race([
+        queueDraft(true).catch(() => {}),
+        new Promise((resolve) => setTimeout(resolve, 1500)),
+      ]);
+    }
+    // Saving the full recording must not wait for optional draft inference.
+    draftEnabledRef.current = false;
+    streamAbortRef.current?.abort();
+    setPartialDraft(null);
+    await closeDraftCapture();
+    streamRef.current?.getTracks().forEach((track) => track.stop());
     const session = metadata();
     if (session) await finish(session, draftEngine, true);
+  };
+  const stop = async () => {
+    try {
+      await stopCapture();
+    } catch (error) {
+      const recorder = recorderRef.current;
+      if (recorder && recorder.state !== "inactive") {
+        stateRef.current = recorder.state === "paused" ? "paused" : "recording";
+      } else {
+        draftEnabledRef.current = false;
+        streamAbortRef.current?.abort();
+        streamRef.current?.getTracks().forEach((track) => track.stop());
+        stateRef.current = "failed";
+      }
+      setState(stateRef.current);
+      toast(`结束未完成，已保存内容保留，可重试：${(error as Error).message}`);
+    }
   };
 
   const recording = state === "recording" || state === "paused";
@@ -1472,7 +1521,11 @@ export default function RecordingDialog({
                 : "结束录音"}
             </button>
           )}
-          {state === "saving" && <button disabled>正在保存并创建会议…</button>}
+          {state === "saving" && (
+            <span role="status" aria-live="polite">
+              {finishStage}
+            </span>
+          )}
           {state === "failed" && (
             <button
               className="primary"
@@ -1591,7 +1644,12 @@ export default function RecordingDialog({
             {notes.filter((n) => n.note_type === "action").length}{" "}
             个待办线索。进入会后整理后核对用途，再生成纪要。
           </p>
-          <p>{coverageStatus}。选择下一步处理方式：</p>
+          <RecordingReceipt id={savedMeetingId} engine={savedEngine} />
+          {handoffError && (
+            <p role="alert" className="health-warning">
+              {handoffError} 录音与关注点已保留，重试不会重复创建处理任务。
+            </p>
+          )}
           <button
             className="primary"
             disabled={completing}
@@ -1657,7 +1715,7 @@ export default function RecordingDialog({
               ))}
             </div>
           </details>
-          {completing && <p role="status">正在打开会议…</p>}
+          {completing && <p role="status">正在确认会后任务并打开会议…</p>}
         </section>
       )}
       {state === "idle" && runningSessions.length > 0 && (

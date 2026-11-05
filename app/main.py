@@ -29,6 +29,7 @@ from .live_stream import inspect_audio, qwen_events
 from .qwen_resident import QwenResident
 from .keep_awake import KeepAwake
 from .recording_health import RecordingHealth
+from .recording_completion import completion_report
 from .meeting_review import MeetingReview
 from .qa import QA
 from .minutes_composition import ComposeInput,CompositionSettings,build_from_ai,publish_analysis,canonical_source
@@ -63,6 +64,7 @@ class RevisionInput(BaseModel):
     revision: int
     segments: list[Segment]=Field(max_length=50000)
 class JobInput(BaseModel):
+    recording_handoff: bool=False
     minutes_followup: MinutesFollowupInput | None=None
     completion_mode: Literal["full","quick"]="full"
     engine: Literal["whisper","qwen"]="whisper"
@@ -807,6 +809,10 @@ def create_app(data_dir=None, start_worker=True):
         try:return recording_health.snapshot(rid)
         except FileNotFoundError:raise HTTPException(404,'录音会话不存在')
         except ValueError:raise HTTPException(409,'录音元数据无法读取，已有文件保留')
+    @app.get('/api/recordings/{rid}/completion')
+    def recording_completion(rid:str,engine:Literal['whisper','qwen']='qwen'):
+        try:return completion_report(store,recordings,live_results,rid,engine)
+        except FileNotFoundError:raise HTTPException(404,'录音会话不存在')
     @app.get('/api/recordings/{rid}/diagnostics')
     def recording_diagnostics(rid:str):
         report=recording_inventory(rid)
@@ -1093,18 +1099,26 @@ def create_app(data_dir=None, start_worker=True):
     @app.post('/api/meetings/{mid}/jobs',status_code=201)
     def enqueue(mid:str,body:JobInput):
         row=meeting(mid)
+        # One durable handoff per recording. Retries after response loss return the
+        # original job, even after completion/cancellation; explicit reprocessing
+        # continues to use ordinary jobs and never silently changes the first plan.
+        jid=hashlib.sha256(('recording-handoff:'+mid).encode()).hexdigest()[:32] if body.recording_handoff else uid()
+        if body.recording_handoff:
+            if not (recordings.root/mid/'session.json').exists():raise HTTPException(409,'会后交接仅适用于本机录音')
+            existing=store.one('SELECT id FROM jobs WHERE id=? AND meeting_id=?',(jid,mid))
+            if existing:return {'id':existing['id'],'reused':True}
         provider=get_asr_provider(body.engine)
         if body.completion_mode!='quick' and not provider.ready(): raise HTTPException(409,f'{provider.label} 尚未就绪，请先安装对应模型')
         if body.completion_mode=='quick' and not (recordings.root/mid/'session.json').exists():raise HTTPException(409,'快速完成仅适用于本机实时录音')
         if body.completion_mode!='quick' and body.diarization and not LocalDiarization().ready(): raise HTTPException(409,'尚未配置本地发言人模型')
         try:followup=prepare_auto_minutes(store,body.minutes_followup) if body.minutes_followup else None
         except (ValueError,RuntimeError) as error:raise HTTPException(409,str(error))
-        jid=uid()
         with store.connect() as db:
             db.execute('BEGIN IMMEDIATE')
+            if body.recording_handoff and db.execute('SELECT id FROM jobs WHERE id=?',(jid,)).fetchone():return {'id':jid,'reused':True}
             if db.execute("SELECT 1 FROM jobs WHERE meeting_id=? AND state IN ('running','queued')",(mid,)).fetchone(): raise HTTPException(409,'已有任务正在处理')
             db.execute('INSERT INTO jobs(id,meeting_id,state,stage,config) VALUES(?,?,?,?,?)',(jid,mid,'queued','等待处理',encode({'engine':body.engine,'chunk_seconds':provider.chunk_seconds,'punctuation':provider.needs_punctuation,'diarization':body.diarization,'num_speakers':body.num_speakers,'base_revision':row['revision'],'engine_identity':provider.identity(),'pipeline_version':2,'minutes_followup':followup,'completion_mode':body.completion_mode,'live_snapshot':live_results.snapshot(mid,body.engine) if body.completion_mode=='quick' else []})))
-        return {'id':jid}
+        return {'id':jid,'reused':False}
     @app.post('/api/meetings/{mid}/analysis-jobs',status_code=201)
     def enqueue_analysis(mid:str,body:AnalysisJobInput):
         row=meeting(mid)

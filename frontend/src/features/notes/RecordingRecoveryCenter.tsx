@@ -7,6 +7,7 @@ import {
   recoveryInventorySnapshot,
 } from "./recordingBuffer";
 import { recoverSavedRecording } from "./recoverSavedRecording";
+import RecordingReceipt from "./RecordingReceipt";
 import { watchRecordingRecovery } from "./recordingRecovery";
 import RecordingRecoveryList from "./RecordingRecoveryList";
 import type { CompletionMode } from "./recordingPreferences";
@@ -28,6 +29,7 @@ export default function RecordingRecoveryCenter({
     [loading, setLoading] = useState(true),
     [busy, setBusy] = useState(false),
     [error, setError] = useState("");
+  const [inventoryError, setInventoryError] = useState("");
   const [review, setReview] = useState<RecordingSession | null>(null),
     [confirmed, setConfirmed] = useState(false),
     [serverAvailable, setServerAvailable] = useState(true);
@@ -36,7 +38,7 @@ export default function RecordingRecoveryCenter({
   ) => {
     setSessions(result.sessions);
     setServerAvailable(result.serverAvailable);
-    setError(
+    setInventoryError(
       !result.serverAvailable
         ? "暂时无法检查本机保存状态，请重新检查。已有内容仍保留。"
         : !result.localAvailable
@@ -54,7 +56,7 @@ export default function RecordingRecoveryCenter({
     try {
       applyInventory(await recoveryInventorySnapshot());
     } catch (e) {
-      setError((e as Error).message);
+      setInventoryError((e as Error).message);
     } finally {
       setLoading(false);
     }
@@ -71,7 +73,7 @@ export default function RecordingRecoveryCenter({
           applyInventory(result);
         }
       } catch (e) {
-        if (active) setError((e as Error).message);
+        if (active) setInventoryError((e as Error).message);
       } finally {
         pending = false;
         if (active) setLoading(false);
@@ -113,6 +115,7 @@ export default function RecordingRecoveryCenter({
   const open = async (mode: CompletionMode) => {
     if (!saved) return;
     setBusy(true);
+    setError("");
     try {
       await onComplete(saved.id, { mode, engine: saved.engine });
     } catch (e) {
@@ -142,6 +145,11 @@ export default function RecordingRecoveryCenter({
       {error && (
         <p className="recovery-center-error" role="alert">
           {error}
+        </p>
+      )}
+      {inventoryError && (
+        <p className="recovery-center-error" role="status">
+          {inventoryError}
         </p>
       )}
       {review && (
@@ -178,6 +186,7 @@ export default function RecordingRecoveryCenter({
       {saved && (
         <section className="recovery-saved" role="status">
           <strong>录音与 {saved.notes} 条简记已保存</strong>
+          <RecordingReceipt id={saved.id} engine={saved.engine} />
           <p>可以先打开会议核对，也可以复用实时识别结果补齐文字稿。</p>
           <button
             className="primary"

@@ -544,6 +544,7 @@ export default function App() {
   ) => {
     setUploading(true);
     let created: Meeting | null = null;
+    let reusedHandoff = false;
     const followUpErrors: string[] = [];
     try {
       created = await api.meeting(meetingId);
@@ -568,8 +569,9 @@ export default function App() {
             );
           if (requested && !consent)
             followUpErrors.push("未授权云端纪要，本次只生成文字稿");
-          await api.transcribe(created.id, {
+          const task = await api.transcribe(created.id, {
             ...plan,
+            recording_handoff: true,
             ...(requested && consent
               ? {
                   minutes_followup: {
@@ -590,24 +592,28 @@ export default function App() {
                 }
               : {}),
           });
+          reusedHandoff = !!task.reused;
         }
       } catch (error) {
-        followUpErrors.push(`转写未启动：${(error as Error).message}`);
+        throw new Error(
+          `会后任务尚未确认，可安全重试：${(error as Error).message}`,
+        );
       }
       await client.invalidateQueries({ queryKey: ["meetings"] });
+      const opened = await openMeeting(created.id);
+      if (!opened)
+        throw new Error("本机会议已保存，打开暂未成功，请重试进入会后整理");
       setRecordingOpen(false);
-      await openMeeting(created.id);
       setWorkspace("notes");
       toast(
-        followUpErrors.length
-          ? `录音已保存；${followUpErrors.join("；")}`
-          : options.mode === "none"
-            ? `录音和 ${created.notes.length} 条简记已保存，可稍后转写`
-            : `录音和 ${created.notes.length} 条简记已保存，文字稿正在本机生成${options.goal === "minutes" ? "，完成后自动排队纪要" : ""}`,
+        reusedHandoff
+          ? "已打开会议，沿用首次交接的任务。处理状态可在运行管理查看，失败或取消的任务可在那里重试。"
+          : followUpErrors.length
+            ? `录音已保存；${followUpErrors.join("；")}`
+            : options.mode === "none"
+              ? `录音和 ${created.notes.length} 条简记已保存，可稍后转写`
+              : `录音和 ${created.notes.length} 条简记已保存，文字稿正在本机生成${options.goal === "minutes" ? "，完成后自动排队纪要" : ""}`,
       );
-    } catch (error) {
-      toast((error as Error).message);
-      if (!created) throw error;
     } finally {
       setUploading(false);
     }
