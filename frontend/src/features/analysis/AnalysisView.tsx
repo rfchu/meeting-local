@@ -58,6 +58,7 @@ export default function AnalysisView({
             value={model}
             onChange={(e) => onModel(e.target.value)}
           >
+            <option value="">请选择模型配置</option>
             {profiles.length ? (
               profiles.map((item) => (
                 <option value={item.id} key={item.id}>

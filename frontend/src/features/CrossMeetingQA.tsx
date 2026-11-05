@@ -1,5 +1,4 @@
 import { useModelChoice } from "../preferences/useModelChoice";
-import { resolveModelChoice } from "../preferences/modelChoices";
 import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import type { LLMConfig, MeetingSummary } from "../types";
@@ -40,13 +39,6 @@ export default function CrossMeetingQA({
       .then(([env, rows]) => {
         if (!live) return;
         setProfiles(env.analysis.profiles);
-        setProfileId(
-          resolveModelChoice(
-            profileId,
-            env.analysis.profiles.map((p) => p.id),
-            env.analysis.default_profile_id || "",
-          ),
-        );
         setHistory(rows);
       })
       .catch((e) => live && setError(e.message));
@@ -181,7 +173,7 @@ export default function CrossMeetingQA({
                   setProfileId(e.target.value);
                 }}
               >
-                {!profiles.length && <option value="">请先配置 LLM</option>}
+                <option value="">请选择模型配置</option>
                 {profiles.map((p) => (
                   <option key={p.id} value={p.id}>
                     {p.name} · {p.provider_type === "local" ? "本地" : "云端"} ·{" "}

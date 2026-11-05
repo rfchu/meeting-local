@@ -1,3 +1,4 @@
+import { draftSourceId } from "../overview/notes";
 import { useLayoutEffect, useRef, useState } from "react";
 import type { LiveDraftSegment } from "../../types";
 import { paragraphs } from "../transcript/paragraphs";
@@ -9,11 +10,15 @@ export default function LiveDraftList({
   partial,
   emptyText,
   canAddNote = true,
+  active = true,
+  jump,
 }: {
   drafts: LiveDraftSegment[];
   partial?: LiveDraftSegment | null;
   emptyText?: string;
   canAddNote?: boolean;
+  active?: boolean;
+  jump?: { id: string; nonce: number } | null;
   onAddNote: (draft: LiveDraftSegment) => void;
 }) {
   const list = useRef<HTMLDivElement>(null),
@@ -35,6 +40,21 @@ export default function LiveDraftList({
       setUnread(0);
     } else if (added) setUnread((old) => old + added);
   }, [drafts, partial?.text]);
+  useLayoutEffect(() => {
+    if (!active || !jump || !list.current) return;
+    const target = [
+      ...list.current.querySelectorAll<HTMLElement>("[data-live-ids]"),
+    ].find((el) => el.dataset.liveIds?.split(",").includes(jump.id));
+    if (target) {
+      following.current = false;
+      setFollow(false);
+      target.scrollIntoView({ block: "center" });
+    }
+  }, [jump, active]);
+  useLayoutEffect(() => {
+    if (active && following.current && list.current)
+      list.current.scrollTop = list.current.scrollHeight;
+  }, [active]);
   const groups = paragraphs(drafts);
   return (
     <>
@@ -84,11 +104,20 @@ export default function LiveDraftList({
         {groups.map((draft, index) => (
           <article
             key={`${draft.start}-${index}`}
-            className={
+            data-live-ids={draft.parts
+              .map(draftSourceId)
+              .filter(Boolean)
+              .join(",")}
+            className={[
               index === groups.length - 1 && !partial
                 ? "live-draft-latest"
-                : undefined
-            }
+                : "",
+              jump && draft.parts.some((p) => draftSourceId(p) === jump.id)
+                ? "live-draft-selected"
+                : "",
+            ]
+              .filter(Boolean)
+              .join(" ")}
           >
             <b>{clock(draft.start)}</b>
             <p>

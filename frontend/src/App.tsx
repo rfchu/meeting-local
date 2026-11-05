@@ -1,3 +1,8 @@
+import RuntimeManagement, {
+  type ManagementPage,
+} from "./features/management/RuntimeManagement";
+import OverviewArchiveButton from "./features/overview/OverviewArchiveButton";
+import SampleMeetingDialog from "./features/onboarding/SampleMeetingDialog";
 import RecordingRecoveryCenter from "./features/notes/RecordingRecoveryCenter";
 import { recordingRecoveryCount } from "./features/notes/recordingInventory";
 import MinutesDeliveryPanel from "./features/minutes/MinutesDeliveryPanel";
@@ -19,7 +24,6 @@ import {
 } from "./features/minutes/composition";
 import MinutesCompare from "./features/minutes/MinutesCompare";
 import { useModelChoice } from "./preferences/useModelChoice";
-import { resolveModelChoice } from "./preferences/modelChoices";
 import FollowupsDialog from "./features/meeting/FollowupsDialog";
 import MeetingPreparation from "./features/meeting/MeetingPreparation";
 import MeetingOutcomes from "./features/meeting/MeetingOutcomes";
@@ -54,12 +58,7 @@ import SearchDialog, { type SearchHit } from "./features/SearchDialog";
 import Sidebar from "./components/Sidebar";
 import Workflow from "./components/Workflow";
 import Player from "./components/Player";
-import {
-  EnvironmentDialog,
-  MinutesPreview,
-  ModelConfigDialog,
-  RenameDialog,
-} from "./components/Dialogs";
+import { MinutesPreview, RenameDialog } from "./components/Dialogs";
 import TranscriptView from "./features/transcript/TranscriptView";
 import AnalysisView from "./features/analysis/AnalysisView";
 import MinutesView from "./features/minutes/MinutesView";
@@ -135,17 +134,21 @@ export default function App() {
     setMinutesDraft(minutesDraftRef.current.draft);
     setMinutesDirty(false);
   };
-  const [analysisModel, setAnalysisModel] = useModelChoice("analysis"),
-    [minutesModel, setMinutesModel] = useModelChoice("minutes"),
+  const [analysisModel, setAnalysisModel] = useModelChoice(
+      "analysis",
+      meeting?.id,
+    ),
+    [minutesModel, setMinutesModel] = useModelChoice("minutes", meeting?.id),
     [generating, setGenerating] = useState(false);
   const [uploading, setUploading] = useState(false),
     [toastText, setToastText] = useState(""),
     [renameOpen, setRenameOpen] = useState(false),
-    [environmentOpen, setEnvironmentOpen] = useState(false),
-    [modelsOpen, setModelsOpen] = useState(false),
     [previewOpen, setPreviewOpen] = useState(false),
     [recordingOpen, setRecordingOpen] = useState(false),
     [recoveryOpen, setRecoveryOpen] = useState(false);
+  const [managementPage, setManagementPage] = useState<ManagementPage | null>(
+    null,
+  );
   const recoveryQuery = useQuery({
     queryKey: ["recording-recoveries"],
     queryFn: recoverableRecordings,
@@ -159,7 +162,7 @@ export default function App() {
   const [searchOpen, setSearchOpen] = useState(false);
   const [followupsOpen, setFollowupsOpen] = useState(false);
   const [searchTarget, setSearchTarget] = useState<SearchHit | null>(null);
-  const [engine, setEngine] = useModelChoice("transcription"),
+  const [engine, setEngine] = useModelChoice("transcription", meeting?.id),
     [diarization, setDiarization] = useState(false),
     [numSpeakers, setNumSpeakers] = useState(0);
   const pausePlaybackRef = useRef<(() => void) | null>(null);
@@ -176,24 +179,18 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    const failed = (event: Event) =>
+      toast(
+        "本场模型选择已保留，但未同步到后端：" +
+          (event as CustomEvent<string>).detail,
+      );
+    window.addEventListener("tingji-model-preference-error", failed);
+    return () =>
+      window.removeEventListener("tingji-model-preference-error", failed);
+  }, [toast]);
+  useEffect(() => {
     const env = envQuery.data;
     if (!env) return;
-    const value =
-      env.analysis.default_profile_id || env.analysis.models[0] || "";
-    const choices = env.analysis.profiles.length
-      ? env.analysis.profiles.map((p) => p.id)
-      : env.analysis.models;
-    if (choices.length) {
-      setAnalysisModel(resolveModelChoice(analysisModel, choices, value));
-      setMinutesModel(resolveModelChoice(minutesModel, choices, value));
-    }
-    setEngine(
-      resolveModelChoice(
-        engine,
-        env.engines.map((item) => item.id),
-        env.default_engine || "whisper",
-      ),
-    );
     if (env.diarization_ready && !meeting) setDiarization(true);
   }, [envQuery.data, meeting, analysisModel, minutesModel, engine]);
   useEffect(() => {
@@ -670,6 +667,11 @@ export default function App() {
     const target = meetingRef.current;
     if (!target || generating) return;
     const options = { ...minutesOptions };
+    if (
+      !minutesModel &&
+      !(options.method === "analysis" && currentAnalysis(target))
+    )
+      return toast("请先选择纪要模型配置");
     const profile = environment?.analysis.profiles.find(
       (p) => p.id === minutesModel,
     );
@@ -787,14 +789,13 @@ export default function App() {
         onSelect={(id) => void openMeeting(id)}
         onUpload={(file) => void upload(file)}
         onRecord={() => setRecordingOpen(true)}
-        onModels={() => setModelsOpen(true)}
+        onManage={() => setManagementPage("overview")}
         onSearch={() => setSearchOpen(true)}
         onFollowups={() =>
           environment?.meeting_flow_ready
             ? setFollowupsOpen(true)
             : toast("跨会议跟进需在录音和任务结束后更新服务，现有内容已保留。")
         }
-        onEnvironment={() => setEnvironmentOpen(true)}
         recoveryCount={recordingRecoveryCount(recoveryQuery.data || [])}
         onRecovery={() => setRecoveryOpen(true)}
       />
@@ -919,6 +920,11 @@ export default function App() {
                 </div>
               </details>
               <button onClick={() => setRenameOpen(true)}>重命名</button>
+              <OverviewArchiveButton
+                key={meeting.id}
+                meeting={meeting}
+                onSeek={(time) => seekRef.current?.(time)}
+              />
               <select
                 value=""
                 aria-label="导出格式"
@@ -1163,7 +1169,7 @@ export default function App() {
                     model={analysisModel}
                     onModel={setAnalysisModel}
                     onGenerate={() => void generateAnalysis()}
-                    onConfigure={() => setModelsOpen(true)}
+                    onConfigure={() => setManagementPage("models")}
                     onJobAction={(id, action) => void jobAction(id, action)}
                     onSeek={(time) => seekRef.current?.(time)}
                     transcriptDirty={transcriptDirty}
@@ -1366,9 +1372,10 @@ export default function App() {
       {searchOpen && (
         <SearchDialog
           meetings={listQuery.data || []}
+          onManageIndex={() => setManagementPage("index")}
           onConfigure={() => {
             setSearchOpen(false);
-            setModelsOpen(true);
+            setManagementPage("models");
           }}
           onClose={() => setSearchOpen(false)}
           onOpen={async (hit) => {
@@ -1399,15 +1406,28 @@ export default function App() {
           }}
         />
       )}
-      {environmentOpen && environment && (
-        <EnvironmentDialog
-          environment={environment}
-          onClose={() => setEnvironmentOpen(false)}
-        />
-      )}
-      {modelsOpen && (
-        <ModelConfigDialog
-          onClose={() => setModelsOpen(false)}
+      {managementPage && (
+        <RuntimeManagement
+          onRecording={() => {
+            setManagementPage(null);
+            setRecordingOpen(true);
+          }}
+          onSearch={() => {
+            setManagementPage(null);
+            setSearchOpen(true);
+          }}
+          onOpenMeeting={(id) => {
+            if (recordingOpen) {
+              toast("请先返回录音现场；结束录音后可打开其他会议。");
+              return;
+            }
+            setManagementPage(null);
+            setSearchOpen(false);
+            void openMeeting(id);
+          }}
+          page={managementPage}
+          onPage={setManagementPage}
+          onClose={() => setManagementPage(null)}
           onChanged={() =>
             void client.invalidateQueries({ queryKey: ["environment"] })
           }
@@ -1490,7 +1510,7 @@ export default function App() {
             });
           }}
           onComplete={completeRecording}
-          onModels={() => setModelsOpen(true)}
+          onModels={() => setManagementPage("models")}
           toast={toast}
         />
       )}
@@ -1506,8 +1526,12 @@ function Welcome({
   onRecord: () => void;
 }) {
   const [dragging, setDragging] = useState(false);
+  const [sampleOpen, setSampleOpen] = useState(false);
   return (
     <section id="welcome">
+      {sampleOpen && (
+        <SampleMeetingDialog onClose={() => setSampleOpen(false)} />
+      )}
       <div className="eyebrow">把讨论，留成清晰的记录</div>
       <h1>
         让每一次会议
@@ -1543,6 +1567,9 @@ function Welcome({
         <span>●</span>
         <strong>直接开始会议录音</strong>
         <small>录音时可随手记下重点、问题、决策和待办</small>
+      </button>
+      <button className="text-btn" onClick={() => setSampleOpen(true)}>
+        先体验样例会议 · 无需配置模型 →
       </button>
       <div className="features">
         <div>

@@ -203,9 +203,16 @@ class Retrieval:
             where=' WHERE '+' AND '.join(filters) if filters else ''
             rows=[dict(row) for row in db.execute('SELECT id,content,metadata,fingerprint FROM retrieval_units'+where,args)]
             lexical=[]
+            from .terminology import search_forms,unpack
+            scoped={}
+            for term in db.execute("SELECT * FROM terminology WHERE status='confirmed'"):
+                scoped.setdefault(term['scope'],[]).append(unpack(term))
             for row in rows:
                 text=(json.loads(row['metadata'])['title']+' '+row['content']).lower()
                 score=sum(text.count(token) for token in tokens)
+                mid=json.loads(row['metadata'])['meeting_id']
+                forms=search_forms(query,scoped.get('library',[])+scoped.get(mid,[]))
+                score=max(score,max((text.count(form) for form in forms),default=0))
                 if score:lexical.append((row['id'],score))
             lexical.sort(key=lambda pair:(-pair[1],pair[0]))
             semantic=[]

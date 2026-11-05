@@ -1,5 +1,4 @@
 import { useModelChoice } from "../../preferences/useModelChoice";
-import { resolveModelChoice } from "../../preferences/modelChoices";
 import { useEffect, useRef, useState } from "react";
 import { api } from "../../api";
 import Modal from "../../components/Modal";
@@ -42,23 +41,24 @@ export default function SpeakerReviewDialog({
       .configs()
       .then((configs) => {
         setProfiles(configs);
-        setProfile(
-          resolveModelChoice(
-            profile,
-            configs.map((p) => p.id),
-            configs.find((p) => p.is_default)?.id,
-          ),
-        );
       })
       .catch((error) => toast(error.message));
   }, []);
-  const defaultProfile = profiles.find((p) => p.is_default) || profiles[0];
   const listen = (time: number) => {
     if (!audio.current) return;
     audio.current.currentTime = time;
     void audio.current.play().catch((error) => toast(error.message));
   };
   const generate = async () => {
+    const selected = profiles.find((p) => p.id === profile);
+    if (!selected) return toast("请先选择模型配置");
+    if (
+      selected.provider_type === "cloud" &&
+      !window.confirm(
+        `本场文字稿将发送至 ${selected.name}（${selected.base_url}）进行发言人复核，是否继续？`,
+      )
+    )
+      return;
     setBusy(true);
     try {
       await onSave();
@@ -128,24 +128,13 @@ export default function SpeakerReviewDialog({
               .configs()
               .then((configs) => {
                 setProfiles(configs);
-                setProfile(
-                  resolveModelChoice(
-                    profile,
-                    configs.map((p) => p.id),
-                    configs.find((p) => p.is_default)?.id,
-                  ),
-                );
               })
               .catch((error) => toast(error.message))
           }
           onChange={(e) => setProfile(e.target.value)}
           disabled={busy}
         >
-          <option value="">
-            {defaultProfile
-              ? `默认：${defaultProfile.name} · ${defaultProfile.provider_type === "cloud" ? "云端" : "本地"}`
-              : "LM Studio（本地）"}
-          </option>
+          <option value="">请选择模型配置</option>
           {profiles.map((p) => (
             <option value={p.id} key={p.id}>
               {p.name} · {p.provider_type === "cloud" ? "云端" : "本地"}

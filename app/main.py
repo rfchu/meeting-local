@@ -1,3 +1,6 @@
+from .task_management import register_task_management,retry_blocker,classify
+from .model_preferences import register_model_preferences,resolve_profile
+from .runtime_management import register_runtime_management
 from .interview import InterviewPreparation
 import asyncio, sqlite3, io, hashlib, json, os, shutil, subprocess, tempfile, threading, time, wave
 from contextlib import asynccontextmanager
@@ -35,6 +38,10 @@ from .auto_minutes import MinutesFollowupInput,prepare as prepare_auto_minutes
 from . import meeting_flow,minutes_delivery
 from .local_embedding import local_embedding
 from .retrieval import Retrieval
+from .terminology import register_terms
+from .capture_probe import CaptureProbe
+from .onboarding import register_onboarding
+from .live_overview import LiveOverview,register_overview
 
 BASE=Path(__file__).resolve().parents[1]
 
@@ -83,6 +90,8 @@ class LLMConfigInput(BaseModel):
 class RenameInput(BaseModel):
     title: str=Field(min_length=1,max_length=200)
 class MeetingNoteInput(BaseModel):
+    client_id: str=Field(default='',max_length=100)
+    overview_focus: bool=False
     captured_at: float=Field(default=0,ge=0,allow_inf_nan=False)
     note_type: Literal['note','highlight','question','decision','action']='note'
     raw_text: str=Field(default='',max_length=5000)
@@ -182,6 +191,7 @@ class NativeDraftInput(BaseModel):
     responsive: bool=False
     window_seconds: Literal[5,10,15]=15
 class LiveSessionInput(BaseModel):
+    engine: Literal["whisper","qwen"]="qwen"
     prefix_enabled: bool=True
     responsive: bool=True
     context_enabled: bool=True
@@ -238,9 +248,13 @@ def create_app(data_dir=None, start_worker=True):
         store.execute("UPDATE live_asr_ranges SET state='failed',error='服务重启，识别未完成；快速完成会补识别该范围' WHERE state='running'")
         await live_sessions.resume()
         native_capture.start_monitor()
+        capture_probes.start_monitor()
+        live_overview.start_monitor()
         keep_awake.start_monitor()
         yield
+        await run_in_threadpool(live_overview.close)
         await live_sessions.close()
+        await run_in_threadpool(capture_probes.close)
         await run_in_threadpool(keep_awake.close)
         await run_in_threadpool(native_capture.close)
         await run_in_threadpool(worker.close)
@@ -251,6 +265,9 @@ def create_app(data_dir=None, start_worker=True):
     app.state.store=store; app.state.worker=worker
     recordings=RecordingStore(store)
     native_capture=NativeCapture(store,recordings)
+    capture_probes=CaptureProbe(native_capture)
+    app.state.capture_probes=capture_probes
+    register_onboarding(app,store,native_capture,capture_probes)
     def recording_open(rid):
         try:return recordings.read(rid).get('state')!='completed' and not store.one('SELECT id FROM meetings WHERE id=?',(rid,))
         except (FileNotFoundError,ValueError):return False
@@ -262,8 +279,15 @@ def create_app(data_dir=None, start_worker=True):
     live_results=LiveResults(store,recordings)
     live_asr_lock=threading.Lock()
     resident=QwenResident(store.root)
-    live_sessions=LiveSessions(store,recordings,native_capture,live_results,live_asr_lock,resident,lambda:get_asr_provider("qwen"))
+    live_sessions=LiveSessions(store,recordings,native_capture,live_results,live_asr_lock,resident,lambda:get_asr_provider("qwen"),lambda:get_asr_provider("whisper"))
+    register_runtime_management(app,store,native_capture,resident,capture_probes)
+    register_model_preferences(app,store)
+    register_task_management(app,store,worker)
     app.state.live_sessions=live_sessions
+    live_overview=LiveOverview(store,recordings,live_results)
+    app.state.live_overview=live_overview
+    register_overview(app,live_overview)
+    register_terms(app,store,recordings)
 
     @app.middleware('http')
     async def local_only(request:Request,call_next):
@@ -290,6 +314,7 @@ def create_app(data_dir=None, start_worker=True):
         return MinutesTemplate.model_validate(json.loads(row['definition']))
     def decorated(row):
         row['segments']=json.loads(row['segments'])
+        row['live_overview_available']=bool(store.one('SELECT 1 FROM live_overview_snapshots WHERE recording_id=? LIMIT 1',(row['id'],)))
         row['jobs']=store.all('SELECT * FROM jobs WHERE meeting_id=? ORDER BY created DESC,rowid DESC',(row['id'],))
         row['revisions']=store.all('SELECT revision,created,source FROM revisions WHERE meeting_id=? ORDER BY revision DESC',(row['id'],))
         artifacts=store.all('SELECT * FROM artifacts WHERE meeting_id=? ORDER BY created DESC,rowid DESC',(row['id'],))
@@ -394,6 +419,7 @@ def create_app(data_dir=None, start_worker=True):
         finally:file.file.close()
     @app.put('/api/retrieval/config')
     def retrieval_configure(body:RetrievalConfigInput):
+        if store.one("SELECT 1 FROM live_sessions WHERE status IN ('running','paused','draining') LIMIT 1"):raise HTTPException(409,'实时识别期间不切换向量模型，请在录音结束后测试并保存')
         profile=store.one('SELECT * FROM llm_configs WHERE id=?',(body.profile_id,))
         if body.provider=='external' and not profile:raise HTTPException(404,'本地模型配置不存在')
         if worker.busy_jid or not live_asr_lock.acquire(blocking=False):raise HTTPException(409,'正在处理录音或正式任务，请稍后配置向量模型')
@@ -497,7 +523,9 @@ def create_app(data_dir=None, start_worker=True):
                     except RuntimeError as error:raise HTTPException(503,str(error))
                     segments=[{'start':round(offset+max(0,min(duration,s['start'])),3),
                         'end':round(offset+max(0,min(duration,s['end'])),3),'text':s['text']} for s in part if s['text'].strip()]
-            if aid:live_results.complete(aid,segments)
+            if aid:
+                live_results.complete(aid,segments)
+                segments=[dict(s,live_range_id=aid,live_segment_index=i) for i,s in enumerate(segments)]
             return response(segments)
         except BaseException as error:
             if aid:live_results.fail(aid,getattr(error,'detail',str(error)) or '识别请求中断')
@@ -581,6 +609,12 @@ def create_app(data_dir=None, start_worker=True):
     @app.put('/api/llm-configs/{cid}')
     def update_llm_config(cid:str,body:LLMConfigInput):
         old=llm_config(cid)
+        changed=(body.provider_type!=old['provider_type'] or body.base_url.rstrip('/')!=old['base_url'].rstrip('/') or body.model.strip()!=old['model'] or
+            body.context_window!=old['context_window'] or body.analysis_chunk_mode!=old['analysis_chunk_mode'] or body.analysis_chunk_chars!=old['analysis_chunk_chars'] or
+            body.clear_api_key or bool(body.api_key and body.api_key.strip()!=old['api_key']))
+        if changed:
+            for job in store.all("SELECT config FROM jobs WHERE state IN ('queued','running')"):
+                if json.loads(job['config']).get('profile_id')==cid:raise HTTPException(409,'此模型正被任务使用，请在任务完成后修改连接或推理参数；功能默认方案仍可独立调整')
         try:base_url=validate_llm_endpoint(body.provider_type,body.base_url)
         except ValueError as error:raise HTTPException(400,str(error))
         api_key='' if body.clear_api_key else ((body.api_key or '').strip() or old['api_key'])
@@ -597,7 +631,7 @@ def create_app(data_dir=None, start_worker=True):
     @app.delete('/api/llm-configs/{cid}')
     def delete_llm_config(cid:str):
         old=llm_config(cid)
-        for job in store.all("SELECT config FROM jobs WHERE kind='analysis' AND state IN ('queued','running')"):
+        for job in store.all("SELECT config FROM jobs WHERE state IN ('queued','running')"):
             if json.loads(job['config']).get('profile_id')==cid:raise HTTPException(409,'该配置正在被分析任务使用')
         with store.connect() as db:
             db.execute('BEGIN IMMEDIATE');db.execute('DELETE FROM llm_configs WHERE id=?',(cid,))
@@ -649,7 +683,9 @@ def create_app(data_dir=None, start_worker=True):
     @app.post('/api/native-capture',status_code=201)
     def native_start(body:NativeRecordingInput):
         try:
-            session=native_capture.start(body.microphone)
+            with capture_probes.lock:
+                if capture_probes.active():raise ValueError('正在试录，请先完成或取消测试')
+                session=native_capture.start(body.microphone)
             if body.keep_awake:keep_awake.acquire(session['id'])
             return session
         except (ValueError,OSError) as error:raise HTTPException(409,str(error))
@@ -862,7 +898,7 @@ def create_app(data_dir=None, start_worker=True):
         if not segments:raise HTTPException(409,'请先完成文字稿')
         speakers={s['speaker'] for s in segments if s.get('speaker') and s['speaker']!='未分配'}
         if len(speakers)<2:raise HTTPException(409,'请先完成声学发言人区分或手动标注至少两位发言人')
-        profile=llm_config(body.profile_id) if body.profile_id else store.one('SELECT * FROM llm_configs ORDER BY is_default DESC,created,rowid LIMIT 1')
+        profile=resolve_profile(store,'speakers',body.profile_id)
         try:
             provider=OpenAICompatibleProvider(profile) if profile else LMStudioProvider()
             model=provider.resolve_model(body.model);aid=uid()
@@ -969,10 +1005,7 @@ def create_app(data_dir=None, start_worker=True):
         if not note:raise HTTPException(404,'简记不存在')
         if not note['raw_text'].strip():raise HTTPException(409,'时间标记需要先补充内容，再请求扩写')
         if not row['revision']:raise HTTPException(409,'请先完成文字稿，再关联依据扩写')
-        profile=None
-        if body.profile_id:profile=llm_config(body.profile_id)
-        elif store.one('SELECT id FROM llm_configs LIMIT 1'):
-            profile=store.one('SELECT * FROM llm_configs ORDER BY is_default DESC,created,rowid LIMIT 1')
+        profile=resolve_profile(store,'notes',body.profile_id)
         try:
             if profile:
                 provider=OpenAICompatibleProvider(profile);model=provider.resolve_model(body.model)
@@ -1034,6 +1067,8 @@ def create_app(data_dir=None, start_worker=True):
                 raise HTTPException(409,'请先取消任务，等待处理停止后删除')
             if db.execute('SELECT 1 FROM meeting_task_links l JOIN note_todos t ON t.id=l.task_id WHERE t.meeting_id=? AND l.meeting_id!=?',(mid,mid)).fetchone():
                 raise HTTPException(409,'该会议有带入其他会议的跟进项，请先在关联会议移除关联后再删除')
+            db.execute('DELETE FROM terminology WHERE scope=?',(mid,))
+            for table in ('live_overview_runs','live_overview_snapshots','live_overview_reviews'):db.execute(f'DELETE FROM {table} WHERE recording_id=?',(mid,))
             db.execute('DELETE FROM live_asr_ranges WHERE recording_id=?',(mid,))
             db.execute('DELETE FROM live_corrections WHERE recording_id=?',(mid,))
             for table in ('live_sessions','live_session_events','live_pcm_inputs'):db.execute(f'DELETE FROM {table} WHERE recording_id=?',(mid,))
@@ -1074,10 +1109,7 @@ def create_app(data_dir=None, start_worker=True):
     def enqueue_analysis(mid:str,body:AnalysisJobInput):
         row=meeting(mid)
         if not row['revision']:raise HTTPException(409,'请先完成并校对文字稿')
-        profile=None
-        if body.profile_id:profile=llm_config(body.profile_id)
-        elif store.one('SELECT id FROM llm_configs LIMIT 1'):
-            profile=store.one('SELECT * FROM llm_configs ORDER BY is_default DESC,created,rowid LIMIT 1')
+        profile=resolve_profile(store,'analysis',body.profile_id)
         try:
             if profile:
                 provider=OpenAICompatibleProvider(profile);model=provider.resolve_model(body.model)
@@ -1102,7 +1134,12 @@ def create_app(data_dir=None, start_worker=True):
     @app.post('/api/jobs/{jid}/cancel')
     def cancel(jid:str):
         if not store.one('SELECT id FROM jobs WHERE id=?',(jid,)): raise HTTPException(404,'任务不存在')
-        store.execute("UPDATE jobs SET state='cancelled',stage='已取消' WHERE id=? AND state IN ('running','queued')",(jid,)); return {'ok':True}
+        with store.connect() as db:
+            db.execute('BEGIN IMMEDIATE')
+            old=db.execute('SELECT state FROM jobs WHERE id=?',(jid,)).fetchone()
+            changed=db.execute("UPDATE jobs SET state='cancelled',stage='已取消' WHERE id=? AND state IN ('running','queued')",(jid,)).rowcount
+            if changed:db.execute("INSERT INTO job_runtime_events(job_id,action,from_state) VALUES(?,'cancel',?)",(jid,old['state']))
+        return {'ok':True}
     @app.post('/api/jobs/{jid}/retry')
     def retry(jid:str):
         if worker.busy_jid==jid: raise HTTPException(409,'处理进程正在退出，请稍后重试')
@@ -1110,9 +1147,11 @@ def create_app(data_dir=None, start_worker=True):
             db.execute('BEGIN IMMEDIATE')
             job=db.execute('SELECT * FROM jobs WHERE id=?',(jid,)).fetchone()
             if not job: raise HTTPException(404,'任务不存在')
-            if job['state'] not in ('failed','cancelled'): raise HTTPException(409,'此任务不能重试')
+            blocked=retry_blocker(store,dict(job),worker)
+            if blocked:raise HTTPException(409,blocked)
             if db.execute("SELECT 1 FROM jobs WHERE meeting_id=? AND state IN ('running','queued')",(job['meeting_id'],)).fetchone(): raise HTTPException(409,'已有任务正在处理')
-            db.execute("UPDATE jobs SET state='queued',error='',stage='等待恢复' WHERE id=?",(jid,))
+            db.execute("UPDATE jobs SET state='queued',error='',progress=0,stage='等待恢复' WHERE id=?",(jid,))
+            db.execute("INSERT INTO job_runtime_events(job_id,action,from_state,error_code) VALUES(?,'retry',?,?)",(jid,job['state'],classify(job['error'])['code'] if job['error'] else None))
         return {'ok':True}
     @app.put('/api/meetings/{mid}/transcript')
     def save(mid:str,body:RevisionInput):
@@ -1315,10 +1354,7 @@ def create_app(data_dir=None, start_worker=True):
                 source_ids={sid for item in canonical.all_items() for sid in item.source_segment_ids}|set(canonical.basic_info_source_segment_ids)
                 segments=[segment for segment in segments if segment['id'] in source_ids]
                 if not segments:raise HTTPException(409,'此纪要没有原文依据，不能用 AI 派生；可继续人工编辑或从全文重新生成')
-        profile=None
-        if body.profile_id:profile=llm_config(body.profile_id)
-        elif store.one('SELECT id FROM llm_configs LIMIT 1'):
-            profile=store.one('SELECT * FROM llm_configs ORDER BY is_default DESC,created,rowid LIMIT 1')
+        profile=resolve_profile(store,'minutes',body.profile_id)
         try:
             if profile:
                 provider=OpenAICompatibleProvider(profile);model=provider.resolve_model(body.model)
@@ -1378,10 +1414,7 @@ def create_app(data_dir=None, start_worker=True):
         segments=json.loads(row['segments']);valid_ids={segment['id'] for segment in segments}
         try:validate_minutes_citations(document,valid_ids)
         except ValueError as error:raise HTTPException(400,str(error))
-        profile=None
-        if body.profile_id:profile=llm_config(body.profile_id)
-        elif store.one('SELECT id FROM llm_configs LIMIT 1'):
-            profile=store.one('SELECT * FROM llm_configs ORDER BY is_default DESC,created,rowid LIMIT 1')
+        profile=resolve_profile(store,'minutes',body.profile_id)
         try:
             if profile:
                 provider=OpenAICompatibleProvider(profile);model=provider.resolve_model(body.model)

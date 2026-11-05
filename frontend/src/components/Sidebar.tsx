@@ -17,9 +17,8 @@ interface Props {
   onUpload: (file: File) => void;
   onRecord: () => void;
   onFollowups: () => void;
-  onModels: () => void;
+  onManage: () => void;
   onSearch: () => void;
-  onEnvironment: () => void;
   onRecovery: () => void;
   recoveryCount: number;
 }
@@ -33,9 +32,8 @@ export default function Sidebar({
   onUpload,
   onRecord,
   onFollowups,
-  onModels,
+  onManage,
   onSearch,
-  onEnvironment,
   onRecovery,
   recoveryCount,
 }: Props) {
@@ -117,11 +115,8 @@ export default function Sidebar({
             <span className="recovery-count">{recoveryCount}</span>
           )}
         </button>
-        <button className="text-btn" onClick={onModels}>
-          LLM 模型配置 ↗
-        </button>
-        <button className="text-btn" onClick={onEnvironment}>
-          运行环境 ↗
+        <button className="text-btn" onClick={onManage}>
+          运行管理 ↗
         </button>
       </div>
     </aside>

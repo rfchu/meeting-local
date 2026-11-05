@@ -20,6 +20,9 @@ def recognition_context(cache,rid,offset,terms='',enabled=True):
                 if i<len(segments) and segments[i]['text']==correction['original_text']:
                     segments[i]['text']=apply_edits(correction['original_text'],json.loads(correction['edits']))
             previous.append((row['start_frame'],''.join(s['text'] for s in segments)))
+    from .terminology import recognition_terms
+    saved=recognition_terms(cache.store,rid)
+    terms='\n'.join(part for part in (terms.strip(),saved) if part)[:1000]
     data={'会议主题':str(brief.get('title',''))[:200],'计划参会人':str(brief.get('participants',''))[:500],
           '讨论背景':str(brief.get('agenda',''))[:500],'参考术语':terms.strip()[:1000],
           '前文参考':'\n'.join(text for _,text in sorted(previous))[-1000:]}

@@ -8,7 +8,7 @@ PAUSE_SECONDS=.8
 FRAME_SAMPLES=320
 ENERGY=.003
 
-def acoustic_pause(raw,minimum=3):
+def acoustic_pause(raw,minimum=3,sentence_end=None):
     samples=array('h');samples.frombytes(raw)
     quiet=0;leading=0;seen_voice=False;cut=None
     for start in range(0,len(samples),FRAME_SAMPLES):
@@ -19,17 +19,22 @@ def acoustic_pause(raw,minimum=3):
             quiet+=len(block)
             if not seen_voice:leading+=len(block)
             end=start+len(block)
-            if quiet>=round(PAUSE_SECONDS*RATE) and end>=round(minimum*RATE):cut=end;break
+            long_pause=quiet>=round(PAUSE_SECONDS*RATE)
+            # Short pauses only count near the end of an already decoded sentence.
+            sentence_pause=(sentence_end is not None and quiet>=round(.4*RATE) and
+                abs((end-quiet)/RATE-sentence_end)<=.6)
+            if (long_pause or sentence_pause) and end>=round(minimum*RATE):cut=end;break
         else:quiet=0;seen_voice=True
     return cut,leading/RATE
 
-def elastic_plan(raw,target,forced=None):
+def elastic_plan(raw,target,forced=None,sentence_end=None):
     raw=raw[:HARD_SECONDS*RATE*2]
     available=len(raw)//2
     minimum=.5 if forced else 3
     if available<round(minimum*RATE):return None
-    cut,leading=acoustic_pause(raw,minimum)
-    if cut is not None:count=cut;reason='silence';confirmed=True
+    cut,leading=acoustic_pause(raw,minimum,sentence_end)
+    if cut is not None:
+        count=cut;reason='sentence_pause' if sentence_end is not None and acoustic_pause(raw[:cut*2],minimum)[0] is None else 'silence';confirmed=True
     elif forced:count=available;reason=forced;confirmed=True
     elif available>=HARD_SECONDS*RATE:count=HARD_SECONDS*RATE;reason='hard_limit';confirmed=True
     elif available>=round(target*RATE):count=available;reason='preview';confirmed=False

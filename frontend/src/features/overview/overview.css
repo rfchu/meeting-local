@@ -1,0 +1,406 @@
+.live-overview-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+}
+.overview-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+.overview-heading h3 {
+  margin: 0;
+  font-size: 15px;
+}
+.overview-heading h2 {
+  margin: 0;
+}
+.overview-heading small {
+  display: block;
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 6px;
+}
+.overview-status,
+.overview-provider {
+  font-size: 12px;
+  color: var(--muted);
+  margin: 12px 0 0;
+  line-height: 1.6;
+}
+.overview-provider {
+  margin-top: 4px;
+  overflow-wrap: anywhere;
+}
+.overview-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin: 12px 0;
+  color: var(--muted);
+  font-size: 11px;
+}
+.overview-toolbar select {
+  max-width: 200px;
+  font-size: 11px;
+}
+.overview-groups {
+  flex: 1;
+  min-height: 80px;
+  overflow-y: auto;
+  padding-right: 3px;
+}
+.overview-empty {
+  padding: 30px 16px;
+  text-align: center;
+  color: var(--muted);
+  line-height: 1.8;
+}
+.overview-empty strong {
+  font-size: 16px;
+  color: var(--text, #263752);
+}
+.overview-empty small {
+  font-size: 12px;
+}
+.overview-group h4 {
+  font-size: 12px;
+  color: var(--muted);
+  margin: 18px 0 8px;
+  font-weight: 600;
+}
+.overview-item {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 12px;
+  margin: 8px 0;
+}
+.overview-item.confirmed {
+  border-left: 3px solid #389a80;
+}
+.overview-item.stale {
+  border-color: #e1c17a;
+}
+.overview-item p {
+  font-size: 13px;
+  line-height: 1.8;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.overview-item small {
+  display: block;
+  color: var(--muted);
+  font-size: 11px;
+  margin: 6px 0;
+}
+.overview-item-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+.overview-item-actions button {
+  font-size: 11px;
+  padding: 5px 8px;
+}
+.overview-evidence blockquote {
+  border-left: 2px solid #d8e1f0;
+  padding: 8px 10px;
+  margin: 10px 0 0;
+  background: #f7f9fc;
+}
+.overview-evidence p {
+  font-size: 12px;
+  color: var(--muted);
+}
+.overview-history-label,
+.overview-ignored {
+  font-size: 12px;
+  color: var(--muted);
+  margin: 12px 0;
+}
+.recording-workbench .workbench-history-wrapper .recording-view-tabs {
+  display: flex;
+  gap: 8px;
+  padding: 0 32px 12px;
+}
+.recording-view-tabs [aria-pressed="true"] {
+  background: var(--accent);
+  color: white;
+}
+.recording-workbench .recording-view-tabs .mobile-only {
+  display: none;
+}
+.recording-workbench .live-overview {
+  display: none;
+  min-width: 0;
+  min-height: 0;
+  padding: 18px;
+  background: white;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+}
+.recording-workbench
+  .recording-workspace[data-mobile-pane="overview"]
+  .live-draft {
+  display: none;
+}
+.recording-workbench
+  .recording-workspace[data-mobile-pane="overview"]
+  .live-overview {
+  display: flex;
+}
+.live-draft-list .live-draft-selected {
+  outline: 2px solid #9eaff5;
+  outline-offset: -2px;
+  background: #f1f4ff;
+}
+.overview-archive-dialog {
+  width: min(850px, calc(100vw - 32px));
+  max-width: none;
+  max-height: calc(100dvh - 32px);
+  box-sizing: border-box;
+  overflow: auto;
+}
+.overview-archive-dialog .overview-groups {
+  max-height: 55dvh;
+}
+@media (max-width: 850px) {
+  .recording-workbench .workbench-history-wrapper .recording-view-tabs {
+    padding: 0 16px 12px;
+    flex-wrap: wrap;
+  }
+  .recording-workbench .recording-view-tabs .mobile-only {
+    display: inline-block;
+  }
+  .recording-workbench
+    .recording-workspace[data-mobile-pane="overview"]
+    .live-notes {
+    display: none;
+  }
+  .recording-workbench
+    .recording-workspace[data-mobile-pane="notes"]
+    .live-overview {
+    display: none;
+  }
+}
+.recording-workbench .live-overview > .live-overview-panel {
+  flex: 1;
+  min-width: 0;
+}
+.live-overview-panel > .overview-heading {
+  height: auto;
+  min-height: 0;
+  position: static;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  flex-shrink: 0;
+}
+.overview-archive-dialog > .overview-heading {
+  position: sticky;
+  top: -30px;
+  background: white;
+  z-index: 2;
+  padding: 12px 0;
+}
+.recording-workbench.focus-mode .workbench-topbar {
+  padding: 12px 24px;
+  gap: 20px;
+}
+.recording-workbench.focus-mode .workbench-topbar > div:first-child {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.recording-workbench.focus-mode .workbench-topbar .eyebrow {
+  display: none;
+}
+.recording-workbench.focus-mode .workbench-topbar h2 {
+  font-size: 18px;
+  margin: 0;
+}
+.recording-workbench.focus-mode .workbench-topbar > div:first-child .text-btn {
+  padding: 5px 8px;
+}
+.recording-workbench .live-overview-panel .overview-groups {
+  overscroll-behavior: contain;
+}
+@media (max-width: 850px) {
+  .recording-workbench.focus-mode .workbench-topbar {
+    padding: 10px 16px;
+    gap: 12px;
+  }
+}
+/* Keep the editor and overview above the status footer in short, narrow windows. */
+@media (max-width: 850px) {
+  .recording-workbench[open].focus-mode .workbench-history-wrapper:not(.ended) {
+    flex: 0 0 auto;
+    min-height: 0;
+  }
+  .recording-workbench.focus-mode .recording-workspace {
+    flex: 0 0 auto;
+    height: 360px;
+  }
+  .recording-workbench.focus-mode
+    .recording-workspace[data-mobile-pane="notes"] {
+    height: 580px;
+  }
+  .recording-workbench.focus-mode
+    .recording-workspace[data-mobile-pane="overview"] {
+    height: 600px;
+  }
+}
+.recording-workbench .live-note-list article > small,
+.recording-workbench .live-note-list .overview-focus-toggle {
+  grid-column: 1 / -1;
+}
+.recording-workbench .live-note-list .overview-focus-toggle {
+  justify-self: start;
+  white-space: nowrap;
+  padding: 5px 0;
+}
+/* Reading comes first; diagnostics and per-item review stay on demand. */
+.overview-header-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.overview-header-actions button {
+  font-size: 11px;
+  padding: 5px 8px;
+}
+.overview-live-state {
+  color: #438471;
+  font-size: 11px;
+  white-space: nowrap;
+}
+.overview-live-state.attention {
+  color: #936d30;
+}
+.overview-details {
+  flex-shrink: 0;
+  max-height: 42%;
+  overflow-y: auto;
+  padding: 0 10px 10px;
+  margin-top: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f8fafd;
+}
+.overview-details[hidden] {
+  display: none;
+}
+.overview-quiet-warning {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: #936d30;
+  font-size: 11px;
+  padding: 8px 0 0;
+  flex-shrink: 0;
+}
+.overview-quiet-warning button {
+  padding: 4px 6px;
+  font-size: 11px;
+}
+.live-overview-panel > .overview-groups {
+  padding-top: 12px;
+}
+.overview-group h4 {
+  margin: 12px 0 4px;
+  color: #778497;
+  font-size: 11px;
+}
+.overview-item {
+  border: 0;
+  border-radius: 0;
+  padding: 7px 0;
+  margin: 0;
+}
+.overview-item + .overview-item {
+  border-top: 1px solid #f0f3f7;
+}
+.overview-item-main {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+}
+.overview-item-main p {
+  flex: 1;
+  font-size: 14px;
+  line-height: 1.7;
+  color: #263752;
+}
+.overview-review-toggle {
+  flex-shrink: 0;
+  font-size: 18px;
+  line-height: 1.2;
+  padding: 2px 6px;
+  color: #8b98aa;
+}
+.overview-item.confirmed {
+  border-left: 0;
+}
+.overview-item small {
+  margin: 4px 0 0;
+  font-size: 10px;
+}
+.overview-group[data-kind="topic"] .overview-item-main p {
+  font-size: 17px;
+  font-weight: 600;
+  line-height: 1.6;
+}
+.overview-group + .overview-group {
+  margin-top: 10px;
+}
+.overview-item-actions {
+  margin-top: 8px;
+}
+@media (max-width: 850px) {
+  .overview-heading {
+    gap: 6px;
+  }
+  .overview-heading h3 {
+    font-size: 14px;
+  }
+  .overview-heading small {
+    font-size: 10px;
+  }
+  .overview-header-actions {
+    max-width: 55%;
+  }
+}
+/* Four concise sections fit before scrolling; longer discussions still scroll inside. */
+.overview-group h4 {
+  margin-top: 8px;
+  margin-bottom: 2px;
+}
+.overview-group + .overview-group {
+  margin-top: 4px;
+}
+.overview-item {
+  padding: 4px 0;
+}
+.live-overview-panel > .overview-groups {
+  padding-top: 4px;
+}
+.overview-group h4 {
+  margin-top: 6px;
+}
+.overview-group + .overview-group {
+  margin-top: 0;
+}
+.overview-item {
+  padding: 3px 0;
+}
+.recording-workbench.focus-mode .recording-health-panel strong {
+  display: none;
+}

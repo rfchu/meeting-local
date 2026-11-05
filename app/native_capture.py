@@ -100,7 +100,7 @@ class NativeCapture:
             tracks.append({'name':name,'state':signal,'saved_seconds':round(frames/16000,1)})
         return {'stalled':stalled,'tracks':tracks}
 
-    def draft_window(self,rid,offset,window_seconds=15,responsive=False,allow_stopped=False):
+    def draft_window(self,rid,offset,window_seconds=15,responsive=False,allow_stopped=False,sentence_end=None):
         """Read a bounded snapshot from original PCM; never advance shared cursors."""
         if not math.isfinite(offset) or offset<0 or offset>86400:raise ValueError('草稿时间无效')
         with self.lock:
@@ -117,6 +117,7 @@ class NativeCapture:
             limit=HARD_SECONDS if elastic else 15
             if end-begin>2*limit*16000:
                 latest=max(begin,end-limit*16000);skipped=(latest-begin)/16000;begin=latest
+            if skipped:sentence_end=None
             names=('system','microphone') if session.get('include_microphone') else ('system',)
             quiet=responsive and all(status.get('silence_seconds',{}).get(name,0)>=.8 for name in names)
             if quiet and available_frames>0:
@@ -125,6 +126,7 @@ class NativeCapture:
             maximum=limit if elastic else (15 if confirmed else window_seconds)
             count=min(maximum*16000,max(0,end-begin))
             minimum=8000 if status['state'] in ('paused','stopped','interrupted','failed') else (3 if quiet else min(window_seconds,limit) if elastic else maximum)*16000
+            if elastic and sentence_end is not None and status['state']=='recording':minimum=3*16000
             if count<minimum:return {'ready':False,'next_offset':offset,'skipped_seconds':0}
             folder=self.recordings.folder(rid);tracks=[]
             for name in ('system','microphone') if session.get('include_microphone') else ('system',):
@@ -138,7 +140,7 @@ class NativeCapture:
             boundary={}
             if elastic:
                 forced='pause' if status['state']=='paused' else 'stop' if status['state'] in ('stopped','interrupted','failed') else None
-                plan=elastic_plan(mixed.tobytes(),window_seconds,forced)
+                plan=elastic_plan(mixed.tobytes(),window_seconds,forced,sentence_end)
                 if plan is None:return {'ready':False,'next_offset':offset,'skipped_seconds':0}
                 count=plan.pop('count');confirmed=plan['confirmed'];mixed=mixed[:count];boundary=plan
             output=io.BytesIO()

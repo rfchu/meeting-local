@@ -49,9 +49,14 @@ class Worker:
     def update(self,jid,stage,progress):
         self.check(jid)
         self.store.execute('UPDATE jobs SET stage=?,progress=? WHERE id=?',(stage,progress,jid))
+    def next_job(self):
+        live=bool(self.store.one("SELECT 1 FROM live_sessions WHERE status IN ('running','paused','draining') LIMIT 1"))
+        if live:
+            self.store.execute("UPDATE jobs SET stage='实时识别期间暂缓索引' WHERE state='queued' AND kind='retrieval_index' AND stage!='实时识别期间暂缓索引'")
+        return self.store.one("SELECT * FROM jobs WHERE state='queued'"+(" AND COALESCE(kind,'transcription')!='retrieval_index'" if live else '')+" ORDER BY created,rowid LIMIT 1")
     def loop(self):
         while not self.stop.is_set():
-            job=self.store.one("SELECT * FROM jobs WHERE state='queued' ORDER BY created,rowid LIMIT 1")
+            job=self.next_job()
             if not job: self.stop.wait(.5); continue
             with self.store.connect() as db:
                 changed=db.execute("UPDATE jobs SET state='running' WHERE id=? AND state='queued'",(job['id'],)).rowcount
@@ -60,7 +65,7 @@ class Worker:
             self.busy_jid=job['id']
             try:
                 self.process(job)
-                stage={'analysis':'分析完成','note_expansion':'简记扩写完成','retrieval_index':'检索索引建立完成','retrieval_answer':'引用问答完成','minutes':'AI 纪要草稿已保存，待人工核对'}.get(job.get('kind'),'转写完成')
+                stage={'analysis':'分析完成','note_expansion':'简记扩写完成','retrieval_index':'检索索引建立完成','retrieval_answer':'引用问答完成','minutes':'AI 纪要草稿已保存，待人工核对','terminology':'术语候选已整理，待确认'}.get(job.get('kind'),'转写完成')
                 if job.get('kind')=='analysis' and json.loads(job['config']).get('minutes_followup'):stage='分析与纪要草稿完成'
                 self.store.execute("UPDATE jobs SET state='completed',stage=?,progress=1 WHERE id=? AND state='running'",(stage,job['id']))
             except Cancelled: pass
@@ -71,8 +76,12 @@ class Worker:
         acquired=False
         try:
             if self.asr_lock:
-                while not self.asr_lock.acquire(timeout=.2):self.check(job['id'])
+                waiting=False
+                while not self.asr_lock.acquire(timeout=.2):
+                    self.check(job['id'])
+                    if not waiting:self.update(job['id'],'等待语音识别资源',job.get('progress',0));waiting=True
                 acquired=True;self.check(job['id'])
+                if waiting:self.update(job['id'],'准备处理',job.get('progress',0))
             from .local_embedding import local_embedding
             local_embedding().release()
             if self.release_model:self.release_model()
@@ -82,6 +91,9 @@ class Worker:
             if job.get('kind')=='retrieval_index':
                 from .retrieval import Retrieval
                 return Retrieval(self.store).build(self,job)
+            if job.get('kind')=='terminology':
+                from .terminology import process_candidates
+                return process_candidates(self,job)
             if job.get('kind')=='note_expansion':return self.process_note_expansion(job)
             if job.get('kind')=='analysis':return self.process_analysis(job)
             if job.get('kind')=='minutes':

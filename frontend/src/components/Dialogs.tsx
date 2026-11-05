@@ -122,26 +122,45 @@ export function ModelConfigDialog({
   onClose,
   onChanged,
   toast,
+  embedded = false,
+  onDirtyChange,
 }: {
   onClose: () => void;
   onChanged: () => void;
   toast: (text: string) => void;
+  embedded?: boolean;
+  onDirtyChange?: (dirty: boolean) => void;
 }) {
   const [configs, setConfigs] = useState<LLMConfig[]>([]),
     [form, setForm] = useState<LLMConfigInput>(emptyConfig(false)),
     [result, setResult] = useState(""),
     [busy, setBusy] = useState(false);
+  const [dirty, setDirty] = useState(false);
+  useEffect(() => {
+    onDirtyChange?.(dirty);
+  }, [dirty, onDirtyChange]);
   const refresh = async () => {
     const values = await api.configs();
     setConfigs(values);
     if (values.length)
-      select(values.find((item) => item.is_default) || values[0]);
-    else setForm(emptyConfig(false));
+      select(values.find((item) => item.is_default) || values[0], true);
+    else {
+      setDirty(false);
+      setForm(emptyConfig(false));
+    }
   };
   useEffect(() => {
-    void refresh();
+    void refresh().catch((e) => setResult((e as Error).message));
   }, []);
-  const select = (config: LLMConfig) =>
+  const select = (config: LLMConfig, force = false) => {
+    if (
+      dirty &&
+      !force &&
+      !window.confirm("有未保存的模型修改，放弃修改并切换？")
+    )
+      return;
+    setDirty(false);
+    setResult("");
     setForm({
       config_id: config.id,
       name: config.name,
@@ -154,20 +173,26 @@ export function ModelConfigDialog({
       api_key: "",
       is_default: config.is_default,
     });
+  };
   const field = <K extends keyof LLMConfigInput>(
     key: K,
     value: LLMConfigInput[K],
-  ) => setForm((old) => ({ ...old, [key]: value }));
-  return (
-    <Modal id="modelConfigDialog" onClose={onClose}>
+  ) => {
+    setDirty(true);
+    setForm((old) => ({ ...old, [key]: value }));
+  };
+  const body = (
+    <>
       <div className="config-header">
         <div>
           <h2>LLM 模型配置</h2>
           <p>会议文字稿只会发送到你选择的分析接口。</p>
         </div>
-        <button className="text-btn" onClick={onClose}>
-          关闭
-        </button>
+        {!embedded && (
+          <button className="text-btn" onClick={onClose}>
+            关闭
+          </button>
+        )}
       </div>
       <div className="config-layout">
         <section>
@@ -175,6 +200,12 @@ export function ModelConfigDialog({
             <b>配置列表</b>
             <button
               onClick={() => {
+                if (
+                  dirty &&
+                  !window.confirm("有未保存的模型修改，放弃并新建？")
+                )
+                  return;
+                setDirty(true);
                 setForm(emptyConfig(configs.length > 0));
                 setResult("");
               }}
@@ -187,6 +218,7 @@ export function ModelConfigDialog({
             {configs.map((item) => (
               <button
                 key={item.id}
+                disabled={busy}
                 className={`config-item${form.config_id === item.id ? " active" : ""}`}
                 onClick={() => select(item)}
               >
@@ -210,7 +242,7 @@ export function ModelConfigDialog({
             try {
               const saved = await api.saveConfig(form);
               await refresh();
-              select(saved);
+              select(saved, true);
               onChanged();
               toast("模型配置已保存");
             } catch (error) {
@@ -403,6 +435,13 @@ export function ModelConfigDialog({
           </div>
         </form>
       </div>
+    </>
+  );
+  return embedded ? (
+    <section className="management-model-editor">{body}</section>
+  ) : (
+    <Modal id="modelConfigDialog" onClose={onClose}>
+      {body}
     </Modal>
   );
 }

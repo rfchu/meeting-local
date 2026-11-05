@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import Modal from "../components/Modal";
 import { api } from "../api";
-import type { LLMConfig, MeetingSummary } from "../types";
+import type { MeetingSummary } from "../types";
 import { clock } from "../utils";
 import CrossMeetingQA from "./CrossMeetingQA";
 
@@ -56,11 +56,13 @@ export default function SearchDialog({
   onClose,
   onOpen,
   onConfigure,
+  onManageIndex,
 }: {
   meetings: MeetingSummary[];
   onClose: () => void;
   onOpen: (hit: SearchHit) => Promise<void>;
   onConfigure: () => void;
+  onManageIndex: () => void;
 }) {
   const [qaReady, setQaReady] = useState(false);
   const [view, setView] = useState<"search" | "qa">("search");
@@ -68,17 +70,12 @@ export default function SearchDialog({
     [mode, setMode] = useState("keyword"),
     [meetingId, setMeetingId] = useState(""),
     [kind, setKind] = useState("");
-  const [status, setStatus] = useState<SearchStatus | null>(null),
-    [profiles, setProfiles] = useState<LLMConfig[]>([]),
-    [profileId, setProfileId] = useState(""),
-    [model, setModel] = useState("");
+  const [status, setStatus] = useState<SearchStatus | null>(null);
   const [results, setResults] = useState<SearchHit[]>([]),
     [busy, setBusy] = useState(false),
     [error, setError] = useState(""),
     [searched, setSearched] = useState(false),
     [pending, setPending] = useState(0);
-  const active =
-    status?.job && ["queued", "running"].includes(status.job.state);
   const poll = async () => {
     setStatus(await api.searchStatus());
   };
@@ -89,12 +86,6 @@ export default function SearchDialog({
         if (!live) return;
         setStatus(s);
         setQaReady(env.qa_ready === true);
-        const local = env.analysis.profiles.filter(
-          (p) => p.provider_type === "local",
-        );
-        setProfiles(local);
-        setProfileId(s.config?.profile_id || local[0]?.id || "");
-        setModel(s.config?.model || "");
       })
       .catch((e) => live && setError((e as Error).message));
     const timer = window.setInterval(() => void poll().catch(() => {}), 3000);
@@ -221,194 +212,12 @@ export default function SearchDialog({
               </select>
             </div>
           </form>
-          <details className="search-index">
-            <summary>
-              本地语义索引 · {status?.indexed || 0}/{status?.units || 0} 已索引
-            </summary>
-            <section
-              className="builtin-embedding"
-              aria-label="内置中文检索模型"
-            >
-              <h3>内置中文检索 · BGE-small INT8</h3>
-              <p>
-                约 24 MB，安装后无需 LM
-                Studio，检索文本仅在本机处理。首次下载访问 Hugging
-                Face，也可导入离线 ZIP 包。
-              </p>
-              {status?.builtin ? (
-                <>
-                  <p role="status">
-                    {status.builtin.installed ? "模型已安装" : "尚未安装"} ·{" "}
-                    {status.builtin.loaded ? "已加载" : "按需加载"}
-                    {["downloading", "importing"].includes(
-                      status.builtin.state,
-                    ) &&
-                      ` · 安装中 ${Math.round((status.builtin.downloaded / Math.max(1, status.builtin.total)) * 100)}%`}
-                  </p>
-                  {!status.builtin.runtime_ready && (
-                    <p role="alert">
-                      运行依赖未就绪，请运行 scripts/setup.sh 更新依赖。
-                    </p>
-                  )}
-                  {status.builtin.error && (
-                    <p role="alert">{status.builtin.error}</p>
-                  )}
-                  <div className="search-index-actions">
-                    <button
-                      disabled={
-                        busy ||
-                        ["downloading", "importing"].includes(
-                          status.builtin.state,
-                        ) ||
-                        status.builtin.installed
-                      }
-                      onClick={() => void action(() => api.installEmbedding())}
-                    >
-                      下载安装模型
-                    </button>
-                    {status.builtin.state === "downloading" && (
-                      <button
-                        onClick={() =>
-                          void action(() => api.cancelEmbeddingInstall())
-                        }
-                      >
-                        取消下载
-                      </button>
-                    )}
-                    <label>
-                      导入离线包{" "}
-                      <input
-                        type="file"
-                        accept=".zip"
-                        aria-label="导入向量模型离线包"
-                        disabled={
-                          busy ||
-                          ["downloading", "importing"].includes(
-                            status.builtin.state,
-                          )
-                        }
-                        onChange={(event) => {
-                          const file = event.target.files?.[0];
-                          event.target.value = "";
-                          if (file)
-                            void action(() => api.importEmbedding(file));
-                        }}
-                      />
-                    </label>
-                    <button
-                      disabled={
-                        busy ||
-                        !!active ||
-                        !status.builtin.installed ||
-                        !status.builtin.runtime_ready ||
-                        ["downloading", "importing"].includes(
-                          status.builtin.state,
-                        )
-                      }
-                      onClick={() =>
-                        void action(() => api.configureBuiltinSearch())
-                      }
-                    >
-                      启用内置模型
-                    </button>
-                  </div>
-                </>
-              ) : (
-                <p>请在录音和处理任务结束后更新服务，使用内置模型管理。</p>
-              )}
-            </section>
-            <details>
-              <summary>高级：使用 LM Studio 等本机向量服务</summary>
-              <p>
-                选择支持 /embeddings
-                的模型。数据仅发送到所选本机服务；聊天模型通常不能用于向量检索。
-              </p>
-              <label>
-                本机服务{" "}
-                <select
-                  aria-label="向量模型本机服务"
-                  value={profileId}
-                  onChange={(event) => setProfileId(event.target.value)}
-                >
-                  {!profiles.length && (
-                    <option value="">请先添加本地模型配置</option>
-                  )}
-                  {profiles.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                Embedding 模型名称{" "}
-                <input
-                  aria-label="Embedding 模型名称"
-                  value={model}
-                  onChange={(event) => setModel(event.target.value)}
-                  placeholder="填写 LM Studio 中的向量模型标识"
-                />
-              </label>
-              <div className="search-index-actions">
-                <button
-                  disabled={busy || !!active || !profileId || !model.trim()}
-                  onClick={() =>
-                    void action(() =>
-                      api.configureSearch(profileId, model.trim()),
-                    )
-                  }
-                >
-                  测试并保存
-                </button>
-              </div>
-            </details>
-            <p>
-              启用或更换模型后请更新索引；不会自动替换已有配置。已有模型同名权重变化时使用“全部重建”。
-            </p>
-            <div className="search-index-actions">
-              <button
-                disabled={
-                  busy || !!active || !status?.config || !status.vec_ready
-                }
-                onClick={() => void action(() => api.buildSearch(false))}
-              >
-                更新索引
-              </button>
-              <button
-                disabled={
-                  busy || !!active || !status?.config || !status.vec_ready
-                }
-                onClick={() => void action(() => api.buildSearch(true))}
-              >
-                全部重建
-              </button>
-            </div>
-            {status?.config && (
-              <p>
-                当前模型：{status.config.model} · {status.config.dimension}{" "}
-                维；待索引 {status.pending} 条。
-              </p>
-            )}
-            {status?.error && <p role="alert">{status.error}</p>}
-            {status?.job && (
-              <p role="status">
-                {status.job.stage} · {Math.round(status.job.progress * 100)}%{" "}
-                {active && (
-                  <button
-                    disabled={busy}
-                    onClick={() =>
-                      void action(() => api.jobAction(status.job!.id, "cancel"))
-                    }
-                  >
-                    取消索引
-                  </button>
-                )}
-              </p>
-            )}
-            {status?.job?.state === "failed" && (
-              <p role="alert">{status.job.error}</p>
-            )}
-          </details>
+          <div className="search-index-summary">
+            <span>
+              语义索引 · {status?.indexed || 0}/{status?.units || 0} 已索引
+            </span>
+            <button onClick={onManageIndex}>管理语义索引</button>
+          </div>
           {error && (
             <p role="alert" className="error">
               {error}

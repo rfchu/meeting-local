@@ -314,7 +314,9 @@ def test_native_draft_uses_shared_transcriber_and_absolute_timeline(client,monke
     response=client.post(f'/api/native-capture/{rid}/draft',json={'offset':0})
     assert response.status_code==200,response.text
     result=response.json()
-    assert result['segments']==[{'start':45.25,'end':46,'text':'原生草稿'}]
+    assert [{k:part[k] for k in ('start','end','text')} for part in result['segments']]==[{'start':45.25,'end':46,'text':'原生草稿'}]
+    assert result['segments'][0]['live_segment_index']==0
+    assert client.app.state.store.one('SELECT recording_id FROM live_asr_ranges WHERE id=?',(result['segments'][0]['live_range_id'],))['recording_id']==rid
     assert result['next_offset']==60 and result['skipped_seconds']==45
     assert 'payload' not in result and client.get('/api/meetings').json()==[]
 

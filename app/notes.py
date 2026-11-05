@@ -7,8 +7,8 @@ from .minutes import MeetingMinutes,MinutesItem,validate_minutes_citations
 
 def insert_note(db,mid,note):
     nid=uid()
-    db.execute('INSERT INTO meeting_notes(id,meeting_id,captured_at,note_type,raw_text,note_scope,is_marker) VALUES(?,?,?,?,?,?,?)',
-        (nid,mid,note['captured_at'],note['note_type'],note['raw_text'].strip(),note.get('note_scope','personal'),int(note.get('is_marker',False))))
+    db.execute('INSERT INTO meeting_notes(id,meeting_id,captured_at,note_type,raw_text,note_scope,is_marker,client_id,overview_focus) VALUES(?,?,?,?,?,?,?,?,?)',
+        (nid,mid,note['captured_at'],note['note_type'],note['raw_text'].strip(),note.get('note_scope','personal'),int(note.get('is_marker',False)),note.get('client_id',''),int(note.get('overview_focus',False))))
     return nid
 
 def fingerprint(note):

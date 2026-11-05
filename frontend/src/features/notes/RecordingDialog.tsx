@@ -1,3 +1,9 @@
+import { useModelChoice } from "../../preferences/useModelChoice";
+import { ensureNoteIds, toggleOverviewFocus } from "../overview/notes";
+import LiveOverviewPanel from "../overview/LiveOverviewPanel";
+import RecordingReadiness from "../onboarding/RecordingReadiness";
+import { recordingPlan, type Readiness } from "../onboarding/readiness";
+import TermDialog from "../terminology/TermDialog";
 import type { SessionSnapshot } from "./liveSession";
 import { useLiveSession } from "./useLiveSession";
 import { useLiveCorrections } from "./useLiveCorrections";
@@ -5,7 +11,7 @@ import LiveCorrectionReview from "./LiveCorrectionReview";
 import RecordingSetupBar from "./RecordingSetupBar";
 import MeetingBriefForm, { emptyBrief } from "../meeting/MeetingBriefForm";
 import type { MeetingBrief, MeetingSummary } from "../../types";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../../api";
 import type {
   LiveDraftSegment,
@@ -135,6 +141,23 @@ export default function RecordingDialog({
       return { ...DEFAULT_RECORDING_PREFERENCES };
     }
   });
+  const [liveEngine, chooseLiveEngine, liveChoice] =
+    useModelChoice("live_transcription");
+  const draftEngine: "qwen" | "whisper" =
+    liveEngine === "qwen" ? "qwen" : "whisper";
+  const setDraftEngine = (value: "qwen" | "whisper") => chooseLiveEngine(value);
+  const [correctionProfileId, setCorrectionProfileId] =
+    useModelChoice("correction");
+  const [preflight, setPreflight] = useState<Readiness | null>(null);
+  const [recordOnly, setRecordOnly] = useState(false);
+  const recordOnlyRef = useRef(false);
+  const processingDeferredRef = useRef(false);
+  const [mobilePane, setMobilePane] = useState("transcript");
+  const acceptReadiness = useCallback((value: Readiness) => {
+    setPreflight(value);
+    setNativeCapability(value.native);
+  }, []);
+  const [termsOpen, setTermsOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false),
     [settingsTab, setSettingsTab] = useState<
       "recording" | "model" | "outcome" | "preparation"
@@ -184,7 +207,7 @@ export default function RecordingDialog({
     [noteText, setNoteText] = useState(""),
     [noteType, setNoteType] = useState<MeetingNoteType>("note"),
     [noteScope, setNoteScope] = useState<"personal" | "meeting">("personal"),
-    [notes, setNotes] = useState<MeetingNoteInput[]>([]),
+    [notes, setNotesState] = useState<MeetingNoteInput[]>([]),
     [drafts, setDrafts] = useState<LiveDraftSegment[]>([]),
     [partialDraft, setPartialDraft] = useState<LiveDraftSegment | null>(null),
     [liveMetrics, setLiveMetrics] = useState({
@@ -203,9 +226,6 @@ export default function RecordingDialog({
     [correctionEnabled, setCorrectionEnabled] = useState(
       preferences.correctionEnabled,
     ),
-    [correctionProfileId, setCorrectionProfileId] = useState(
-      preferences.correctionProfileId,
-    ),
     [correctionReviewOpen, setCorrectionReviewOpen] = useState(false),
     [responsiveMode, setResponsiveMode] = useState(preferences.responsiveMode),
     [modelStatus, setModelStatus] = useState<Awaited<
@@ -213,9 +233,6 @@ export default function RecordingDialog({
     > | null>(null),
     [modelActionBusy, setModelActionBusy] = useState(false),
     [streamEnabled, setStreamEnabled] = useState(preferences.streamEnabled),
-    [draftEngine, setDraftEngine] = useState<"whisper" | "qwen">(
-      preferences.draftEngine,
-    ),
     [postGoal, setPostGoal] = useState(preferences.postGoal),
     [autoProcess, setAutoProcess] = useState(preferences.autoProcess),
     [completionMode, setCompletionMode] = useState<CompletionMode>(
@@ -245,6 +262,23 @@ export default function RecordingDialog({
     [nativeSessionId, setNativeSessionId] = useState(""),
     [microphoneLevels, setMicrophoneLevels] = useState<number[]>([]),
     [systemLevels, setSystemLevels] = useState<number[]>([]);
+  const setNotes = useCallback(
+    (
+      value:
+        MeetingNoteInput[] | ((old: MeetingNoteInput[]) => MeetingNoteInput[]),
+    ) => {
+      setNotesState((old) =>
+        ensureNoteIds(typeof value === "function" ? value(old) : value, () =>
+          crypto.randomUUID(),
+        ),
+      );
+    },
+    [],
+  );
+  const [jumpDraft, setJumpDraft] = useState<{
+    id: string;
+    nonce: number;
+  } | null>(null);
   const recorderRef = useRef<MediaRecorder | null>(null),
     streamRef = useRef<MediaStream | null>(null),
     sessionRef = useRef<RecordingSession | null>(null),
@@ -317,11 +351,13 @@ export default function RecordingDialog({
     keepAwake,
   ]);
   const correctionSessionId = nativeSessionId || sessionRef.current?.id;
-  const managedMode = draftEngine === "qwen" && streamEnabled;
+  const managedMode =
+    !recordOnly && (draftEngine === "whisper" || streamEnabled);
   const backendLive = useLiveSession(
     correctionSessionId,
     managedMode && ["recording", "paused"].includes(state),
     {
+      engine: draftEngine,
       responsive: responsiveMode,
       context_enabled: contextEnabled,
       terms: recognitionTerms,
@@ -350,6 +386,7 @@ export default function RecordingDialog({
         );
       } else if (event.type === "final") {
         setDecodeReport({
+          load: event.result.load,
           decoder: event.result.decoder,
           decoder_totals: event.result.decoder_totals,
           boundary_reason: event.result.boundary_reason,
@@ -441,7 +478,7 @@ export default function RecordingDialog({
     setCaptureSource(
       session.include_microphone ? "macos-both" : "macos-system",
     );
-    setDraftEngine("qwen");
+    setDraftEngine(entry.config.engine || "qwen");
     setStreamEnabled(true);
     setResponsiveMode(entry.config.responsive);
     setContextEnabled(entry.config.context_enabled);
@@ -674,7 +711,13 @@ export default function RecordingDialog({
     };
   }, [state, captureSource, nativeSessionId]);
   useEffect(() => {
-    if (!nativeSessionId || captureSource === "browser" || managedMode) return;
+    if (
+      !nativeSessionId ||
+      captureSource === "browser" ||
+      managedMode ||
+      recordOnly
+    )
+      return;
     let active = true;
     const poll = async () => {
       if (
@@ -711,7 +754,7 @@ export default function RecordingDialog({
       active = false;
       window.clearInterval(timer);
     };
-  }, [nativeSessionId, captureSource, draftEngine, managedMode]);
+  }, [nativeSessionId, captureSource, draftEngine, managedMode, recordOnly]);
   useEffect(() => {
     if (!sessionRef.current || state === "idle") return;
     let active = true;
@@ -850,7 +893,7 @@ export default function RecordingDialog({
       stateRef.current = "finished";
       setState("finished");
       setElapsed(accruedRef.current);
-      if (allowAutoProcess && autoProcess)
+      if (allowAutoProcess && autoProcess && !processingDeferredRef.current)
         await handoffSaved(meeting.id, completionMode, reuseEngine);
     } catch (error) {
       setState("failed");
@@ -877,6 +920,7 @@ export default function RecordingDialog({
   );
 
   const queueDraft = (final = false) => {
+    if (recordOnlyRef.current) return draftQueueRef.current;
     const context = audioContextRef.current,
       sampleCount = pcmSamplesRef.current;
     if (
@@ -950,6 +994,7 @@ export default function RecordingDialog({
       for (const sample of frame) power += sample * sample;
       const rms = Math.sqrt(power / frame.length);
       setMicrophoneLevels((old) => [...old.slice(-71), rms]);
+      if (recordOnlyRef.current) return;
       pcmFramesRef.current.push(frame);
       pcmSamplesRef.current += frame.length;
       if (rms >= 0.003) lastVoiceSampleRef.current = pcmSamplesRef.current;
@@ -994,10 +1039,29 @@ export default function RecordingDialog({
   };
 
   const start = async () => {
-    if (!engines.find((engine) => engine.id === draftEngine)?.ready)
-      return toast("上次选择的识别引擎未就绪，请调整设置");
+    if (preflight && !preflight.storage.writable)
+      return toast("数据目录无法写入，请修复后再录音");
+    const plan = recordingPlan(
+      liveChoice.ready &&
+        !!(preflight?.engines || engines).find(
+          (engine) => engine.id === draftEngine,
+        )?.ready,
+      completionMode,
+      autoProcess,
+    );
+    recordOnlyRef.current = plan.recordOnly;
+    setRecordOnly(plan.recordOnly);
+    processingDeferredRef.current =
+      plan.recordOnly ||
+      (postGoal === "minutes" &&
+        (!minutesModel || !environment?.auto_minutes_ready));
+    if (!plan.recordOnly && processingDeferredRef.current)
+      toast("AI 纪要配置尚未就绪，本次先保存，结束后可继续整理");
     if (captureSource !== "browser" && !nativeCapability?.available)
       return toast("上次选择的原生音源暂不可用，请调整设置");
+    if (liveChoice.ready) setDraftEngine(draftEngine);
+    if (correctionEnabled && correctionProfileId)
+      setCorrectionProfileId(correctionProfileId);
     setSettingsOpen(false);
     persistPreferences();
     setPartialDraft(null);
@@ -1026,10 +1090,12 @@ export default function RecordingDialog({
         await bufferRecording(session);
         accruedRef.current = 0;
         activeSinceRef.current = performance.now();
-        draftEnabledRef.current = true;
+        draftEnabledRef.current = !recordOnlyRef.current;
         nativeDraftOffsetRef.current = 0;
         setDraftStatus(
-          `${draftEngine === "qwen" ? "Qwen-ASR" : "Whisper"} ${draftEngine === "qwen" && responsiveMode && streamEnabled ? "短片段预览与修订" : "约 15 秒识别"}，仅作会议跟随参考`,
+          recordOnlyRef.current
+            ? "仅录音与简记，结束后可配置模型转写"
+            : `${draftEngine === "qwen" ? "Qwen-ASR" : "Whisper"} ${draftEngine === "qwen" && responsiveMode && streamEnabled ? "短片段预览与修订" : "约 15 秒识别"}，仅作会议跟随参考`,
         );
       } catch (error) {
         if (sessionRef.current?.source === "macos") {
@@ -1105,11 +1171,15 @@ export default function RecordingDialog({
       lastVoiceSampleRef.current = 0;
       lastPreviewSampleRef.current = 0;
       setDrafts([]);
-      setDraftStatus("正在收集第一段语音…");
+      setDraftStatus(
+        recordOnlyRef.current
+          ? "仅录音与简记，结束后可配置模型转写"
+          : "正在收集第一段语音…",
+      );
       accruedRef.current = 0;
       activeSinceRef.current = performance.now();
       stateRef.current = "recording";
-      draftEnabledRef.current = true;
+      draftEnabledRef.current = !recordOnlyRef.current;
       try {
         await startDraftCapture(stream);
       } catch (error) {
@@ -1249,6 +1319,8 @@ export default function RecordingDialog({
   }, [state]);
   const stop = async () => {
     if (!recordingState(stateRef.current)) return;
+    if (sessionRef.current)
+      void api.pauseOverview(sessionRef.current.id).catch(() => {});
     if (sessionRef.current?.source === "macos") {
       accruedRef.current = currentSeconds();
       draftEnabledRef.current = false;
@@ -1332,7 +1404,7 @@ export default function RecordingDialog({
   return (
     <Modal
       id="recordingWorkbench"
-      className="recording-workbench"
+      className={`recording-workbench${recording ? " focus-mode" : ""}`}
       ariaLabel="录音与会议简记工作台"
       onClose={() => {
         if (
@@ -1345,10 +1417,19 @@ export default function RecordingDialog({
           closeWithPreparation();
       }}
     >
+      {termsOpen && (
+        <TermDialog
+          scope={sessionRef.current?.id || "library"}
+          onClose={() => setTermsOpen(false)}
+        />
+      )}
       <div className="workbench-topbar">
         <div>
           <div className="eyebrow">本机会议采集</div>
           <h2>录音与会议简记</h2>
+          <button className="text-btn" onClick={() => setTermsOpen(true)}>
+            {sessionRef.current ? "会议术语" : "个人术语库"}
+          </button>
         </div>
         <div className={`recording-clock${recording ? " active" : ""}`}>
           <span /> {clock(elapsed)}
@@ -1358,14 +1439,20 @@ export default function RecordingDialog({
             <button
               className="primary"
               disabled={
-                (postGoal === "minutes" &&
-                  (!minutesModel || !environment?.auto_minutes_ready)) ||
-                !engines.find((engine) => engine.id === draftEngine)?.ready ||
+                preflight?.storage.writable === false ||
+                (captureSource === "browser" &&
+                  (typeof MediaRecorder === "undefined" ||
+                    !navigator.mediaDevices?.getUserMedia)) ||
                 (captureSource !== "browser" && !nativeCapability?.available)
               }
               onClick={() => void start()}
             >
-              ● 开始录音
+              ●{" "}
+              {(preflight?.engines || engines).find(
+                (engine) => engine.id === draftEngine,
+              )?.ready
+                ? "开始录音"
+                : "仅录音与简记"}
             </button>
           )}
           {state === "requesting" && (
@@ -1379,7 +1466,10 @@ export default function RecordingDialog({
           {state === "paused" && <button onClick={resume}>继续录音</button>}
           {recording && (
             <button className="recording-stop" onClick={() => void stop()}>
-              ■ {autoProcess ? "结束并整理" : "结束录音"}
+              ■{" "}
+              {autoProcess && !processingDeferredRef.current
+                ? "结束并整理"
+                : "结束录音"}
             </button>
           )}
           {state === "saving" && <button disabled>正在保存并创建会议…</button>}
@@ -1418,47 +1508,75 @@ export default function RecordingDialog({
             )}
         </div>
       </div>
-      <RecordingSetupBar
-        source={sourceLabel}
-        recognition={`${engineName} · ${draftEngine === "qwen" && streamEnabled ? (responsiveMode ? "短片段模式" : "逐字推送") : "分段识别"}`}
-        outcome={
-          completionMode === "none"
-            ? "仅保存录音与简记"
-            : postGoal === "minutes"
-              ? "文字稿＋AI 纪要"
-              : "生成会议文字稿"
-        }
-        processing={`${completionMode === "none" ? "暂不转写" : completionMode === "quick" ? "快速完成" : "精细处理"} · ${autoProcess ? "自动进入整理" : "手动选择"}`}
-        title={brief.title}
-        brief={
-          brief.interview?.role
-            ? `线上面试 · ${brief.interview.role}`
-            : brief.purpose
-        }
-        editable={state === "idle"}
-        preferencesSaved={preferencesSaved}
-        onCapture={() => {
-          setSettingsTab("recording");
-          setSettingsOpen(true);
-        }}
-        onOutcome={() => {
-          setSettingsTab("outcome");
-          setSettingsOpen(true);
-        }}
-        onBrief={
-          flowReady
-            ? () => {
-                setSettingsTab("preparation");
-                setSettingsOpen(true);
-              }
-            : undefined
-        }
-      />
+      {state === "idle" ? (
+        <RecordingSetupBar
+          source={sourceLabel}
+          recognition={`${engineName} · ${draftEngine === "qwen" && streamEnabled ? (responsiveMode ? "短片段模式" : "逐字推送") : "分段识别"}`}
+          outcome={
+            completionMode === "none"
+              ? "仅保存录音与简记"
+              : postGoal === "minutes"
+                ? "文字稿＋AI 纪要"
+                : "生成会议文字稿"
+          }
+          processing={`${completionMode === "none" ? "暂不转写" : completionMode === "quick" ? "快速完成" : "精细处理"} · ${autoProcess ? "自动进入整理" : "手动选择"}`}
+          title={brief.title}
+          brief={
+            brief.interview?.role
+              ? `线上面试 · ${brief.interview.role}`
+              : brief.purpose
+          }
+          editable={state === "idle"}
+          preferencesSaved={preferencesSaved}
+          onCapture={() => {
+            setSettingsTab("recording");
+            setSettingsOpen(true);
+          }}
+          onOutcome={() => {
+            setSettingsTab("outcome");
+            setSettingsOpen(true);
+          }}
+          onBrief={
+            flowReady
+              ? () => {
+                  setSettingsTab("preparation");
+                  setSettingsOpen(true);
+                }
+              : undefined
+          }
+        />
+      ) : (
+        <div className="recording-session-strip" aria-label="当前录音方案">
+          <strong>{brief.title || "本次会议"}</strong>
+          <span>{sourceLabel}</span>
+          <span>{recordOnly ? "仅录音与简记" : engineName}</span>
+          <span>
+            {postGoal === "minutes" && !recordOnly
+              ? "会后整理 AI 纪要"
+              : "原始录音独立保存"}
+          </span>
+          <button className="text-btn" onClick={() => setInspectorOpen(true)}>
+            运行详情
+          </button>
+        </div>
+      )}
+      {state === "idle" && (
+        <RecordingReadiness
+          source={captureSource}
+          engine={draftEngine}
+          onReadiness={acceptReadiness}
+          onConfigure={() => {
+            setSettingsTab("recording");
+            setSettingsOpen(true);
+          }}
+          onModels={onModels}
+        />
+      )}
       {state === "idle" &&
-        (!engines.find((engine) => engine.id === draftEngine)?.ready ||
-          (captureSource !== "browser" && !nativeCapability?.available)) && (
+        captureSource !== "browser" &&
+        !nativeCapability?.available && (
           <p className="capture-warning">
-            上次选择的音源或模型暂不可用，请调整设置后开始。
+            上次选择的原生音源暂不可用，改用浏览器麦克风后即可开始。
           </p>
         )}
       {state === "finished" && (
@@ -1477,23 +1595,31 @@ export default function RecordingDialog({
           <button
             className="primary"
             disabled={completing}
-            onClick={() => void processSaved(completionMode)}
+            onClick={() =>
+              void (recordOnly
+                ? handoffSaved(savedMeetingId, "none", savedEngine)
+                : processSaved(completionMode))
+            }
           >
-            进入会后整理
+            {recordOnly ? "打开已保存的会议" : "进入会后整理"}
           </button>
-          <p>
-            将沿用上次选择：
-            {completionMode === "quick"
-              ? "快速完成文字稿"
-              : completionMode === "full"
-                ? "精细处理文字稿"
-                : "先保留录音，暂不转写"}
-            。
-            {postGoal === "minutes" && completionMode !== "none"
-              ? "文字稿完成后将自动生成 AI 纪要草稿。"
-              : ""}
-            原音与关注点已经保存。
-          </p>
+          {recordOnly ? (
+            <p>本次未启用实时识别。原音与简记已保存，配置模型后可继续转写。</p>
+          ) : (
+            <p>
+              将沿用上次选择：
+              {completionMode === "quick"
+                ? "快速完成文字稿"
+                : completionMode === "full"
+                  ? "精细处理文字稿"
+                  : "先保留录音，暂不转写"}
+              。
+              {postGoal === "minutes" && completionMode !== "none"
+                ? "文字稿完成后将自动生成 AI 纪要草稿。"
+                : ""}
+              原音与关注点已经保存。
+            </p>
+          )}
           <details>
             <summary>调整文字稿处理方式</summary>
             <div className="finish-options">
@@ -1547,298 +1673,377 @@ export default function RecordingDialog({
           ))}
         </div>
       )}
-      <div
-        className={`workbench-history-wrapper${state === "finished" ? (historyOpen ? " ended open" : " ended") : ""}`}
-      >
-        {state === "finished" && (
-          <button
-            className="history-toggle"
-            aria-expanded={historyOpen}
-            onClick={() => setHistoryOpen((value) => !value)}
-          >
-            {historyOpen ? "收起" : "查看"}本次实时文字与简记（{notes.length}{" "}
-            条简记）
-          </button>
-        )}
-        {(state !== "finished" || historyOpen) && (
-          <div className="recording-workspace">
-            <section className="live-draft">
-              <header>
-                <h3>实时草稿</h3>
-                <span>{draftStatus}</span>
-              </header>
-              {draftEngine === "qwen" && streamEnabled && (
-                <div className="live-correction-bar">
-                  <small>
-                    {liveCorrection.status ||
-                      (contextEnabled
-                        ? "上下文辅助识别已开启 · 临时尾部可修订"
-                        : "临时尾部可修订")}
-                  </small>
-                  <button
-                    className="text-btn"
-                    disabled={!correctionSessionId}
-                    onClick={() => setCorrectionReviewOpen(true)}
-                  >
-                    纠错记录
-                    {liveCorrection.corrections.filter(
-                      (c) => c.state === "suggested",
-                    ).length
-                      ? ` · ${liveCorrection.corrections.filter((c) => c.state === "suggested").length} 待确认`
-                      : ""}
-                  </button>
-                </div>
-              )}
-              <LiveDraftList
-                drafts={displayDrafts}
-                canAddNote={recording}
-                partial={partialDraft}
-                emptyText={
-                  responsiveMode && draftEngine === "qwen" && streamEnabled
-                    ? "约 3 秒开始预览，后端根据识别速度调整更新节奏。"
-                    : undefined
-                }
-                onAddNote={(draft) =>
-                  setNotes((old) => [
-                    ...old,
-                    {
-                      captured_at: draft.start,
-                      note_type: "note",
-                      raw_text: draft.text,
-                      note_scope: "meeting",
-                    },
-                  ])
-                }
-              />
-            </section>
-            <section className="live-notes">
-              <header>
-                <h3>我的关注</h3>
-                <span>
-                  {notes.length ? `${notes.length} 条` : "原文永久保留"}
-                </span>
-              </header>
-              <div className="note-capture-actions">
+      {state !== "idle" && (
+        <div
+          className={`workbench-history-wrapper${state === "finished" ? (historyOpen ? " ended open" : " ended") : ""}`}
+        >
+          {state === "finished" && (
+            <button
+              className="history-toggle"
+              aria-expanded={historyOpen}
+              onClick={() => setHistoryOpen((value) => !value)}
+            >
+              {historyOpen ? "收起" : "查看"}本次实时文字与简记（{notes.length}{" "}
+              条简记）
+            </button>
+          )}
+          {(state !== "finished" || historyOpen) && (
+            <>
+              <nav className="recording-view-tabs" aria-label="会中视图">
                 <button
-                  className="mark-now"
-                  aria-label="标记此刻 Alt+M"
-                  title="标记此刻（Alt+M）"
+                  aria-pressed={mobilePane === "transcript"}
+                  onClick={() => setMobilePane("transcript")}
+                >
+                  实时文字
+                </button>
+                <button
+                  aria-pressed={mobilePane === "overview"}
+                  onClick={() => setMobilePane("overview")}
+                >
+                  AI 概览
+                </button>
+                <button
+                  className="mobile-only"
+                  aria-pressed={mobilePane === "notes"}
+                  onClick={() => setMobilePane("notes")}
+                >
+                  我的简记{notes.length ? ` · ${notes.length}` : ""}
+                </button>
+                <button
+                  className="mobile-only"
                   disabled={!recording}
                   onClick={() => markNow()}
                 >
-                  ⚑ 标记
+                  ⚑ 标记此刻
                 </button>
-                <div className="attention-quick-actions">
-                  {(
-                    [
-                      ["highlight", "标重点"],
-                      ["question", "记问题"],
-                      ["action", "记待办"],
-                      ["note", "随手记"],
-                    ] as const
-                  ).map(([type, label]) => (
+              </nav>
+              <div
+                className="recording-workspace"
+                data-mobile-pane={mobilePane}
+              >
+                <section className="live-draft">
+                  <header>
+                    <h3>实时文字</h3>
+                    <span>{draftStatus}</span>
+                  </header>
+                  {!recordOnly && draftEngine === "qwen" && streamEnabled && (
+                    <div className="live-correction-bar">
+                      <small>
+                        {liveCorrection.status ||
+                          (contextEnabled
+                            ? "上下文辅助识别已开启 · 临时尾部可修订"
+                            : "临时尾部可修订")}
+                      </small>
+                      <button
+                        className="text-btn"
+                        disabled={!correctionSessionId}
+                        onClick={() => setCorrectionReviewOpen(true)}
+                      >
+                        纠错记录
+                        {liveCorrection.corrections.filter(
+                          (c) => c.state === "suggested",
+                        ).length
+                          ? ` · ${liveCorrection.corrections.filter((c) => c.state === "suggested").length} 待确认`
+                          : ""}
+                      </button>
+                    </div>
+                  )}
+                  <LiveDraftList
+                    active={mobilePane === "transcript"}
+                    jump={jumpDraft}
+                    drafts={displayDrafts}
+                    canAddNote={recording}
+                    partial={partialDraft}
+                    emptyText={
+                      recordOnly
+                        ? "录音正在独立保存。配置识别模型后，可在会后生成文字稿。"
+                        : responsiveMode &&
+                            draftEngine === "qwen" &&
+                            streamEnabled
+                          ? "约 3 秒开始预览，后端根据识别速度调整更新节奏。"
+                          : undefined
+                    }
+                    onAddNote={(draft) =>
+                      setNotes((old) => [
+                        ...old,
+                        {
+                          captured_at: draft.start,
+                          note_type: "note",
+                          raw_text: draft.text,
+                          note_scope: "meeting",
+                        },
+                      ])
+                    }
+                  />
+                </section>
+                <section className="live-overview">
+                  <LiveOverviewPanel
+                    recordingId={correctionSessionId || ""}
+                    engine={draftEngine}
+                    active={recording && !recordOnly}
+                    profiles={environment?.analysis.profiles || []}
+                    onModels={onModels}
+                    onLocate={(e) => {
+                      setMobilePane("transcript");
+                      setJumpDraft({ id: e.segment_id, nonce: Date.now() });
+                    }}
+                  />
+                </section>
+                <section className="live-notes">
+                  <header>
+                    <h3>我的简记</h3>
+                    <span>
+                      {notes.length ? `${notes.length} 条` : "记录此刻的关注"}
+                    </span>
+                  </header>
+                  <div className="note-capture-actions">
                     <button
-                      key={type}
+                      className="mark-now"
+                      aria-label="标记此刻 Alt+M"
+                      title="标记此刻（Alt+M）"
                       disabled={!recording}
-                      onClick={() => {
-                        if (noteText.trim()) {
-                          setNotes((old) => [
-                            ...old,
-                            {
-                              captured_at: Math.max(0, currentSeconds()),
-                              note_type: type,
-                              raw_text: noteText.trim(),
-                              note_scope: "personal",
-                            },
-                          ]);
-                          setNoteText("");
-                        } else markNow(type);
-                      }}
+                      onClick={() => markNow()}
                     >
-                      {label}
+                      ⚑ 标记
                     </button>
-                  ))}
-                </div>
-              </div>
-              <p className="note-purpose-hint">
-                随手记下关键词，系统会关联此刻的录音。
-              </p>
-              <div className="live-note-options" ref={noteOptionsRef}>
-                <button
-                  className="note-options-trigger"
-                  disabled={!recording}
-                  aria-expanded={noteOptionsOpen}
-                  onClick={() => setNoteOptionsOpen(!noteOptionsOpen)}
-                >
-                  {noteLabels[noteType]} ·{" "}
-                  {noteScope === "personal" ? "个人备注" : "会议内容"}{" "}
-                  <span>调整用途</span>
-                </button>
-                {noteOptionsOpen && (
-                  <div
-                    className="note-options-popover"
-                    role="group"
-                    aria-label="简记标签与用途"
-                  >
-                    <select
-                      aria-label="记录用途"
-                      value={noteScope}
-                      onChange={(e) =>
-                        setNoteScope(e.target.value as typeof noteScope)
-                      }
-                      disabled={!recording}
-                    >
-                      <option value="personal">个人备注</option>
-                      <option value="meeting">会议内容（待核对）</option>
-                    </select>
-                    <select
-                      aria-label="简记类型"
-                      value={noteType}
-                      disabled={!recording}
-                      onChange={(event) =>
-                        setNoteType(event.target.value as MeetingNoteType)
-                      }
-                    >
-                      {Object.entries(noteLabels).map(([value, label]) => (
-                        <option value={value} key={value}>
+                    <div className="attention-quick-actions">
+                      {(
+                        [
+                          ["highlight", "标重点"],
+                          ["question", "记问题"],
+                          ["action", "记待办"],
+                          ["note", "随手记"],
+                        ] as const
+                      ).map(([type, label]) => (
+                        <button
+                          key={type}
+                          disabled={!recording}
+                          onClick={() => {
+                            if (noteText.trim()) {
+                              setNotes((old) => [
+                                ...old,
+                                {
+                                  captured_at: Math.max(0, currentSeconds()),
+                                  note_type: type,
+                                  raw_text: noteText.trim(),
+                                  note_scope: "personal",
+                                },
+                              ]);
+                              setNoteText("");
+                            } else markNow(type);
+                          }}
+                        >
                           {label}
-                        </option>
+                        </button>
                       ))}
-                    </select>
-                    <button onClick={() => setNoteOptionsOpen(false)}>
-                      完成
+                    </div>
+                  </div>
+                  <p className="note-purpose-hint">
+                    随手记下关键词，系统会关联此刻的录音。
+                  </p>
+                  <div className="live-note-options" ref={noteOptionsRef}>
+                    <button
+                      className="note-options-trigger"
+                      disabled={!recording}
+                      aria-expanded={noteOptionsOpen}
+                      onClick={() => setNoteOptionsOpen(!noteOptionsOpen)}
+                    >
+                      {noteLabels[noteType]} ·{" "}
+                      {noteScope === "personal" ? "个人备注" : "会议内容"}{" "}
+                      <span>调整用途</span>
+                    </button>
+                    {noteOptionsOpen && (
+                      <div
+                        className="note-options-popover"
+                        role="group"
+                        aria-label="简记标签与用途"
+                      >
+                        <select
+                          aria-label="记录用途"
+                          value={noteScope}
+                          onChange={(e) =>
+                            setNoteScope(e.target.value as typeof noteScope)
+                          }
+                          disabled={!recording}
+                        >
+                          <option value="personal">个人备注</option>
+                          <option value="meeting">会议内容（待核对）</option>
+                        </select>
+                        <select
+                          aria-label="简记类型"
+                          value={noteType}
+                          disabled={!recording}
+                          onChange={(event) =>
+                            setNoteType(event.target.value as MeetingNoteType)
+                          }
+                        >
+                          {Object.entries(noteLabels).map(([value, label]) => (
+                            <option value={value} key={value}>
+                              {label}
+                            </option>
+                          ))}
+                        </select>
+                        <button onClick={() => setNoteOptionsOpen(false)}>
+                          完成
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                  <div className="live-note-form">
+                    <textarea
+                      aria-label="会议简记"
+                      placeholder={
+                        recording
+                          ? "只记关键词，系统会保留对应会议时间…"
+                          : "开始录音后可记下重点"
+                      }
+                      value={noteText}
+                      disabled={!recording}
+                      onChange={(event) => setNoteText(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (
+                          (event.metaKey || event.ctrlKey) &&
+                          event.key === "Enter"
+                        )
+                          addNote();
+                      }}
+                    />
+                    <button
+                      disabled={!recording || !noteText.trim()}
+                      onClick={addNote}
+                    >
+                      保存关注点
                     </button>
                   </div>
-                )}
+                  <div
+                    className={`live-note-list${!notes.length ? " empty" : ""}`}
+                  >
+                    {!notes.length && <p>⌘ / Ctrl + Enter 保存简记</p>}
+                    {notes.map((note, index) => (
+                      <article key={`${note.captured_at}-${index}`}>
+                        <button
+                          className="text-btn danger"
+                          aria-label="删除简记"
+                          disabled={!recording}
+                          onClick={() =>
+                            setNotes((old) => old.filter((_, i) => i !== index))
+                          }
+                        >
+                          删除
+                        </button>
+                        <b>{clock(note.captured_at)}</b>
+                        <span>{noteLabels[note.note_type]}</span>
+                        <p>
+                          {note.is_marker && !note.raw_text
+                            ? "⚑ 时间标记 · 会后补充"
+                            : note.raw_text}
+                        </p>
+                        <small>
+                          {note.note_scope === "meeting"
+                            ? "会议内容 · 待核对"
+                            : "个人备注"}
+                        </small>
+                        {note.raw_text.trim() &&
+                          note.note_scope !== "meeting" && (
+                            <button
+                              className="text-btn overview-focus-toggle"
+                              disabled={!recording}
+                              title="开启概览后，选入内容会发送至本场所选模型；仍保留个人备注用途"
+                              onClick={() =>
+                                setNotes((old) =>
+                                  old.map((n, i) =>
+                                    i === index ? toggleOverviewFocus(n) : n,
+                                  ),
+                                )
+                              }
+                            >
+                              {note.overview_focus
+                                ? "移出概览关注点"
+                                : "用作概览关注点"}
+                            </button>
+                          )}
+                        {note.note_scope === "meeting" && (
+                          <small>可作为概览关注点 · 仍需原文依据</small>
+                        )}
+                      </article>
+                    ))}
+                  </div>
+                </section>
               </div>
-              <div className="live-note-form">
-                <textarea
-                  aria-label="会议简记"
-                  placeholder={
-                    recording
-                      ? "只记关键词，系统会保留对应会议时间…"
-                      : "开始录音后可记下重点"
-                  }
-                  value={noteText}
-                  disabled={!recording}
-                  onChange={(event) => setNoteText(event.target.value)}
-                  onKeyDown={(event) => {
-                    if (
-                      (event.metaKey || event.ctrlKey) &&
-                      event.key === "Enter"
-                    )
-                      addNote();
-                  }}
-                />
-                <button
-                  disabled={!recording || !noteText.trim()}
-                  onClick={addNote}
-                >
-                  保存关注点
-                </button>
-              </div>
-              <div className={`live-note-list${!notes.length ? " empty" : ""}`}>
-                {!notes.length && <p>⌘ / Ctrl + Enter 保存简记</p>}
-                {notes.map((note, index) => (
-                  <article key={`${note.captured_at}-${index}`}>
-                    <button
-                      className="text-btn danger"
-                      aria-label="删除简记"
-                      disabled={!recording}
-                      onClick={() =>
-                        setNotes((old) => old.filter((_, i) => i !== index))
-                      }
-                    >
-                      删除
-                    </button>
-                    <b>{clock(note.captured_at)}</b>
-                    <span>{noteLabels[note.note_type]}</span>
-                    <p>
-                      {note.is_marker && !note.raw_text
-                        ? "⚑ 时间标记 · 会后补充"
-                        : note.raw_text}
-                    </p>
-                    <small>
-                      {note.note_scope === "meeting"
-                        ? "会议内容 · 待核对"
-                        : "个人备注"}
-                    </small>
-                  </article>
-                ))}
-              </div>
-            </section>
-          </div>
-        )}
-      </div>
-      <div className="workbench-bottom">
-        <RecordingHealthPanel
-          id={sessionRef.current?.id || ""}
-          state={state}
-          native={sessionRef.current?.source === "macos"}
-          tracks={captureHealth}
-          localFailure={localSaveFailedRef.current}
-          memoryOnly={failedChunksRef.current.length}
-          onDiagnostics={() =>
-            void exportDiagnostics(sessionRef.current!.id).catch((error) =>
-              toast(error.message),
-            )
-          }
-        />
-        <div className="recording-awake-status">
-          <label>
-            <input
-              type="checkbox"
-              aria-label="录音时保持亮屏"
-              checked={keepAwake}
-              disabled={state === "requesting" || state === "saving"}
-              onChange={(event) => setKeepAwake(event.target.checked)}
-            />{" "}
-            录音时保持亮屏
-          </label>
-          <span role="status">{awakeStatus}</span>
+            </>
+          )}
         </div>
-        <RecordingWaveform
-          tracks={
-            captureSource === "browser"
-              ? [
-                  {
-                    label: "麦克风",
-                    levels: microphoneLevels,
-                    color: "#263752",
-                  },
-                ]
-              : [
-                  { label: "电脑声音", levels: systemLevels, color: "#3968e8" },
-                  ...(captureSource === "macos-both"
-                    ? [
-                        {
-                          label: "麦克风",
-                          levels: microphoneLevels,
-                          color: "#263752",
-                        },
-                      ]
-                    : []),
-                ]
-          }
-          active={recording}
-          paused={state === "paused"}
-          status={saveStatus}
-          onRetry={
-            recording &&
-            (failedChunksRef.current.length > 0 ||
-              localSaveFailedRef.current ||
-              /失败|未完成|错误|待重试/.test(saveStatus))
-              ? () => void retrySync().catch((error) => toast(error.message))
-              : undefined
-          }
-        />
-        <button
-          className="recording-inspector-trigger"
-          onClick={() => setInspectorOpen(true)}
-        >
-          运行详情 <span>识别覆盖与保存状态 ↗</span>
-        </button>
-      </div>
+      )}
+      {state !== "idle" && (
+        <div className="workbench-bottom">
+          <RecordingHealthPanel
+            id={sessionRef.current?.id || ""}
+            state={state}
+            native={sessionRef.current?.source === "macos"}
+            tracks={captureHealth}
+            localFailure={localSaveFailedRef.current}
+            memoryOnly={failedChunksRef.current.length}
+            recognitionEnabled={!recordOnly}
+            onDiagnostics={() =>
+              void exportDiagnostics(sessionRef.current!.id).catch((error) =>
+                toast(error.message),
+              )
+            }
+          />
+          <div className="recording-awake-status">
+            <label>
+              <input
+                type="checkbox"
+                aria-label="录音时保持亮屏"
+                checked={keepAwake}
+                disabled={state === "requesting" || state === "saving"}
+                onChange={(event) => setKeepAwake(event.target.checked)}
+              />{" "}
+              录音时保持亮屏
+            </label>
+            <span role="status">{awakeStatus}</span>
+          </div>
+          <RecordingWaveform
+            tracks={
+              captureSource === "browser"
+                ? [
+                    {
+                      label: "麦克风",
+                      levels: microphoneLevels,
+                      color: "#263752",
+                    },
+                  ]
+                : [
+                    {
+                      label: "电脑声音",
+                      levels: systemLevels,
+                      color: "#3968e8",
+                    },
+                    ...(captureSource === "macos-both"
+                      ? [
+                          {
+                            label: "麦克风",
+                            levels: microphoneLevels,
+                            color: "#263752",
+                          },
+                        ]
+                      : []),
+                  ]
+            }
+            active={recording}
+            paused={state === "paused"}
+            status={saveStatus}
+            onRetry={
+              recording &&
+              (failedChunksRef.current.length > 0 ||
+                localSaveFailedRef.current ||
+                /失败|未完成|错误|待重试/.test(saveStatus))
+                ? () => void retrySync().catch((error) => toast(error.message))
+                : undefined
+            }
+          />
+        </div>
+      )}
       {correctionReviewOpen && correctionSessionId && (
         <LiveCorrectionReview
           recordingId={correctionSessionId}
@@ -1863,13 +2068,39 @@ export default function RecordingDialog({
             <button onClick={() => setInspectorOpen(false)}>关闭</button>
           </div>{" "}
           <p>{draftStatus}</p>
-          {managedMode && <p>{backendLive.connection}</p>}
+          {managedMode && (
+            <p>
+              {backendLive.connection} ·{" "}
+              {draftEngine === "whisper"
+                ? "Whisper 分段确认，不提供逐字预览"
+                : "Qwen 支持临时预览与修订"}
+            </p>
+          )}
+          {managedMode && draftEngine === "whisper" && decodeReport.load && (
+            <p>
+              Whisper 待处理尾段 {decodeReport.load.backlog_seconds.toFixed(1)}{" "}
+              秒；按片段返回确认文字。
+            </p>
+          )}
+          {managedMode && draftEngine === "qwen" && decodeReport.load && (
+            <p>
+              识别调度：
+              {decodeReport.load.mode === "saving"
+                ? "降低预览频率"
+                : "常规预览"}
+              · 下一轮至少增加 {decodeReport.load.preview_step_seconds} 秒音频 ·
+              待处理尾段 {decodeReport.load.backlog_seconds.toFixed(1)} 秒
+              <br />
+              调整仅影响临时预览频率，原音照常保存；确认结果仍需完整识别。
+            </p>
+          )}
           {managedMode && decodeReport.boundary_reason && (
             <p>
               分段依据：
               {(
                 {
                   silence: "检测到自然停顿",
+                  sentence_pause: "句末标点附近检测到短停顿",
                   pause: "用户暂停录音",
                   stop: "录音结束收尾",
                   hard_limit: "达到 25 秒上限，前后段连续关联",
@@ -2380,7 +2611,7 @@ export default function RecordingDialog({
             </section>
           )}
           <p className="muted">
-            设置自动保存在当前浏览器。录音时不能更换音源或识别模式；结束后再选择快速完成、精细处理或暂不处理。
+            模型选择保存在本机工作空间，其余录音偏好保存在当前浏览器。录音时不能更换音源或识别模式；结束后可选择快速完成或精细处理。
           </p>
         </Modal>
       )}

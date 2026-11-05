@@ -40,6 +40,12 @@ def extract_json(payload):
     raise json.JSONDecodeError('模型返回内容为空','',0)
 
 def validate_shape(result,schema_name='meeting_analysis'):
+    if schema_name=='meeting_overview':
+        if not isinstance(result,dict) or not isinstance(result.get('items'),list):raise ValueError('缺少会中概览条目')
+        return result
+    if schema_name=='meeting_terms':
+        if not isinstance(result,dict) or not isinstance(result.get('terms'),list):raise ValueError('缺少术语候选列表')
+        return result
     if schema_name=='retrieval_answer':
         if not isinstance(result,dict) or result.get('status') not in ('answered','insufficient') or not isinstance(result.get('claims'),list):
             raise ValueError('引用问答结构不完整')
@@ -122,7 +128,7 @@ def complete_json(url,headers,payload,attempts=3,requester=None):
             diagnostics.append({'attempt':attempt+1,'finish_reason':choice.get('finish_reason'),
                 'fields':{key:len(value) for key,value in candidates},'error':type(error).__name__})
             if attempt+1>=attempts:break
-            current=dict(current);current['temperature']=0;current['max_tokens']=int(payload.get('max_tokens',2048)) if schema_name=='retrieval_answer' else min(16384,max(8192,int(current.get('max_tokens',4096))*2))
+            current=dict(current);current['temperature']=0;current['max_tokens']=int(payload.get('max_tokens',2048)) if schema_name in ('retrieval_answer','meeting_terms','meeting_overview') else min(16384,max(8192,int(current.get('max_tokens',4096))*2))
             response_type=current.get('response_format',{}).get('type')
             if response_type=='json_schema':current['response_format']={'type':'json_object'}
             elif response_type=='json_object':current.pop('response_format',None)

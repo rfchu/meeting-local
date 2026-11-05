@@ -1,6 +1,15 @@
 /** Browser-local model IDs only; never persist credentials or cloud consent. */
 export type ModelChoice =
-  "analysis" | "minutes" | "notes" | "speakers" | "qa" | "transcription";
+  | "live_transcription"
+  | "correction"
+  | "overview"
+  | "terminology"
+  | "analysis"
+  | "minutes"
+  | "notes"
+  | "speakers"
+  | "qa"
+  | "transcription";
 const prefix = "tingji.model-choice.v1.";
 export function readModelChoice(
   slot: ModelChoice,

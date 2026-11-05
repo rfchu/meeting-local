@@ -12,6 +12,7 @@ export default function RecordingHealthPanel({
   localFailure,
   memoryOnly,
   onDiagnostics,
+  recognitionEnabled = true,
 }: {
   id: string;
   state: string;
@@ -20,6 +21,7 @@ export default function RecordingHealthPanel({
   localFailure: boolean;
   memoryOnly: number;
   onDiagnostics: () => void;
+  recognitionEnabled?: boolean;
 }) {
   const [inventory, setInventory] = useState<RecordingHealth | null>(null);
   const [pending, setPending] = useState<number | null>(null);
@@ -123,11 +125,13 @@ export default function RecordingHealthPanel({
       <div>
         <strong>实时识别</strong>
         <span>
-          {failures
-            ? `${failures} 次失败尝试 · 完成时可补识别`
-            : ended
-              ? "可选择快速完成或精细转写"
-              : "识别独立运行，变慢不代表原音丢失"}
+          {!recognitionEnabled
+            ? "本次仅录音，会后可配置模型转写"
+            : failures
+              ? `${failures} 次失败尝试 · 完成时可补识别`
+              : ended
+                ? "可选择快速完成或精细转写"
+                : "识别独立运行，变慢不代表原音丢失"}
         </span>
       </div>
       <button className="text-btn" onClick={onDiagnostics}>

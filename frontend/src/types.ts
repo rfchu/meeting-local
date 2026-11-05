@@ -29,7 +29,8 @@ export interface Job {
   progress: number;
   error: string;
   config: string;
-  kind?: "transcription" | "analysis" | "note_expansion" | "minutes";
+  kind?:
+    "transcription" | "analysis" | "note_expansion" | "minutes" | "terminology";
 }
 
 export interface Revision {
@@ -101,6 +102,8 @@ export interface MeetingFlow {
   previous: { id: string; title: string; todos: NoteTodo[] } | null;
 }
 export interface MeetingNoteInput {
+  client_id?: string;
+  overview_focus?: boolean;
   note_scope?: "personal" | "meeting";
   is_marker?: boolean;
   captured_at: number;
@@ -389,6 +392,7 @@ export interface MinutesGenerationStatus {
   artifact_id?: string;
 }
 export interface Meeting extends MeetingSummary {
+  live_overview_available?: boolean;
   active_minutes_id?: string | null;
   action_tasks?: Record<string, Record<string, string>>;
   deliveries?: MinutesDelivery[];

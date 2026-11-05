@@ -20,12 +20,13 @@ class WhisperCpp:
     def identity(self):
         files=[Path(self.binary),Path(self.model),BASE/'models/ggml-silero-v6.2.0.bin']
         return [{'path':str(p),'size':p.stat().st_size,'mtime_ns':p.stat().st_mtime_ns} for p in files if p.exists()]
-    def transcribe(self, audio, output, run):
+    def live_command(self,audio,output):
         if not self.ready(): raise RuntimeError('本地识别引擎或模型尚未安装，请运行 scripts/setup.sh')
         args=[self.binary,'-m',self.model,'-f',str(audio),'-l','zh','-oj','-of',str(output),'-np','-t','8','-ml','80']
         vad=BASE/'models/ggml-silero-v6.2.0.bin'
         if vad.exists(): args += ['--vad','-vm',str(vad)]
-        run(args)
+        return args
+    def read_live_result(self,output):
         result=json.loads(output.with_suffix('.json').read_text())
         segments=[]
         for row in result.get('transcription',[]):
@@ -34,6 +35,9 @@ class WhisperCpp:
             if text and not (text.startswith('[') and text.endswith(']')):
                 segments.append({'start':offsets['from']/1000,'end':offsets['to']/1000,'text':text,'speaker':'未分配'})
         return segments
+    def transcribe(self,audio,output,run):
+        run(self.live_command(audio,output))
+        return self.read_live_result(output)
 
 
 class QwenMLX:

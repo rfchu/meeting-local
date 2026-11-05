@@ -416,6 +416,7 @@ export default function MinutesView(props: Props) {
               value={model}
               onChange={(e) => props.onModel(e.target.value)}
             >
+              <option value="">请选择模型配置</option>
               {profiles.length ? (
                 profiles.map((p) => (
                   <option key={p.id} value={p.id}>

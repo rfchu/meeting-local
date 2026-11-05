@@ -193,3 +193,17 @@ def test_managed_native_window_extends_to_pause_or_25_seconds(capture):
         RecordingStore.write(folder/'capture.json',{'state':'recording','duration':18.8,'system_frames':round(18.8*16000),'silence_seconds':{'system':.8},'error':''})
         natural=capture.draft_window(rid,0,20,True,True)
     assert natural['confirmed'] and natural['next_offset']==18.8 and natural['boundary_reason']=='silence'
+
+def test_managed_native_sentence_hint_uses_short_pause_before_preview_target(capture):
+    rid,folder=running_window(capture,5.5,microphone=False)
+    (folder/'system.pcm').write_bytes(b'\x70\x17'*5*16000+b'\0\0'*8000)
+    assert not capture.draft_window(rid,0,8,True,True)['ready']
+    result=capture.draft_window(rid,0,8,True,True,sentence_end=5)
+    assert result['confirmed'] and result['boundary_reason']=='sentence_pause'
+    assert result['next_offset']==5.4
+    # Skipping a backlog must discard the old window's punctuation hint.
+    RecordingStore.write(folder/'capture.json',{'state':'recording','duration':80,'system_frames':80*16000,'error':''})
+    (folder/'system.pcm').write_bytes(b'\x70\x17'*60*16000+b'\0\0'*8000+b'\x70\x17'*round(19.5*16000))
+    result=capture.draft_window(rid,0,25,True,True,sentence_end=5)
+    assert result['offset']==55 and result['next_offset']==80
+    assert result['boundary_reason']=='hard_limit'

@@ -93,6 +93,8 @@ class Store:
             if 'kind' not in columns:
                 db.execute("ALTER TABLE jobs ADD COLUMN kind TEXT NOT NULL DEFAULT 'transcription'")
             note_columns={row['name'] for row in db.execute('PRAGMA table_info(meeting_notes)')}
+            if 'client_id' not in note_columns:db.execute("ALTER TABLE meeting_notes ADD COLUMN client_id TEXT NOT NULL DEFAULT ''")
+            if 'overview_focus' not in note_columns:db.execute('ALTER TABLE meeting_notes ADD COLUMN overview_focus INTEGER NOT NULL DEFAULT 0')
             if 'expansion_revision' not in note_columns:db.execute('ALTER TABLE meeting_notes ADD COLUMN expansion_revision INTEGER NOT NULL DEFAULT 0')
             if 'note_scope' not in note_columns:db.execute("ALTER TABLE meeting_notes ADD COLUMN note_scope TEXT NOT NULL DEFAULT 'personal'")
             if 'is_marker' not in note_columns:db.execute('ALTER TABLE meeting_notes ADD COLUMN is_marker INTEGER NOT NULL DEFAULT 0')
@@ -139,7 +141,33 @@ class Store:
                 id TEXT PRIMARY KEY,meeting_id TEXT NOT NULL,artifact_id TEXT NOT NULL,
                 payload TEXT NOT NULL,created TEXT DEFAULT CURRENT_TIMESTAMP);
                 CREATE INDEX IF NOT EXISTS minutes_deliveries_meeting ON minutes_deliveries(meeting_id);""")
-            db.execute('PRAGMA user_version=17')
+            db.executescript("""CREATE TABLE IF NOT EXISTS terminology (
+                id TEXT PRIMARY KEY,scope TEXT NOT NULL,name TEXT NOT NULL,category TEXT NOT NULL,
+                aliases TEXT NOT NULL DEFAULT '[]',status TEXT NOT NULL,source TEXT NOT NULL,
+                evidence TEXT NOT NULL DEFAULT '[]',revision INTEGER,reason TEXT NOT NULL DEFAULT '',
+                version INTEGER NOT NULL DEFAULT 1,created TEXT DEFAULT CURRENT_TIMESTAMP,
+                updated TEXT DEFAULT CURRENT_TIMESTAMP);
+                CREATE UNIQUE INDEX IF NOT EXISTS terminology_scope_name ON terminology(scope,name COLLATE NOCASE);
+                CREATE INDEX IF NOT EXISTS terminology_scope_status ON terminology(scope,status);""")
+            db.executescript("""CREATE TABLE IF NOT EXISTS live_overview_runs (
+                recording_id TEXT PRIMARY KEY,config TEXT NOT NULL,enabled INTEGER NOT NULL DEFAULT 1,
+                epoch INTEGER NOT NULL DEFAULT 1,state TEXT NOT NULL DEFAULT 'waiting',
+                last_attempt REAL NOT NULL DEFAULT 0,next_due REAL NOT NULL DEFAULT 0,
+                force INTEGER NOT NULL DEFAULT 0,failures INTEGER NOT NULL DEFAULT 0,
+                error TEXT NOT NULL DEFAULT '',updated TEXT DEFAULT CURRENT_TIMESTAMP);
+                CREATE TABLE IF NOT EXISTS live_overview_snapshots (
+                recording_id TEXT NOT NULL,version INTEGER NOT NULL,cursor INTEGER NOT NULL,
+                covered_hash TEXT NOT NULL,meta_hash TEXT NOT NULL,payload TEXT NOT NULL,
+                created TEXT DEFAULT CURRENT_TIMESTAMP,PRIMARY KEY(recording_id,version));
+                CREATE TABLE IF NOT EXISTS live_overview_reviews (
+                recording_id TEXT NOT NULL,item_id TEXT NOT NULL,state TEXT NOT NULL,
+                payload TEXT NOT NULL,version INTEGER NOT NULL DEFAULT 1,
+                updated TEXT DEFAULT CURRENT_TIMESTAMP,PRIMARY KEY(recording_id,item_id));""")
+            db.execute("CREATE TABLE IF NOT EXISTS model_preferences (role TEXT PRIMARY KEY,default_value TEXT NOT NULL DEFAULT '',last_value TEXT NOT NULL DEFAULT '',version INTEGER NOT NULL DEFAULT 1,updated TEXT DEFAULT CURRENT_TIMESTAMP)")
+            db.execute("CREATE TABLE IF NOT EXISTS job_runtime_events (id INTEGER PRIMARY KEY AUTOINCREMENT,job_id TEXT NOT NULL,action TEXT NOT NULL,from_state TEXT NOT NULL,error_code TEXT,created TEXT DEFAULT CURRENT_TIMESTAMP)")
+            db.execute('CREATE INDEX IF NOT EXISTS job_runtime_events_job ON job_runtime_events(job_id,id)')
+            db.execute('CREATE TRIGGER IF NOT EXISTS job_runtime_events_cleanup AFTER DELETE ON jobs BEGIN DELETE FROM job_runtime_events WHERE job_id=OLD.id; END')
+            db.execute('PRAGMA user_version=21')
         os.chmod(self.path,0o600)
     @contextmanager
     def connect(self):

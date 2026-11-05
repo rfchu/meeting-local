@@ -5,12 +5,16 @@ import type {
   LiveStreamResult,
 } from "./liveStream";
 export interface SessionConfig {
+  engine?: "qwen" | "whisper";
   responsive: boolean;
   context_enabled: boolean;
   terms: string;
   prefix_enabled?: boolean;
 }
 export interface SessionSnapshot {
+  protocol_version?: number;
+  engine?: "qwen" | "whisper";
+  recording_id?: string;
   type: "snapshot";
   seq: number;
   status: string;
@@ -20,6 +24,12 @@ export interface SessionSnapshot {
   source: "native" | "browser";
   config: SessionConfig;
   metrics: {
+    load?: {
+      mode: "balanced" | "saving";
+      rtf: number;
+      preview_step_seconds: number;
+      backlog_seconds: number;
+    };
     processing_ms?: number;
     first_text_ms?: number | null;
     duration?: number;
@@ -42,6 +52,7 @@ export type SessionEvent =
       type: "final";
       seq: number;
       result: LiveStreamResult & {
+        load?: SessionSnapshot["metrics"]["load"];
         next_offset: number;
         skipped_seconds: number;
       };
@@ -66,7 +77,20 @@ export async function watchLiveSession(
     cursor = after;
   const consume = (line: string) => {
     if (!line.trim()) return false;
-    const event = JSON.parse(line) as SessionEvent;
+    const event = JSON.parse(line) as SessionEvent & {
+      protocol_version?: number;
+      recording_id?: string;
+      engine?: string;
+    };
+    if (event.protocol_version !== undefined && event.protocol_version !== 1)
+      throw new Error("实时事件协议版本不支持");
+    if (event.recording_id !== undefined && event.recording_id !== id)
+      throw new Error("实时事件来自其他录音");
+    if (
+      event.engine !== undefined &&
+      !["qwen", "whisper"].includes(event.engine)
+    )
+      throw new Error("实时事件识别引擎无效");
     if (!Number.isSafeInteger(event.seq) || event.seq < 0)
       throw new Error("实时事件序号无效");
     if (event.type === "heartbeat") return false;

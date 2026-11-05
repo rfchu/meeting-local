@@ -2,6 +2,8 @@
 import asyncio,hashlib,io,json,math,os,shutil,time,unicodedata,wave
 from contextlib import aclosing
 from .db import encode
+from .live_batch import whisper_events
+from .live_policy import sentence_hint,update_load
 from .live_stream import qwen_events,inspect_audio
 from .live_results import RATE,plan_ranges
 from .live_segmentation import elastic_plan,HARD_SECONDS,PAUSE_SECONDS
@@ -28,9 +30,10 @@ def pcm_wav(raw):
     return result.getvalue()
 
 class LiveSessions:
-    def __init__(self,store,recordings,native,cache,asr_lock,resident,provider):
+    def __init__(self,store,recordings,native,cache,asr_lock,resident,provider,batch_provider=None):
         self.store=store;self.recordings=recordings;self.native=native;self.cache=cache
         self.asr_lock=asr_lock;self.resident=resident;self.provider=provider
+        self.batch_provider=batch_provider
         self.tasks={};self.wakes={};self.closed=False
     def row(self,rid):
         row=self.store.one('SELECT * FROM live_sessions WHERE recording_id=?',(rid,))
@@ -41,7 +44,8 @@ class LiveSessions:
             db.execute('BEGIN IMMEDIATE')
             row=db.execute('SELECT seq FROM live_sessions WHERE recording_id=?',(rid,)).fetchone()
             if not row:return
-            seq=row['seq']+1;event={'type':kind,'seq':seq,**data}
+            seq=row['seq']+1;config=json.loads(db.execute('SELECT config FROM live_sessions WHERE recording_id=?',(rid,)).fetchone()['config'])
+            event={'type':kind,'seq':seq,'protocol_version':1,'recording_id':rid,'engine':config.get('engine','qwen'),**data}
             db.execute('UPDATE live_sessions SET seq=?,updated=CURRENT_TIMESTAMP WHERE recording_id=?',(seq,rid))
             db.execute('INSERT INTO live_session_events(recording_id,seq,payload) VALUES(?,?,?)',(rid,seq,encode(event)))
             db.execute('DELETE FROM live_session_events WHERE recording_id=? AND seq<=?',(rid,seq-MAX_EVENTS))
@@ -55,25 +59,27 @@ class LiveSessions:
             try:duration=self.native.status(rid,touch=False).get('duration',session['duration'])
             except (OSError,ValueError):duration=session['duration']
         else:duration=max(session['duration'],self.input_end(rid)/RATE)
-        rows,_=plan_ranges(self.cache.snapshot(rid,'qwen'),duration)
+        rows,_=plan_ranges(self.cache.snapshot(rid,json.loads(row['config']).get('engine','qwen')),duration)
         for record in rows:
             segments.extend(dict(s,live_range_id=record['id'],live_segment_index=i) for i,s in enumerate(record['segments']))
-        return {'type':'snapshot','seq':row['seq'],'status':row['status'],'segments':segments,
+        return {'type':'snapshot','protocol_version':1,'recording_id':rid,'engine':json.loads(row['config']).get('engine','qwen'),'seq':row['seq'],'status':row['status'],'segments':segments,
                 'partial':json.loads(row['partial']),'cursor':row['cursor']/RATE,'metrics':json.loads(row['metrics']),
                 'source':row['source'],'config':json.loads(row['config'])}
     async def start(self,rid,config):
         if self.closed:raise ValueError('服务正在关闭')
-        config={'prefix_enabled':True,**config}
+        config={'engine':'qwen','prefix_enabled':True,**config}
+        if config['engine'] not in ('qwen','whisper'):raise ValueError('不支持的实时识别引擎')
+        if config['engine']=='whisper':config.update(responsive=False,prefix_enabled=False,context_enabled=False,terms='')
         session=self.recordings.read(rid)
         if session['state']=='completed' or self.store.one('SELECT id FROM meetings WHERE id=?',(rid,)):raise ValueError('录音已保存，不能重启实时识别')
         source='native' if session.get('source')=='macos' else 'browser'
         if source=='native' and self.native.status(rid,touch=False).get('state') not in ('recording','paused'):raise ValueError('原生采集未运行，已有结果仍可查看')
         row=self.store.one('SELECT * FROM live_sessions WHERE recording_id=?',(rid,))
         if row and row['status']=='stopped':raise ValueError('实时会话已结束，已有结果仍可查看')
-        if row and {'prefix_enabled':True,**json.loads(row['config'])}!=config:raise ValueError('正在运行的实时会话不能更换识别配置')
+        if row and {'engine':'qwen','prefix_enabled':True,**json.loads(row['config'])}!=config:raise ValueError('正在运行的实时会话不能更换识别配置')
         if not row:
             # Adopt old completed ranges without re-recognizing them after an upgrade.
-            ranges,_=plan_ranges(self.cache.snapshot(rid,'qwen'),86400)
+            ranges,_=plan_ranges(self.cache.snapshot(rid,config['engine']),86400)
             cursor=max((r['end_frame'] for r in ranges),default=0)
             self.store.execute("INSERT INTO live_sessions(recording_id,source,config,cursor) VALUES(?,?,?,?)",(rid,source,encode(config),cursor))
         self.ensure(rid)
@@ -117,13 +123,14 @@ class LiveSessions:
             tmp.replace(path)
             db.execute('INSERT INTO live_pcm_inputs(recording_id,start_frame,end_frame,digest) VALUES(?,?,?,?)',(rid,start,end,digest))
         return {'ok':True,'cached':False}
-    def browser_window(self,rid,cursor,target,draining=False,paused=False,responsive=True):
+    def browser_window(self,rid,cursor,target,draining=False,paused=False,responsive=True,sentence_end=None):
         rows=self.store.all('SELECT * FROM live_pcm_inputs WHERE recording_id=? AND end_frame>? ORDER BY start_frame',(rid,cursor))
         if not rows:return {'ready':False}
         # Bound live backlog; skipped intervals remain gaps in durable coverage.
         limit=HARD_SECONDS if responsive else 15
         horizon=rows[-1]['end_frame'];begin=max(cursor,horizon-limit*RATE) if horizon-cursor>2*limit*RATE else cursor
         begin=max(begin,rows[0]['start_frame']);raw=b'';position=begin
+        if begin!=cursor:sentence_end=None
         for row in rows:
             if row['end_frame']<=position:continue
             if row['start_frame']>position:break
@@ -132,12 +139,12 @@ class LiveSessions:
             raw+=part;position=begin+len(raw)//2
             if len(raw)>=2*limit*RATE:break
         if responsive:
-            plan=elastic_plan(raw,target,'stop' if draining else 'pause' if paused else None)
+            plan=elastic_plan(raw,target,'stop' if draining else 'pause' if paused else None,sentence_end)
             if plan is None:return {'ready':False}
             count=plan.pop('count');raw=raw[:count*2];position=begin+count
         else:
             if len(raw)<round((.5 if draining or paused else 15)*RATE)*2:return {'ready':False}
-            plan={'confirmed':True,'boundary_reason':'standard','leading_silence_seconds':0,'extending':False}
+            plan={'confirmed':True,'boundary_reason':'stop' if draining else 'pause' if paused else 'standard','leading_silence_seconds':0,'extending':False}
         return {'ready':True,'offset':begin/RATE,'next_offset':position/RATE,'skipped_seconds':(begin-cursor)/RATE,
                 'payload':pcm_wav(raw),**plan}
     def continuation(self,rid,window,break_at):
@@ -154,6 +161,8 @@ class LiveSessions:
         previous='';stable='';preview_end=0;preview_start=None;next_target=3;errors=0
         saved_metrics=json.loads(self.row(rid)['metrics']);totals=dict(saved_metrics.get('decoder_totals',{}))
         break_at=saved_metrics.get('continuation_break_at',-1)
+        load=saved_metrics.get('load',{});resource_notice=0
+        next_target=max(3,load.get('preview_step_seconds',3))
         try:
             while not self.closed:
                 row=self.row(rid)
@@ -162,6 +171,12 @@ class LiveSessions:
                 if session['state']=='completed' or self.store.one('SELECT id FROM meetings WHERE id=?',(rid,)):break
                 break_at=max(break_at,json.loads(row['metrics']).get('continuation_break_at',-1))
                 draining=row['status']=='draining';config=json.loads(row['config']);cursor=row['cursor']
+                if self.asr_lock.locked():
+                    if time.monotonic()-resource_notice>5:
+                        self.emit(rid,'status',message='等待识别资源；原音持续保存，已确认文字保留')
+                        resource_notice=time.monotonic()
+                    await asyncio.sleep(.3);continue
+                hint=sentence_hint(previous,(preview_end-cursor)/RATE) if previous and preview_start==cursor else None
                 if row['source']=='native':
                     capture=await asyncio.to_thread(self.native.status,rid,touch=False)
                     if capture.get('state') not in ('recording','paused','stopped','interrupted','failed'):
@@ -169,12 +184,12 @@ class LiveSessions:
                     if capture.get('state') in ('stopped','interrupted','failed'):draining=True
                     available=max(0,capture.get('duration',0)-cursor/RATE)
                     target=min(HARD_SECONDS,max(next_target,math.floor(available))) if config['responsive'] else 15
-                    window=await asyncio.to_thread(self.native.draft_window,rid,cursor/RATE,target,config['responsive'],True)
+                    window=await asyncio.to_thread(self.native.draft_window,rid,cursor/RATE,target,config['responsive'],True,**({'sentence_end':hint} if hint is not None else {}))
                     paused=capture.get('state')=='paused'
                 else:
                     if not draining and row['status']=='running' and self.input_end(rid)<=preview_end:
                         await asyncio.sleep(.3);continue
-                    window=await asyncio.to_thread(self.browser_window,rid,cursor, next_target if config['responsive'] else 15,draining,row['status']=='paused',config['responsive'])
+                    window=await asyncio.to_thread(self.browser_window,rid,cursor, next_target if config['responsive'] else 15,draining,row['status']=='paused',config['responsive'],hint)
                     paused=row['status']=='paused'
                 if not window['ready']:
                     if paused and break_at!=cursor:
@@ -188,14 +203,18 @@ class LiveSessions:
                 end=round(window['next_offset']*RATE)
                 if end<=preview_end and not window['confirmed']:
                     await asyncio.sleep(.3);continue
+                window.setdefault('boundary_reason','stop' if draining else 'pause' if paused else 'standard')
                 if draining:
                     window['confirmed']=True
                     if window.get('boundary_reason')=='preview':window.update(boundary_reason='stop',extending=False)
-                window.update(self.continuation(rid,window,break_at))
+                if config.get('engine','qwen')=='qwen':window.update(self.continuation(rid,window,break_at))
                 payload=window.pop('payload');window.pop('silent',None);result=None;failure=None;last_sent=0
-                iterator=qwen_events(self.provider(),self.cache,self.asr_lock,payload,window['offset'],rid,row['source'],self.store.root,window,
+                iterator=None if config.get('engine')=='whisper' else qwen_events(self.provider(),self.cache,self.asr_lock,payload,window['offset'],rid,row['source'],self.store.root,window,
                     resident=self.resident,confirmed=window['confirmed'],context_enabled=config['context_enabled'],terms=config['terms'],continuation={'key':rid+':'+str(round(window['offset']*RATE)),'enabled':config.get('prefix_enabled',True) and config['responsive'],
                     'confirmed':window['confirmed'],'previous_text':previous,'stable_text':stable})
+                if config.get('engine')=='whisper':
+                    if not self.batch_provider:raise ValueError('Whisper 托管识别尚未配置')
+                    iterator=whisper_events(self.batch_provider(),self.cache,self.asr_lock,payload,window['offset'],rid,row['source'],self.store.root,window)
                 async with aclosing(iterator):
                     async for line in iterator:
                         event=json.loads(line)
@@ -218,15 +237,22 @@ class LiveSessions:
                         totals[key]=totals.get(key,0)+int(bool(hit))
                 metrics['continuation_break_at']=break_at
                 metrics['decoder_totals']=dict(totals);result['decoder_totals']=dict(totals)
-                metrics['preview_step_seconds']=preview_step(result['processing_ms'])
+                if row['source']=='native':
+                    try:capture=await asyncio.to_thread(self.native.status,rid,touch=False)
+                    except (OSError,ValueError):pass
+                horizon=capture.get('duration',0) if row['source']=='native' else self.input_end(rid)/RATE
+                backlog=max(0,horizon-window['next_offset'])
+                load=update_load(load,result['processing_ms'],result['duration'],backlog)
+                metrics['policy_version']=2;metrics['load']=load;metrics['preview_step_seconds']=load['preview_step_seconds']
+                result['load']=load
                 if result['confirmed']:
                     self.checkpoint(rid,cursor=end,partial={},metrics=metrics)
-                    self.emit(rid,'final',result=result);previous='';stable='';preview_end=0;preview_start=None;next_target=3
+                    self.emit(rid,'final',result=result);previous='';stable='';preview_end=0;preview_start=None;next_target=max(3,load['preview_step_seconds'])
                 else:
                     partial={'start':window['offset'],'end':window['next_offset'],'text':text,'stable_text':stable,**{k:window[k] for k in ('continuation_id','continues_previous','continues_next','boundary_reason')}}
                     self.checkpoint(rid,partial=partial,metrics=metrics)
                     self.emit(rid,'partial',partial=partial,metrics=metrics)
-                    next_target=min(HARD_SECONDS,math.floor(window['next_offset']-window['offset'])+preview_step(result['processing_ms']))
+                    next_target=min(HARD_SECONDS,math.floor(window['next_offset']-window['offset'])+load['preview_step_seconds'])
         except asyncio.CancelledError:raise
         except (OSError,ValueError) as error:
             self.emit(rid,'status',message='实时会话暂时中断，原音与已确认文字保留：'+str(error)[:200])
@@ -278,6 +304,6 @@ class LiveSessions:
             if rows and rows[0]['seq']!=after+1:
                 snapshot=self.snapshot(rid);after=snapshot['seq'];yield encode(snapshot)+'\n';continue
             for row in rows:after=row['seq'];yield row['payload']+'\n'
-            if self.row(rid)['status']=='stopped':yield encode({'type':'ended','seq':after})+'\n';return
+            if self.row(rid)['status']=='stopped':yield encode({'type':'ended','seq':after,'protocol_version':1,'recording_id':rid,'engine':json.loads(self.row(rid)['config']).get('engine','qwen')})+'\n';return
             try:await asyncio.wait_for(wake.wait(),10)
-            except asyncio.TimeoutError:yield encode({'type':'heartbeat','seq':after})+'\n'
+            except asyncio.TimeoutError:yield encode({'type':'heartbeat','seq':after,'protocol_version':1,'recording_id':rid,'engine':json.loads(self.row(rid)['config']).get('engine','qwen')})+'\n'

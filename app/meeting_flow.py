@@ -59,6 +59,13 @@ def ai_context(db,mid):
     # Never silently omit approved priorities; require the user to reduce an oversized set.
     if len(approved)>40 or sum(len(n['content']) for n in approved)>12000:raise ValueError('已确认关注点超过本次整理预算，请减少后再生成纪要')
     payload={'preparation':brief(db,mid),'reviewed_attention':approved}
+    from .terminology import confirmed_context
+    terms=confirmed_context(db,mid)
+    if terms:payload['confirmed_terminology']=terms
+    from .live_overview import approved_context
+    segments=json.loads(db.execute('SELECT segments FROM meetings WHERE id=?',(mid,)).fetchone()['segments'])
+    overview=approved_context(db,mid,segments)
+    if overview:payload['reviewed_live_overview']=overview
     return payload,hashlib.sha256(encode(payload).encode()).hexdigest()
 
 def artifact_current(db,mid,provenance,_seen=None):

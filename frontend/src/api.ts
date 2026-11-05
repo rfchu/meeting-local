@@ -1,3 +1,10 @@
+import type { RuntimeTasks } from "./features/management/TasksPanel";
+import type { RuntimeOverview } from "./features/management/RuntimeManagement";
+import type { OverviewStatus } from "./features/overview/types";
+import type { Readiness } from "./features/onboarding/readiness";
+import type { CaptureTest } from "./features/onboarding/AudioCheck";
+import type { SampleMeeting } from "./features/onboarding/SampleMeetingDialog";
+import type { Term, TermList, TermInput } from "./features/terminology/terms";
 import type {
   SessionConfig,
   SessionSnapshot,
@@ -59,6 +66,82 @@ const json = (method: string, body?: unknown): RequestInit => ({
 });
 
 export const api = {
+  runtimeTasks: (state: string) =>
+    request<RuntimeTasks>(`/runtime/tasks?state=${state}`),
+  runtimeOverview: () => request<RuntimeOverview>("/runtime/overview"),
+  liveOverview: (id: string, version?: number) =>
+    request<OverviewStatus>(
+      `/recordings/${id}/overview${version ? `?version=${version}` : ""}`,
+    ),
+  enableOverview: (
+    id: string,
+    body: {
+      profile_id: string;
+      engine: string;
+      confirm_cloud: boolean;
+      expected_provider: unknown;
+    },
+  ) => request<OverviewStatus>(`/recordings/${id}/overview`, json("PUT", body)),
+  pauseOverview: (id: string) =>
+    request<OverviewStatus>(`/recordings/${id}/overview/pause`, json("POST")),
+  refreshOverview: (id: string) =>
+    request<OverviewStatus>(`/recordings/${id}/overview/refresh`, json("POST")),
+  reviewOverview: (
+    id: string,
+    itemId: string,
+    body: {
+      state: string;
+      fingerprint: string;
+      version: number;
+      content?: string;
+    },
+  ) =>
+    request<OverviewStatus>(
+      `/recordings/${id}/overview/items/${itemId}`,
+      json("PUT", body),
+    ),
+  recordingReadiness: () => request<Readiness>("/recording-readiness"),
+  sampleMeeting: () => request<SampleMeeting>("/onboarding/sample"),
+  startCaptureTest: (source: "macos-system" | "macos-both") =>
+    request<CaptureTest>("/capture-tests", json("POST", { source })),
+  captureTest: (id: string) => request<CaptureTest>(`/capture-tests/${id}`),
+  deleteCaptureTest: (id: string) =>
+    request(`/capture-tests/${id}`, json("DELETE")),
+  captureTestAudio: async (id: string) => {
+    const result = await fetch(`/api/capture-tests/${id}/audio`);
+    if (!result.ok) throw new Error("未获取到测试音频，请检查音源后重试");
+    return result.blob();
+  },
+  terms: (scope: string) =>
+    request<TermList>(`/terminology/${encodeURIComponent(scope)}`),
+  createTerm: (scope: string, body: TermInput) =>
+    request<Term>(
+      `/terminology/${encodeURIComponent(scope)}`,
+      json("POST", body),
+    ),
+  updateTerm: (scope: string, id: string, body: TermInput) =>
+    request<Term>(
+      `/terminology/${encodeURIComponent(scope)}/${id}`,
+      json("PUT", body),
+    ),
+  deleteTerm: (scope: string, id: string, version: number) =>
+    request(
+      `/terminology/${encodeURIComponent(scope)}/${id}?version=${version}`,
+      json("DELETE"),
+    ),
+  scanTerms: (
+    scope: string,
+    profile_id?: string,
+    confirm_cloud = false,
+    expected_provider?: Pick<
+      LLMConfig,
+      "id" | "base_url" | "model" | "provider_type"
+    >,
+  ) =>
+    request<{ id: string }>(
+      `/terminology/${encodeURIComponent(scope)}/scan`,
+      json("POST", { profile_id, confirm_cloud, expected_provider }),
+    ),
   qaPrepare: (body: QAPrepare) =>
     request<QARun>("/retrieval/qa/prepare", {
       ...json("POST", body),
@@ -414,6 +497,7 @@ export const api = {
     offset: number,
     engine: "whisper" | "qwen" = "whisper",
     recordingId?: string,
+    signal?: AbortSignal,
   ) => {
     const data = new FormData();
     data.append("file", file);
@@ -424,7 +508,7 @@ export const api = {
       segments: LiveDraftSegment[];
       duration: number;
       processing_ms: number;
-    }>("/live-transcribe", { method: "POST", body: data });
+    }>("/live-transcribe", { method: "POST", body: data, signal });
   },
   rename: (id: string, title: string) =>
     request(`/meetings/${id}`, json("PATCH", { title })),

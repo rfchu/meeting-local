@@ -1,5 +1,4 @@
 import { useModelChoice } from "../../preferences/useModelChoice";
-import { resolveModelChoice } from "../../preferences/modelChoices";
 import { useEffect, useState, useRef } from "react";
 import { api } from "../../api";
 import type {
@@ -62,13 +61,6 @@ export default function NotesView({
       .environment()
       .then((env) => {
         setProfiles(env.analysis.profiles);
-        setProfileId(
-          resolveModelChoice(
-            profileId,
-            env.analysis.profiles.map((p) => p.id),
-            env.analysis.default_profile_id || "",
-          ),
-        );
       })
       .catch((error) => toast((error as Error).message));
   }, []);
@@ -156,7 +148,7 @@ export default function NotesView({
             value={profileId}
             onChange={(e) => setProfileId(e.target.value)}
           >
-            {!profiles.length && <option value="">LM Studio 默认模型</option>}
+            <option value="">请选择模型配置</option>
             {profiles.map((p) => (
               <option key={p.id} value={p.id}>
                 {p.name} · {p.provider_type === "cloud" ? "云端" : "本地"}
@@ -661,14 +653,33 @@ function ReviewPanel({
           <h3>AI 扩写建议</h3>
           <button
             disabled={
-              busy || active || !note.raw_text.trim() || !meeting.revision
+              busy ||
+              active ||
+              !profileId ||
+              !note.raw_text.trim() ||
+              !meeting.revision
             }
-            onClick={() =>
-              void run(
-                () => api.expandNote(meeting.id, note.id, profileId),
-                "扩写任务已提交",
-              )
-            }
+            onClick={async () => {
+              try {
+                const selected = (await api.configs()).find(
+                  (p) => p.id === profileId,
+                );
+                if (!selected) return toast("请选择有效模型配置");
+                if (
+                  selected.provider_type === "cloud" &&
+                  !window.confirm(
+                    `本条简记及用于关联的会议文字稿将发送至 ${selected.name}（${selected.base_url}），是否继续？`,
+                  )
+                )
+                  return;
+                void run(
+                  () => api.expandNote(meeting.id, note.id, profileId),
+                  "扩写任务已提交",
+                );
+              } catch (e) {
+                toast((e as Error).message);
+              }
+            }}
           >
             {active ? job?.stage : "生成扩写建议"}
           </button>

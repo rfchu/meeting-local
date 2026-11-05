@@ -1,3 +1,5 @@
+import TermDialog from "../terminology/TermDialog";
+import { searchForms, type Term } from "../terminology/terms";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../../api";
 import Modal from "../../components/Modal";
@@ -109,6 +111,28 @@ export default function TranscriptView({
   onRefresh,
   toast,
 }: Props) {
+  const [termsOpen, setTermsOpen] = useState(false);
+  const [terms, setTerms] = useState<Term[]>([]);
+  const loadTerms = useCallback(
+    () =>
+      api
+        .terms(meeting.id)
+        .then((data) => setTerms([...data.terms, ...data.library])),
+    [meeting.id],
+  );
+  useEffect(() => {
+    setTerms([]);
+    let live = true;
+    void api
+      .terms(meeting.id)
+      .then((data) => {
+        if (live) setTerms([...data.terms, ...data.library]);
+      })
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [meeting.id, meeting.revision]);
   const [liveReviewOpen, setLiveReviewOpen] = useState(false);
   const [hasLiveReview, setHasLiveReview] = useState(false);
   useEffect(() => {
@@ -143,15 +167,16 @@ export default function TranscriptView({
     [meeting.segments],
   );
   const shown = useMemo(() => {
-    const q = search.toLowerCase();
+    const q = search.trim().toLowerCase();
+    const forms = searchForms(search, terms);
     return meeting.segments.filter(
       (item) =>
         !q ||
         item.id === editingId ||
-        item.text.toLowerCase().includes(q) ||
+        forms.some((form) => item.text.toLowerCase().includes(form)) ||
         item.speaker.toLowerCase().includes(q),
     );
-  }, [meeting.segments, search]);
+  }, [meeting.segments, search, terms, editingId]);
   const latest = useRef({ segments: meeting.segments, onChange, onSeek });
   latest.current = { segments: meeting.segments, onChange, onSeek };
   const update = useCallback(
@@ -219,6 +244,21 @@ export default function TranscriptView({
   };
   return (
     <>
+      {termsOpen && (
+        <TermDialog
+          scope={meeting.id}
+          canScan
+          onClose={() => {
+            setTermsOpen(false);
+            void loadTerms().catch((e) => toast(e.message));
+            void onRefresh();
+          }}
+          onLocate={(id) => {
+            const item = meeting.segments.find((s) => s.id === id);
+            if (item) onSeek(item.start);
+          }}
+        />
+      )}
       <div className="tools">
         <input
           value={search}
@@ -244,6 +284,15 @@ export default function TranscriptView({
           }}
         >
           管理发言人
+        </button>
+        <button
+          onClick={() => {
+            void onSave()
+              .then(() => setTermsOpen(true))
+              .catch((e) => toast(e.message));
+          }}
+        >
+          术语管理
         </button>
         <button onClick={mergeShort}>合并连续短句</button>
         {hasLiveReview && (

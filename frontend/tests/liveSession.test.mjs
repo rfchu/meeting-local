@@ -28,3 +28,11 @@ test('Abrupt transport end and malformed confirmation never masquerade as comple
   await assert.rejects(read([snapshot]),/连接中断/);
   await assert.rejects(read([snapshot,{type:'final',seq:6,result:{segments:'错误'}}]),/确认结果无效/);
 });
+test('Unified envelope accepts Whisper finals and rejects foreign recordings and protocols',async()=>{
+  const base={protocol_version:1,recording_id:'synthetic',engine:'whisper'};
+  const received=await read([{...snapshot,...base},{...base,type:'final',seq:6,result:{segments:[{start:0,end:15,text:'分段结果'}]}},{...base,type:'ended',seq:6}]);
+  assert.equal(received[1].engine,'whisper');
+  await assert.rejects(read([{...snapshot,...base,recording_id:'other'}]),/其他录音/);
+  await assert.rejects(read([{...snapshot,...base,protocol_version:99}]),/协议版本/);
+  await assert.rejects(read([{...snapshot,...base,engine:'unknown'}]),/引擎无效/);
+});
