@@ -1,0 +1,217 @@
+[
+  {
+    "id": "delivery-change",
+    "rounds": [
+      {
+        "segments": [
+          {
+            "id": "s1",
+            "text": "建议下周一上线，日期尚未确定。陈明负责周五前交付预览稿。"
+          }
+        ],
+        "items": [
+          {
+            "kind": "question",
+            "content": "上线日期尚未确定。",
+            "source": "s1"
+          },
+          {
+            "kind": "action",
+            "content": "陈明负责周五前交付预览稿。",
+            "source": "s1"
+          }
+        ],
+        "required": [
+          "日期尚未确定",
+          "周五前交付"
+        ],
+        "forbidden": [
+          "决定下周一上线"
+        ]
+      },
+      {
+        "segments": [
+          {
+            "id": "s2",
+            "text": "大家同意下周三上线。陈明的预览稿改为下周一交付。"
+          }
+        ],
+        "items": [
+          {
+            "reuse": "日期尚未确定",
+            "kind": "decision",
+            "content": "讨论明确下周三上线。",
+            "source": "s2"
+          },
+          {
+            "reuse": "周五前交付",
+            "kind": "action",
+            "content": "陈明的预览稿改为下周一交付。",
+            "source": "s2"
+          }
+        ],
+        "required": [
+          "下周三上线",
+          "下周一交付"
+        ],
+        "forbidden": [
+          "日期尚未确定",
+          "周五前交付"
+        ],
+        "stable": [
+          "下周三上线",
+          "下周一交付"
+        ]
+      },
+      {
+        "segments": [
+          {
+            "id": "s3",
+            "text": "接下来讨论导出样式。"
+          }
+        ],
+        "items": [
+          {
+            "kind": "topic",
+            "content": "讨论导出样式。",
+            "source": "s3"
+          }
+        ],
+        "required": [
+          "下周三上线",
+          "下周一交付",
+          "导出样式"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "human-priority-and-failure",
+    "rounds": [
+      {
+        "segments": [
+          {
+            "id": "s1",
+            "text": "张敏整理测试清单。发布日期还未决定。"
+          }
+        ],
+        "items": [
+          {
+            "kind": "action",
+            "content": "张敏整理测试清单。",
+            "source": "s1"
+          },
+          {
+            "kind": "question",
+            "content": "发布日期还未决定。",
+            "source": "s1"
+          }
+        ],
+        "required": [
+          "测试清单",
+          "日期还未决定"
+        ],
+        "reviews": [
+          {
+            "contains": "测试清单",
+            "state": "confirmed"
+          },
+          {
+            "contains": "日期还未决定",
+            "state": "dismissed"
+          }
+        ]
+      },
+      {
+        "segments": [
+          {
+            "id": "s2",
+            "text": "本轮继续讨论测试范围。"
+          }
+        ],
+        "items": [
+          {
+            "kind": "point",
+            "content": "讨论测试范围。",
+            "source": "s2"
+          },
+          {
+            "kind": "question",
+            "content": "发布日期还未决定",
+            "source": "s1"
+          }
+        ],
+        "required": [
+          "张敏整理测试清单",
+          "测试范围"
+        ],
+        "forbidden": [
+          "日期还未决定"
+        ]
+      },
+      {
+        "segments": [
+          {
+            "id": "s3",
+            "text": "后续继续核对。"
+          }
+        ],
+        "items": [
+          {
+            "kind": "action",
+            "content": "李华今天必须上线。",
+            "source": "s3",
+            "quote": "不存在的证据"
+          }
+        ],
+        "expect_failure": true,
+        "required": [
+          "张敏整理测试清单",
+          "测试范围"
+        ],
+        "forbidden": [
+          "李华",
+          "必须上线"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "duplicates-and-numeric-differences",
+    "rounds": [
+      {
+        "segments": [
+          {
+            "id": "s1",
+            "text": "预算为1.5万元，另一个备选预算为15万元，均未批准。"
+          }
+        ],
+        "items": [
+          {
+            "kind": "point",
+            "content": "预算为1.5万元，尚未批准。",
+            "source": "s1"
+          },
+          {
+            "kind": "point",
+            "content": "预算为1.5万元，尚未批准",
+            "source": "s1"
+          },
+          {
+            "kind": "point",
+            "content": "备选预算为15万元，尚未批准。",
+            "source": "s1"
+          }
+        ],
+        "required": [
+          "1.5万元",
+          "15万元"
+        ],
+        "forbidden": [
+          "已批准"
+        ],
+        "expected_count": 2
+      }
+    ]
+  }
+]

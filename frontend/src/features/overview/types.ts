@@ -7,7 +7,7 @@ export interface OverviewEvidence {
 }
 export interface OverviewItem {
   id: string;
-  kind: "topic" | "point" | "question" | "action";
+  kind: "topic" | "point" | "decision" | "question" | "action";
   content: string;
   evidence: OverviewEvidence[];
   note_ids: string[];
@@ -19,6 +19,7 @@ export interface OverviewItem {
 export interface OverviewStatus {
   consent_scope?: string;
   filtered_count?: number;
+  quality?: { duplicates_removed?: number; overflow_count?: number };
   failures?: number;
   elapsed_seconds?: number;
   retry_in_seconds?: number;

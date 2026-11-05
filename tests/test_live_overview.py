@@ -339,3 +339,22 @@ def test_queued_index_never_blocks_live_overview_but_running_index_does(setup):
     store.execute("UPDATE jobs SET state='running' WHERE id='background-index'")
     from app.live_overview import Deferred
     with pytest.raises(Deferred):service.prepare(rid,run,False)
+
+def test_repeated_punctuation_variants_reuse_ids_and_do_not_grow_snapshot(setup):
+    _,_,service,_,rid,_,sid,_=setup
+    old=first(setup)
+    result=output(sid,content=old['content'].rstrip('。'))
+    result['items']*=2
+    service.publish(plan(setup),result)
+    saved=service.read(rid)
+    assert len(saved['items'])==1 and saved['items'][0]['id']==old['id']
+    assert saved['quality']['duplicates_removed']==1
+
+def test_decision_replaces_resolved_question_with_same_identity(setup):
+    _,_,service,_,rid,_,sid,add=setup
+    service.publish(plan(setup),output(sid,kind='question',content='上线日期还没有确定。'))
+    old=service.read(rid)['items'][0]
+    sid2=add(30,45,'大家明确同意下周三上线。')
+    service.publish(plan(setup),{'items':[{'id':old['id'],'kind':'decision','content':'大家明确同意下周三上线。','evidence':[{'segment_id':sid2,'quote':'大家明确同意下周三上线'}],'note_ids':[]}]})
+    saved=service.read(rid)['items']
+    assert len(saved)==1 and saved[0]['id']==old['id'] and saved[0]['kind']=='decision'

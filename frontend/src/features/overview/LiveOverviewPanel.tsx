@@ -9,6 +9,7 @@ import "./overview.css";
 const labels = {
   topic: "当前议题",
   point: "关键观点",
+  decision: "讨论中的明确决定",
   question: "待确认问题",
   action: "可能的待办",
 };
@@ -219,7 +220,18 @@ export default function LiveOverviewPanel({
         {!!data?.filtered_count && (
           <p className="overview-status">
             本轮有 {data.filtered_count}{" "}
-            条候选缺少有效依据，已过滤；原有有效重点保留。
+            条候选缺少有效依据，已过滤；上一版与人工确认内容保留，当前重点按预算展示。
+          </p>
+        )}
+        {!!data?.quality?.overflow_count && (
+          <p className="overview-status">
+            已收拢 {data.quality.overflow_count}{" "}
+            条较早或超出当前重点预算的内容。人工确认内容保留；完整讨论请查看原文和正式纪要。
+          </p>
+        )}
+        {!!data?.quality?.duplicates_removed && (
+          <p className="overview-status">
+            本轮合并 {data.quality.duplicates_removed} 条同源重复内容。
           </p>
         )}
         {!!data?.failures && (
