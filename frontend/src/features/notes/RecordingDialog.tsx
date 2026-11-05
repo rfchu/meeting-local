@@ -35,6 +35,7 @@ import { encodeLiveWav } from "./liveAudio";
 import RecordingWaveform from "./RecordingWaveform";
 import RecordingHealthPanel from "./RecordingHealthPanel";
 import RecordingReceipt from "./RecordingReceipt";
+import RecordingEndGuide, { useRecordingEnd } from "./RecordingEndGuide";
 import { clientRecordingDiagnostics } from "./recordingInventory";
 import { stopRecorder } from "./stopRecorder";
 import LiveDraftList from "./LiveDraftList";
@@ -164,6 +165,9 @@ export default function RecordingDialog({
       "recording" | "model" | "outcome" | "preparation"
     >("recording");
   const [keepAwake, setKeepAwake] = useState(preferences.keepAwake);
+  const [silenceReminder, setSilenceReminder] = useState(
+    preferences.silenceReminder,
+  );
   const [historyOpen, setHistoryOpen] = useState(false);
   const [inspectorOpen, setInspectorOpen] = useState(false),
     [noteOptionsOpen, setNoteOptionsOpen] = useState(false);
@@ -308,6 +312,12 @@ export default function RecordingDialog({
     draftPendingRef = useRef(0),
     draftEnabledRef = useRef(true);
   notesRef.current = notes;
+  const endGuide = useRecordingEnd(
+    recordingState(state),
+    state === "recording",
+    silenceReminder,
+    () => stop(),
+  );
   noteDraftRef.current = { text: noteText, type: noteType, scope: noteScope };
 
   const persistPreferences = (mode = completionMode) => {
@@ -316,6 +326,7 @@ export default function RecordingDialog({
       saved = saveRecordingPreferences(window.localStorage, {
         version: 1,
         keepAwake,
+        silenceReminder,
         autoProcess,
         postGoal,
         captureSource,
@@ -350,6 +361,7 @@ export default function RecordingDialog({
     postGoal,
     autoProcess,
     keepAwake,
+    silenceReminder,
   ]);
   const correctionSessionId = nativeSessionId || sessionRef.current?.id;
   const managedMode =
@@ -677,6 +689,15 @@ export default function RecordingDialog({
         activeSinceRef.current = performance.now();
         setElapsed(status.duration);
         setCaptureHealth(status.health);
+        const tracks = status.health?.tracks || [];
+        endGuide.observe(
+          tracks.length > 0 && tracks.every((track) => track.state === "quiet"),
+          !status.health?.stalled &&
+            tracks.length > 0 &&
+            tracks.every((track) =>
+              ["quiet", "receiving"].includes(track.state),
+            ),
+        );
         setSystemLevels(status.system_levels || []);
         setMicrophoneLevels(status.microphone_levels || []);
         if (
@@ -1024,6 +1045,7 @@ export default function RecordingDialog({
       let power = 0;
       for (const sample of frame) power += sample * sample;
       const rms = Math.sqrt(power / frame.length);
+      endGuide.observe(rms < 0.003);
       setMicrophoneLevels((old) => [...old.slice(-71), rms]);
       if (recordOnlyRef.current) return;
       pcmFramesRef.current.push(frame);
@@ -1514,7 +1536,11 @@ export default function RecordingDialog({
           {state === "recording" && <button onClick={pause}>暂停</button>}
           {state === "paused" && <button onClick={resume}>继续录音</button>}
           {recording && (
-            <button className="recording-stop" onClick={() => void stop()}>
+            <button
+              className="recording-stop"
+              disabled={endGuide.pending}
+              onClick={endGuide.request}
+            >
               ■{" "}
               {autoProcess && !processingDeferredRef.current
                 ? "结束并整理"
@@ -1561,6 +1587,7 @@ export default function RecordingDialog({
             )}
         </div>
       </div>
+      <RecordingEndGuide guide={endGuide} />
       {state === "idle" ? (
         <RecordingSetupBar
           source={sourceLabel}
@@ -2406,6 +2433,14 @@ export default function RecordingDialog({
           )}
           {settingsTab === "recording" && (
             <section>
+              <label>
+                <input
+                  type="checkbox"
+                  checked={silenceReminder}
+                  onChange={(event) => setSilenceReminder(event.target.checked)}
+                />
+                持续安静约 5 分钟时提醒（仅提醒，继续录音）
+              </label>
               <label className="capture-source">
                 录音来源
                 <select

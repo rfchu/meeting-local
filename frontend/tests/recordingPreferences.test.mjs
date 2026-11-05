@@ -3,6 +3,11 @@ import assert from 'node:assert/strict';
 import {build} from 'esbuild';
 const compiled=await build({entryPoints:[new URL('../src/features/notes/recordingPreferences.ts',import.meta.url).pathname],bundle:true,format:'esm',write:false});
 const {readRecordingPreferences,saveRecordingPreferences,DEFAULT_RECORDING_PREFERENCES,transcriptionOptions}=await import('data:text/javascript;base64,'+Buffer.from(compiled.outputFiles[0].text).toString('base64'));
+test('Quiet reminder defaults safely and remembers explicit opt-out',()=>{
+  assert.equal(readRecordingPreferences({getItem:()=>JSON.stringify({version:1})}).silenceReminder,true);
+  assert.equal(readRecordingPreferences({getItem:()=>JSON.stringify({version:1,silenceReminder:false})}).silenceReminder,false);
+  assert.equal(readRecordingPreferences({getItem:()=>JSON.stringify({version:1,silenceReminder:'false'})}).silenceReminder,true);
+});
 test('Last used source, engine, streaming and completion choice survive reopening',()=>{
   let raw=null;const storage={getItem:()=>raw,setItem:(_,value)=>{raw=value;}};
   const selected={...DEFAULT_RECORDING_PREFERENCES,version:1,keepAwake:true,autoProcess:true,postGoal:"transcript",captureSource:'macos-both',draftEngine:'qwen',streamEnabled:true,responsiveMode:true,completionMode:'none'};

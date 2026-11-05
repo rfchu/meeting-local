@@ -1891,6 +1891,30 @@ dialog code {
   padding: 14px 0;
   border-block: 1px solid #d4e1d9;
 }
+.recording-end-guide {
+  margin: 8px 32px;
+  padding: 14px 18px;
+  border: 1px solid #d4ddef;
+  border-radius: 12px;
+  background: #f3f6ff;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  flex-shrink: 0;
+}
+.recording-end-guide > div {
+  flex: 1;
+  min-width: 200px;
+}
+.recording-end-guide strong,
+.recording-end-guide span {
+  display: block;
+}
+.recording-end-guide span {
+  color: var(--muted);
+  margin-top: 4px;
+}
 .recording-receipt strong,
 .recording-receipt span {
   display: block;

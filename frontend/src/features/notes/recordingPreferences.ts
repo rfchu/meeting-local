@@ -7,6 +7,7 @@ export interface RecordingPreferences {
   correctionEnabled: boolean;
   correctionProfileId: string;
   keepAwake: boolean;
+  silenceReminder: boolean;
   autoProcess: boolean;
   postGoal: "transcript" | "minutes";
   captureSource: "browser" | "macos-system" | "macos-both";
@@ -24,6 +25,7 @@ export const DEFAULT_RECORDING_PREFERENCES: RecordingPreferences = {
   correctionEnabled: false,
   correctionProfileId: "",
   keepAwake: true,
+  silenceReminder: true,
   autoProcess: true,
   postGoal: "transcript",
   captureSource: "browser",
@@ -60,6 +62,10 @@ export function readRecordingPreferences(
       autoProcess:
         typeof value.autoProcess === "boolean" ? value.autoProcess : true,
       keepAwake: typeof value.keepAwake === "boolean" ? value.keepAwake : true,
+      silenceReminder:
+        typeof value.silenceReminder === "boolean"
+          ? value.silenceReminder
+          : true,
       captureSource: ["browser", "macos-system", "macos-both"].includes(
         value.captureSource,
       )
