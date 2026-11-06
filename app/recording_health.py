@@ -3,6 +3,7 @@ import json
 import math
 import time
 from .native_capture import NativeCapture
+from .capture_diagnostics import sanitize
 
 
 def number(value):
@@ -60,10 +61,11 @@ class RecordingHealth:
             asr[engine]={'covered_seconds':round(covered/16000,2),
                          'failed_attempts':sum(r['state']=='failed' for r in rows),
                          'running_attempts':sum(r['state']=='running' for r in rows)}
+        diagnostics=sanitize(capture.get('diagnostics')) if native else {'available':False}
         failure_code=''
         error=str(capture.get('error',''))
         if native and capture.get('state')=='failed':
-            failure_code='permission_required' if '隐私与安全性' in error and '允许听记采集器' in error else 'storage_failed' if error.startswith('磁盘保存失败') else 'capture_failed'
+            failure_code='permission_required' if '隐私与安全性' in error and '允许听记采集器' in error else 'storage_failed' if diagnostics.get('failure_stage')=='storage' or error.startswith('磁盘保存失败') else 'capture_failed'
         # Empty failed starts are not recordings. Keep metadata and offer reversible hiding.
         has_preparation=bool(any(session.get('brief',{}).values()))
         has_asr=bool(self.store.one('SELECT 1 FROM live_asr_ranges WHERE recording_id=? LIMIT 1',(rid,)))
@@ -84,7 +86,7 @@ class RecordingHealth:
         return {'schema_version':1,'source':'native' if native else 'browser','state':state,
                 'duration_seconds':round(duration,2),'native_running':bool(running),
                 'metadata_age_seconds':round(max(0,time.time()-number(session.get('updated'))),1),
-                'capture':{'heartbeat_age_seconds':heartbeat_age,'heartbeat_stale':heartbeat_stale,'exit_code':exit_code,'tracks':NativeCapture.health(session,capture,folder/'capture.json')['tracks'] if native and capture.get('state') in states else []},
+                'capture':{'heartbeat_age_seconds':heartbeat_age,'heartbeat_stale':heartbeat_stale,'exit_code':exit_code,'native_diagnostics':diagnostics,'tracks':NativeCapture.health(session,capture,folder/'capture.json')['tracks'] if native and capture.get('state') in states else []},
                 'audio':{'saved_bytes':saved_bytes,'saved_chunks':sum(size>0 for size in parts.values()),
                          'expected_chunks':expected,'missing_chunk_count':len(missing) if not completed else 0,
                          'missing_chunk_indices':missing[:50] if not completed else [],

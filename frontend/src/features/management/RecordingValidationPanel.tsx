@@ -1,3 +1,4 @@
+import type { NativeCaptureDiagnostics } from "../../types";
 import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, download } from "../../api";
@@ -14,8 +15,11 @@ export interface RecordingObservation {
   sample_count: number;
   marker_count: number;
   flags: Record<string, number>;
+  native_counter_increases?: Record<string, number>;
   end_reason: string | null;
   last_sample?: {
+    file_growth_bytes?: number | null;
+    native_diagnostics?: NativeCaptureDiagnostics;
     capture: string;
     storage: string;
     asr: string;
@@ -42,6 +46,46 @@ const flags: Record<string, string> = {
   system_no_data: "系统音轨无数据",
   microphone_no_data: "麦克风音轨无数据",
   status_unavailable: "状态读取失败",
+  default_input_changed: "默认输入设备变化",
+  default_output_changed: "默认输出设备变化",
+  audio_device_changed: "音频设备连接状态变化",
+  native_buffers_dropped: "原生音频缓冲丢弃",
+  audio_format_changed: "音频格式变化",
+  audio_timeline_padding: "单次采样间文件补空至少 0.1 秒",
+  configured_mic_differs_from_default: "已配置麦克风与当前默认设备不同",
+  native_device_monitor_limited: "部分设备监听未启用",
+  native_device_read_failed: "设备信息读取失败",
+  native_failure_reported: "采集器报告错误阶段",
+  native_counters_reset: "内部计数出现回退",
+  audio_file_shrank: "音轨文件大小回退",
+};
+const counterNames: Record<string, string> = {
+  default_input_changes: "默认输入设备变化",
+  default_output_changes: "默认输出设备变化",
+  audio_device_connections: "音频设备连接",
+  audio_device_disconnections: "音频设备断开",
+  listener_failures: "监听注册失败",
+  device_query_failures: "设备信息读取失败",
+};
+function counterLabel(key: string) {
+  if (counterNames[key]) return counterNames[key];
+  const [track, metric] = key.split(".");
+  const labels: Record<string, string> = {
+    input_buffers: "输入缓冲",
+    dropped_buffers: "丢弃缓冲",
+    empty_outputs: "暂未产出 PCM 的缓冲",
+    format_changes: "格式变化",
+    gap_frames: "文件时间轴补空",
+  };
+  return `${track === "system" ? "电脑音轨" : "麦克风音轨"}${labels[metric] || "计数"}`;
+}
+const stages: Record<string, string> = {
+  startup: "启动",
+  capture_stream: "系统采集流",
+  audio_conversion: "音频转换",
+  storage: "文件保存",
+  timeline_limit: "时间轴长度限制",
+  unknown: "未识别",
 };
 const states: Record<string, string> = {
   observing: "观察中",
@@ -190,6 +234,57 @@ export default function RecordingValidationPanel() {
                 {flags[key] || "异常观测"}：{count} 次采样
               </p>
             ))}
+            <details>
+              <summary>
+                采集器内部诊断 ·{" "}
+                {item.last_sample?.native_diagnostics?.available
+                  ? "已提供"
+                  : "未提供"}
+              </summary>
+              {!item.last_sample?.native_diagnostics?.available ? (
+                <p>
+                  此录音未提供内部诊断。更新采集器后，新开始的录音可提供计数；旧记录不会补造设备事件。
+                </p>
+              ) : (
+                <>
+                  <p>
+                    以下是观察期内新增的计数。设备变化不是麦克风被抢占的证明，文件补空也不是已确认的人声缺失。
+                  </p>
+                  {item.last_sample.native_diagnostics.counters_complete ===
+                    false && <p>部分内部计数缺失，不能按零处理。</p>}
+                  {Object.entries(item.native_counter_increases || {}).map(
+                    ([key, value]) => (
+                      <p key={key}>
+                        {counterLabel(key)}：
+                        {key.endsWith(".gap_frames")
+                          ? `${(value / 16000).toFixed(3)} 秒`
+                          : value}
+                      </p>
+                    ),
+                  )}
+                  {!Object.keys(item.native_counter_increases || {}).length && (
+                    <p>暂未观察到可计算的计数增量。</p>
+                  )}
+                  {item.last_sample.native_diagnostics.failure_stage &&
+                    item.last_sample.native_diagnostics.failure_stage !==
+                      "none" && (
+                      <p>
+                        采集器错误阶段：
+                        {stages[
+                          item.last_sample.native_diagnostics.failure_stage
+                        ] || "未识别"}
+                      </p>
+                    )}
+                </>
+              )}
+              <p>
+                与上次采样相比的文件变化：
+                {item.last_sample?.file_growth_bytes == null
+                  ? "未记录／首次采样"
+                  : `${item.last_sample.file_growth_bytes} 字节`}
+                。文件增长不能证明声音完整。
+              </p>
+            </details>
             {item.state === "observing" && !checks.isError && (
               <>
                 <div className="quality-review-controls">

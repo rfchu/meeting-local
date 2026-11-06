@@ -258,6 +258,7 @@ export interface RecordingRuntime {
   phase: string;
   observed_at: number;
   capture: {
+    native_diagnostics?: NativeCaptureDiagnostics;
     state: string;
     heartbeat_age_seconds: number | null;
     tracks?: {
@@ -289,9 +290,12 @@ export interface NativeCapability {
   screen_permission: boolean;
   microphone_permission: boolean;
   build_command: string;
+  diagnostics_version?: number;
+  helper_build?: number;
   error?: string;
 }
 export interface NativeCaptureStatus {
+  diagnostics?: NativeCaptureDiagnostics;
   state: string;
   duration: number;
   error: string;
@@ -546,4 +550,38 @@ export interface RecordingQuality {
     review_version?: number;
     reviewed_at?: number | null;
   }[];
+}
+
+export interface NativeCaptureDiagnostics {
+  available: boolean;
+  version?: number;
+  helper_build?: number | null;
+  counters_complete?: boolean;
+  default_input_changes?: number | null;
+  default_output_changes?: number | null;
+  audio_device_connections?: number | null;
+  audio_device_disconnections?: number | null;
+  listener_failures?: number | null;
+  device_query_failures?: number | null;
+  configured_microphone_is_default?: boolean | null;
+  failure_stage?:
+    | "none"
+    | "startup"
+    | "capture_stream"
+    | "audio_conversion"
+    | "storage"
+    | "timeline_limit"
+    | "unknown";
+  stream_error_code?: number | null;
+  tracks?: Record<
+    "system" | "microphone",
+    Record<
+      | "input_buffers"
+      | "empty_outputs"
+      | "dropped_buffers"
+      | "format_changes"
+      | "gap_frames",
+      number | null
+    >
+  >;
 }

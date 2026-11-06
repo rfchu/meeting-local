@@ -540,3 +540,16 @@ Whisper 按约 15 秒片段返回确认结果，暂停／结束时尝试处理�
 服务重启会把未结束观察标为中断，不自动开始或接续采集／观察。数据库不可用时显示观察不可用，会议服务继续运行。报告不含录音或观察标识、正文、音频、模型配置、密钥；包含时间、状态、计数和用户标记。最近保留二十次观察，每次最多九千条采样和二百条标记，导出标示样本截断。满足目标时长的结果仍是 `manual_review_required`，`hardware_capture_validated`、`audio_content_validated`、`sleep_wake_validated` 和 `other_app_contention_validated` 均不自动置为真。
 
 接口：`GET /api/runtime/recording-checks`；`POST` 同一路径传 `recording_id` 与 `target_seconds`（60～43200 秒）；`POST /{id}/stop` 只停止观察；`POST /{id}/markers` 传允许的枚举操作；`GET /{id}/report` 导出报告。记录使用独立 `recording-validation.sqlite3`，不变更会议正文数据库版本。
+
+
+### 采集器内部诊断
+
+采集器 build 2 从新开始的录音提供诊断 v1；在项目目录执行 `bash scripts/build_capture.sh` 更新本机自有采集器。观察管理页的“采集器内部诊断”显示是否提供数据及观察期增量，旧录音和旧采集器保持兼容，不补造历史数据。
+
+系统默认输入／输出设备变化、音频采集设备连接／断开、配置麦克风是否仍是默认设备都只用于观察，不会自动切换设备。实现参考 [Apple Core Audio 属性监听](https://developer.apple.com/documentation/coreaudio/audioobjectaddpropertylistenerblock(_:_:_:_:)) 和 [AVFoundation 设备连接通知](https://developer.apple.com/documentation/avfoundation/avcapturedevice/wasconnectednotification)。设备变化不代表被其他软件占用；读取设备信息失败单列，不能当作默认设备变化。
+
+音轨内部计数区分输入缓冲、丢弃缓冲、转换器暂未产出 PCM、格式变化与采集器写入时的时间轴补空。暂未产出 PCM 可能只是转换器缓冲，不自动归为丢弃；补空是写入位置跳过旧文件末端的帧数，包含启动对齐和时间抖动，不等于已确认人声缺失，也不覆盖会后拼接的全部尾部补空。采样间新增补空至少 0.1 秒时记为一次需核对的采样，累计帧数仍原样保留。
+
+内部诊断只输出数字、布尔值和固定错误阶段，不输出设备名称／ID、原始错误或音频。观察的第一份有效内部计数是基线，之前累计的设备变化不算本轮新事件；缺失计数保持未知、计数回退单独记录。报告 v2 保留逐次采样的内部计数、观察期增量与文件字节变化，可对照人工标记和 ASR 覆盖进度，不能单凭文件增长认定声音正常。
+
+无设备自检：`native/build/diagnostics/TingjiCapture.app/Contents/MacOS/TingjiCapture --diagnostics-self-test`（需先使用 `TINGJI_CAPTURE_APP="$PWD/native/build/diagnostics/TingjiCapture.app" bash scripts/build_capture.sh` 编译）。该命令不请求录音权限、不访问音源，不替代真实硬件验收。更新正式采集器应在无录音时进行，核对更新前后只读 `--probe` 的权限状态；自检与编译通过也不表示三小时实录或设备争用已通过。

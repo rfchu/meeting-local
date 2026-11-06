@@ -11,7 +11,7 @@ from app.recordings import RecordingStore
 
 
 class Capture(NativeCapture):
-    def __init__(self,*args):super().__init__(*args);self.states={};self.stale=True;self.input_loss=False;self.file_stall=False
+    def __init__(self,*args):super().__init__(*args);self.states={};self.stale=True;self.input_loss=False;self.file_stall=False;self.diagnostics=None
     def capability(self):return {'available':True,'supported':True,'screen_permission':True,'microphone_permission':True}
     def start_monitor(self):pass
     def start(self,microphone=True):
@@ -24,6 +24,7 @@ class Capture(NativeCapture):
         session=self.recordings.read(rid);folder=self.recordings.folder(rid);path=folder/'capture.json'
         state=self.states.get(rid,'interrupted')
         value={'state':state,'duration':30,'error':'','system_frames':480000,'system_levels':[.02,.06,.01]*24,'buffer_age':{'system':20 if self.input_loss else 0}}
+        if self.diagnostics is not None:value['diagnostics']=self.diagnostics
         RecordingStore.write(path,value)
         if self.file_stall:os.utime(folder/'system.pcm',(time.time()-30,)*2)
         if self.stale:os.utime(path,(time.time()-30,time.time()-30))
@@ -64,6 +65,23 @@ def main():
             capture.stale=False;capture.input_loss=False;capture.file_stall=True
             for rid in capture.states:capture.status(rid)
             app.state.recording_runtime.observe()
+            return {'ok':True}
+        app.router.routes.insert(0,app.router.routes.pop())
+        @app.post('/_fixture/native-diagnostics')
+        def native_diagnostics():
+            capture.diagnostics={'version':1,'helper_build':2,'default_input_changes':0,'default_output_changes':0,
+                'audio_device_connections':0,'audio_device_disconnections':0,'listener_failures':0,'device_query_failures':0,
+                'configured_microphone_is_default':None,'failure_stage':'none','stream_error_code':None,
+                'tracks':{name:dict.fromkeys(('input_buffers','empty_outputs','dropped_buffers','format_changes','gap_frames'),0) for name in ('system','microphone')}}
+            for rid in capture.states:capture.status(rid)
+            return {'ok':True}
+        app.router.routes.insert(0,app.router.routes.pop())
+        @app.post('/_fixture/native-change')
+        def native_change():
+            capture.diagnostics['default_input_changes']+=1
+            capture.diagnostics['tracks']['system'].update(input_buffers=100,dropped_buffers=2,format_changes=1,gap_frames=3200)
+            for rid in capture.states:capture.status(rid)
+            app.state.recording_validation.sample()
             return {'ok':True}
         app.router.routes.insert(0,app.router.routes.pop())
         uvicorn.run(app,host='127.0.0.1',port=args.port,log_level='warning',timeout_graceful_shutdown=3)

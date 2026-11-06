@@ -4,6 +4,7 @@ import AVFoundation
 import ScreenCaptureKit
 import CoreMedia
 import CoreGraphics
+import CoreAudio
 
 func hostSeconds() -> Double { CMTimeGetSeconds(CMClockGetTime(CMClockGetHostTimeClock())) }
 func jsonLine(_ value: [String: Any]) {
@@ -26,6 +27,12 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
     var lastSignalAt: [String: Double] = [:]
     var signalGraceAt = hostSeconds()
     var timer: DispatchSourceTimer?
+    let diagnostics = CaptureDiagnostics()
+    var selectedMicrophoneID: String?
+    var defaultInput: AudioDeviceID?
+    var defaultOutput: AudioDeviceID?
+    var deviceListeners: [(AudioObjectPropertyAddress, AudioObjectPropertyListenerBlock)] = []
+    var deviceNotifications: [NSObjectProtocol] = []
     var state = "starting"
     var errorMessage = ""
     var origin = hostSeconds()
@@ -36,12 +43,66 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
 
     init(folder: URL, microphone: Bool) { self.folder = folder; self.microphone = microphone }
 
+    func defaultDevice(_ selector: AudioObjectPropertySelector) -> AudioDeviceID? {
+        var address = AudioObjectPropertyAddress(mSelector: selector, mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
+        var device = AudioDeviceID(0); var size = UInt32(MemoryLayout<AudioDeviceID>.size)
+        guard AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size, &device) == noErr else { return nil }
+        return device
+    }
+    func readDeviceDefaults(countChanges: Bool) {
+        let input = defaultDevice(kAudioHardwarePropertyDefaultInputDevice)
+        let output = defaultDevice(kAudioHardwarePropertyDefaultOutputDevice)
+        if countChanges {
+            if let input, let previous = defaultInput, input != previous { diagnostics.defaultInputChanges += 1 }
+            if let output, let previous = defaultOutput, output != previous { diagnostics.defaultOutputChanges += 1 }
+        }
+        if let input { defaultInput = input } else { diagnostics.deviceQueryFailures += 1 }
+        if let output { defaultOutput = output } else { diagnostics.deviceQueryFailures += 1 }
+        if let selectedMicrophoneID {
+            if let currentID = AVCaptureDevice.default(for: .audio)?.uniqueID { diagnostics.microphoneMatchesDefault = currentID == selectedMicrophoneID }
+            else { diagnostics.microphoneMatchesDefault = nil }
+        }
+    }
+    func watchDevices() {
+        readDeviceDefaults(countChanges: false)
+        for selector in [kAudioHardwarePropertyDefaultInputDevice, kAudioHardwarePropertyDefaultOutputDevice] {
+            var address = AudioObjectPropertyAddress(mSelector: selector, mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
+            let listener: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
+                guard let self, self.state != "stopped", self.state != "failed" else { return }
+                self.readDeviceDefaults(countChanges: true); self.report()
+            }
+            if AudioObjectAddPropertyListenerBlock(AudioObjectID(kAudioObjectSystemObject), &address, queue, listener) == noErr {
+                deviceListeners.append((address, listener))
+            } else { diagnostics.listenerFailures += 1 }
+        }
+        for notification in [AVCaptureDevice.wasConnectedNotification, AVCaptureDevice.wasDisconnectedNotification] {
+            let token = NotificationCenter.default.addObserver(forName: notification, object: nil, queue: nil) { [weak self] event in
+                guard let device = event.object as? AVCaptureDevice, device.hasMediaType(.audio) else { return }
+                self?.queue.async { [weak self] in
+                    guard let self, self.state != "stopped", self.state != "failed" else { return }
+                    if notification == AVCaptureDevice.wasConnectedNotification { self.diagnostics.connections += 1 }
+                    else { self.diagnostics.disconnections += 1 }
+                    self.readDeviceDefaults(countChanges: true); self.report()
+                }
+            }
+            deviceNotifications.append(token)
+        }
+    }
+    func stopWatchingDevices() {
+        for (var address, listener) in deviceListeners {
+            AudioObjectRemovePropertyListenerBlock(AudioObjectID(kAudioObjectSystemObject), &address, queue, listener)
+        }
+        deviceListeners.removeAll()
+        for token in deviceNotifications { NotificationCenter.default.removeObserver(token) }
+        deviceNotifications.removeAll()
+    }
+
     func report() {
         if state == "recording" { elapsed = max(0, hostSeconds() - origin - pausedTotal) }
         let report: [String: Any] = ["state": state, "duration": elapsed, "error": errorMessage,
             "system_frames": frames["system"] ?? 0, "microphone_frames": frames["microphone"] ?? 0,
             "system_levels": levels["system"] ?? [], "microphone_levels": levels["microphone"] ?? [],
-            "sample_rate": 16000, "updated": Date().timeIntervalSince1970,
+            "diagnostics": diagnostics.payload(), "sample_rate": 16000, "updated": Date().timeIntervalSince1970,
             "buffer_age": Dictionary(uniqueKeysWithValues: files.keys.map { ($0, max(0, hostSeconds() - (lastLevelAt[$0] ?? signalGraceAt))) }),
             "silence_seconds": Dictionary(uniqueKeysWithValues: files.keys.map { ($0, max(0, hostSeconds() - (lastSignalAt[$0] ?? signalGraceAt))) })]
         do {
@@ -72,7 +133,8 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
         configuration.sampleRate = 48000; configuration.channelCount = 2
         if #available(macOS 15.0, *) {
             configuration.captureMicrophone = microphone
-            configuration.microphoneCaptureDeviceID = AVCaptureDevice.default(for: .audio)?.uniqueID
+            selectedMicrophoneID = microphone ? AVCaptureDevice.default(for: .audio)?.uniqueID : nil
+            configuration.microphoneCaptureDeviceID = selectedMicrophoneID
         }
         let capture = SCStream(filter: filter, configuration: configuration, delegate: self)
         // Receive minimal video buffers for stream compatibility; discard them immediately.
@@ -87,7 +149,7 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
             files[name] = try FileHandle(forWritingTo: url)
         }
         stream = capture; origin = hostSeconds(); signalGraceAt = origin
-        queue.sync { state = "recording"; report() }
+        queue.sync { watchDevices(); state = "recording"; report() }
         try await capture.startCapture()
         queue.sync {
             let timer = DispatchSource.makeTimerSource(queue: queue)
@@ -95,7 +157,7 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
             timer.setEventHandler { [weak self] in
                 guard let self else { return }
                 do { for file in self.files.values { try file.synchronize() }; self.report() }
-                catch { self.fail("磁盘保存失败：\(error.localizedDescription)") }
+                catch { self.diagnostics.failureStage = "storage"; self.fail("磁盘保存失败：\(error.localizedDescription)") }
             }
             self.timer = timer; timer.resume()
         }
@@ -108,39 +170,46 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
     }
 
     func stream(_ stream: SCStream, didStopWithError error: Error) {
-        queue.async { self.fail("采集中断：\(error.localizedDescription)") }
+        queue.async { guard self.state != "failed", self.state != "stopped" else { return }; self.diagnostics.failureStage = "capture_stream"; self.diagnostics.streamErrorCode = (error as NSError).code; self.fail("采集中断：\(error.localizedDescription)") }
     }
 
     func stream(_ stream: SCStream, didOutputSampleBuffer sample: CMSampleBuffer, of type: SCStreamOutputType) {
-        guard state == "recording", sample.isValid, let description = sample.formatDescription else { return }
+        guard state == "recording" else { return }
         let name: String
         if type == .audio { name = "system" }
         else if #available(macOS 15.0, *), type == .microphone { name = "microphone" }
         else { return }
+        diagnostics.received(name)
+        guard sample.isValid, let description = sample.formatDescription else { diagnostics.dropped(name); return }
         let format = AVAudioFormat(cmAudioFormatDescription: description)
-        guard let source = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(sample.numSamples)) else { return }
+        guard let source = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(sample.numSamples)) else { diagnostics.dropped(name); return }
         source.frameLength = AVAudioFrameCount(sample.numSamples)
         do {
             try sample.copyPCMData(fromRange: 0..<sample.numSamples, into: source.mutableAudioBufferList)
             if formats[name] != format {
+                if formats[name] != nil { diagnostics.changedFormat(name) }
                 formats[name] = format; converters[name] = AVAudioConverter(from: format, to: outputFormat)
                 converters[name]?.downmix = true
             }
             guard let converter = converters[name],
-                let output = AVAudioPCMBuffer(pcmFormat: outputFormat, frameCapacity: AVAudioFrameCount(Double(sample.numSamples) * 16000 / format.sampleRate) + 128) else { return }
+                let output = AVAudioPCMBuffer(pcmFormat: outputFormat, frameCapacity: AVAudioFrameCount(Double(sample.numSamples) * 16000 / format.sampleRate) + 128) else { diagnostics.dropped(name); return }
             var provided = false; var conversionError: NSError?
             converter.convert(to: output, error: &conversionError) { _, status in
                 if provided { status.pointee = .noDataNow; return nil }
                 provided = true; status.pointee = .haveData; return source
             }
             if let conversionError { throw conversionError }
-            guard output.frameLength > 0, let bytes = output.audioBufferList.pointee.mBuffers.mData, let file = files[name] else { return }
+            guard output.frameLength > 0 else { diagnostics.emptyOutput(name); return }
+            guard let bytes = output.audioBufferList.pointee.mBuffers.mData, let file = files[name] else { diagnostics.dropped(name); return }
             let timestamp = CMTimeGetSeconds(sample.presentationTimeStamp)
-            guard timestamp.isFinite else { return }
+            guard timestamp.isFinite else { diagnostics.dropped(name); return }
             let position = max(frames[name] ?? 0, Int64(max(0, (timestamp - origin - pausedTotal) * 16000)))
-            guard position < 1_000_000_000 else { throw NSError(domain: "TingjiCapture", code: 4, userInfo: [NSLocalizedDescriptionKey: "录音超过单次采集大小限制，请停止并保存"] ) }
-            try file.seek(toOffset: UInt64(position * 2))
-            try file.write(contentsOf: Data(bytes: bytes, count: Int(output.frameLength) * 2))
+            guard position < 1_000_000_000 else { diagnostics.failureStage = "timeline_limit"; fail("录音超过单次采集大小限制，请停止并保存"); return }
+            do {
+                try file.seek(toOffset: UInt64(position * 2))
+                try file.write(contentsOf: Data(bytes: bytes, count: Int(output.frameLength) * 2))
+            } catch { diagnostics.failureStage = "storage"; fail("磁盘保存失败：\(error.localizedDescription)"); return }
+            diagnostics.wrote(name, previous: frames[name] ?? 0, position: position)
             frames[name] = position + Int64(output.frameLength)
             let now = hostSeconds()
             if now - (lastLevelAt[name] ?? 0) >= 0.1, let samples = output.int16ChannelData?[0] {
@@ -153,7 +222,7 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
                 if history.count > 72 { history.removeFirst(history.count - 72) }
                 levels[name] = history; lastLevelAt[name] = now
             }
-        } catch { fail(error.localizedDescription) }
+        } catch { diagnostics.dropped(name); diagnostics.failureStage = "audio_conversion"; fail(error.localizedDescription) }
     }
 
     func pause() { queue.sync {
@@ -171,7 +240,7 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
         try? await stream?.stopCapture()
         queue.sync {
             if state == "recording" { elapsed = max(0, hostSeconds() - origin - pausedTotal) }
-            timer?.cancel(); timer = nil
+            timer?.cancel(); timer = nil; stopWatchingDevices()
             for file in files.values { try? file.synchronize(); try? file.close() }
             files.removeAll(); state = finalState; report()
         }
@@ -179,10 +248,19 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
 }
 
 let arguments = CommandLine.arguments
+if arguments.contains("--diagnostics-self-test") {
+    let sample = CaptureDiagnostics()
+    sample.received("system"); sample.received("system"); sample.dropped("system"); sample.emptyOutput("system")
+    sample.changedFormat("system")
+    sample.wrote("system", previous: 16000, position: 20000)
+    sample.wrote("system", previous: 24000, position: 23000)
+    sample.defaultInputChanges = 1; sample.microphoneMatchesDefault = false
+    jsonLine(sample.payload()); exit(0)
+}
 if arguments.contains("--probe") {
     jsonLine(["screen_permission": CGPreflightScreenCaptureAccess(),
               "microphone_permission": AVCaptureDevice.authorizationStatus(for: .audio) == .authorized,
-              "supported": ProcessInfo.processInfo.operatingSystemVersion.majorVersion >= 15])
+              "supported": ProcessInfo.processInfo.operatingSystemVersion.majorVersion >= 15, "diagnostics_version": 1, "helper_build": 2])
     exit(0)
 }
 guard let option = arguments.firstIndex(of: "--output"), arguments.indices.contains(option + 1) else {
@@ -206,7 +284,7 @@ Task {
             Task { await capture.finish(); exit(0) }
         }
     } catch {
-        capture.queue.sync { capture.errorMessage = error.localizedDescription; capture.state = "failed"; capture.report() }
+        capture.queue.sync { capture.diagnostics.failureStage = "startup"; capture.errorMessage = error.localizedDescription; capture.state = "failed"; capture.report() }
         exit(1)
     }
 }

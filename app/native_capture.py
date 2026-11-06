@@ -3,6 +3,7 @@ import io, json, math, os, platform, subprocess, threading, time, wave
 from array import array
 from pathlib import Path
 from .recordings import RecordingStore
+from .capture_diagnostics import sanitize
 from .live_segmentation import elastic_plan,HARD_SECONDS
 
 BASE=Path(__file__).resolve().parents[1]
@@ -118,6 +119,7 @@ class NativeCapture:
         reason=session.get('stop_reason') or self.stop_reasons.get(rid)
         if reason:status['error']=status.get('error') or reason
         # Disk heartbeat is independent of browser polling. Do not mistake silence for a crash.
+        status['diagnostics']=sanitize(status.get('diagnostics'))
         status['health']=self.health(session,status,path)
         return status
 

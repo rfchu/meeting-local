@@ -1,5 +1,6 @@
 """Opt-in observation of existing native recordings. Never starts or controls capture."""
 import json,sqlite3,threading,time,uuid
+from .capture_diagnostics import sanitize,observe
 from fastapi import HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel,Field
@@ -88,6 +89,12 @@ class RecordingValidation:
                     sample={'phase':view['phase'],'capture':view['capture']['state'],'storage':view['storage']['state'],
                             'asr':view['asr']['state'],'saved_bytes':view['storage']['saved_bytes'],
                             'saved_seconds':view['storage']['last_saved_seconds'],'covered_seconds':view['asr']['covered_seconds'],'timeline_seconds':view['capture'].get('timeline_seconds')}
+                    sample['native_diagnostics']=sanitize(view['capture'].get('native_diagnostics'))
+                    native_flags,native_delta=observe(summary,sample['native_diagnostics']);flags.extend(native_flags)
+                    sample['native_counter_delta']=native_delta
+                    previous_bytes=summary.get('last_sample',{}).get('saved_bytes')
+                    sample['file_growth_bytes']=sample['saved_bytes']-previous_bytes if type(previous_bytes) is int and type(sample['saved_bytes']) is int else None
+                    if sample['file_growth_bytes'] is not None and sample['file_growth_bytes']<0:flags.append('audio_file_shrank')
                     if alive and sample['capture'] in ('stopped','interrupted'):state='interrupted';summary['end_reason']='capture_ended';flags.append('capture_ended')
                     if sample['capture']=='unknown':flags.append('capture_unknown')
                     if sample['storage'] in ('unconfirmed','failed'):flags.append('storage_unconfirmed')
@@ -99,6 +106,7 @@ class RecordingValidation:
                     sample={'phase':'unknown','capture':'unknown','storage':'unknown','asr':'unknown','saved_bytes':None,'saved_seconds':None,'covered_seconds':None}
                     flags.append('status_unavailable')
                 if state=='observing' and elapsed>=row['target']:state='completed';summary['end_reason']='target_elapsed'
+                flags=list(dict.fromkeys(flags))
                 summary['sample_count']+=1
                 for flag in flags:summary['flags'][flag]=summary['flags'].get(flag,0)+1
                 summary['last_sample']=sample;summary['max_observation_gap_seconds']=round(max(gap,summary.get('max_observation_gap_seconds',0)),2)
@@ -125,7 +133,7 @@ class RecordingValidation:
         with self.lock,self.connect() as db:
             row=self.get(cid)
             if row['state']=='observing':
-                summary={k:row[k] for k in ('sample_count','flags','end_reason','last_sample','max_observation_gap_seconds') if k in row};summary['end_reason']='user_stopped_observation'
+                summary=json.loads(db.execute('SELECT summary FROM checks WHERE id=?',(cid,)).fetchone()[0]);summary['end_reason']='user_stopped_observation'
                 db.execute("UPDATE checks SET state='stopped',updated=?,summary=? WHERE id=?",(self.wall(),json.dumps(summary),cid))
                 self.starts.pop(cid,None);self.ticks.pop(cid,None)
         return self.get(cid)
@@ -145,7 +153,8 @@ class RecordingValidation:
             row=self.get(cid);row.pop('recording_id');row.pop('id')
             samples=[{'seq':r['seq'],'at':r['at'],'elapsed_seconds':r['elapsed'],**json.loads(r['payload'])} for r in db.execute('SELECT * FROM samples WHERE check_id=? ORDER BY seq',(cid,))]
             markers=[{k:r[k] for k in ('seq','at','elapsed','kind')} for r in db.execute('SELECT * FROM markers WHERE check_id=? ORDER BY seq',(cid,))]
-        return {'schema_version':1,'mode':'existing_native_recording_observation','result':'manual_review_required',
+        return {'schema_version':2,'mode':'existing_native_recording_observation','result':'manual_review_required',
+                'native_diagnostics_available':bool(row.get('last_sample',{}).get('native_diagnostics',{}).get('available')),
                 'target_elapsed':row['state']=='completed','hardware_capture_validated':False,'audio_content_validated':False,'sleep_wake_validated':False,
                 'other_app_contention_validated':False,'markers_are_user_reported':True,**row,
                 'retained_sample_count':len(samples),'samples_truncated':len(samples)<row['sample_count'],'samples':samples,'markers':markers}
