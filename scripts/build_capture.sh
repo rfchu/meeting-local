@@ -4,7 +4,7 @@ cd "$(dirname "$0")/.."
 APP="${TINGJI_CAPTURE_APP:-$HOME/Library/Caches/cn.seeknow.tingji/TingjiCapture.app}"
 mkdir -p "$APP/Contents/MacOS" native/build/module-cache
 xcrun swiftc -swift-version 5 -O -target arm64-apple-macos15.0 -module-cache-path native/build/module-cache \
-  native/AudioCapture/main.swift native/AudioCapture/Diagnostics.swift -o "$APP/Contents/MacOS/TingjiCapture"
+  native/AudioCapture/main.swift native/AudioCapture/Diagnostics.swift native/AudioCapture/Ownership.swift -o "$APP/Contents/MacOS/TingjiCapture"
 cat > "$APP/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -13,7 +13,7 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 <key>CFBundleName</key><string>听记采集器</string>
 <key>CFBundleExecutable</key><string>TingjiCapture</string>
 <key>CFBundlePackageType</key><string>APPL</string>
-<key>CFBundleVersion</key><string>2</string>
+<key>CFBundleVersion</key><string>3</string>
 <key>LSUIElement</key><true/>
 <key>LSMinimumSystemVersion</key><string>15.0</string>
 <key>NSMicrophoneUsageDescription</key><string>听记将你的发言与线上会议声音分别保存在本机，用于会议转写。</string>

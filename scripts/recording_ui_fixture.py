@@ -11,7 +11,7 @@ from app.db import Store,uid,encode
 
 class SyntheticCapture(NativeCapture):
     def __init__(self,*args):super().__init__(*args);self.states={}
-    def capability(self):return {'available':True,'supported':True,'screen_permission':True,'microphone_permission':True,'build_command':'synthetic-test'}
+    def capability(self):return {'available':True,'supported':True,'screen_permission':True,'microphone_permission':True,'build_command':'synthetic-test','ownership_protocol_version':1,'ownership':self.ownership()}
     def start_monitor(self):pass
     def close(self):self.states.clear()
     def is_running(self,rid):return self.states.get(rid) in ('recording','paused')

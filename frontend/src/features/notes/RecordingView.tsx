@@ -178,6 +178,14 @@ export default function RecordingView({
           内嵌工作区可使用已有原生音轨模式；浏览器麦克风录音请打开宿主的“浏览器工作台”。
         </p>
       )}
+      {state === "idle" &&
+        captureSource !== "browser" &&
+        nativeCapability?.ownership &&
+        nativeCapability.ownership.lease !== "free" && (
+          <p className="muted" role="status">
+            原生采集所有权待核对，请在“采集与识别”中重新检查；不会自动接管或重复录音。
+          </p>
+        )}
       <div className="workbench-topbar">
         <div>
           <div className="eyebrow">本机会议采集</div>
@@ -201,7 +209,10 @@ export default function RecordingView({
                   (!browserCaptureAllowed() ||
                     typeof MediaRecorder === "undefined" ||
                     !navigator.mediaDevices?.getUserMedia)) ||
-                (captureSource !== "browser" && !nativeCapability?.available)
+                (captureSource !== "browser" &&
+                  (!nativeCapability?.available ||
+                    (!!nativeCapability.ownership &&
+                      nativeCapability.ownership.lease !== "free")))
               }
               onClick={() => void start()}
             >
@@ -361,6 +372,7 @@ export default function RecordingView({
       )}
       {state === "idle" && (
         <RecordingReadiness
+          nativeCapability={nativeCapability}
           source={captureSource}
           engine={draftEngine}
           onReadiness={acceptReadiness}

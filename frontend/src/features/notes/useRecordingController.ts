@@ -1124,6 +1124,14 @@ export function useRecordingController({
       return toast(
         "内嵌工作区未启用浏览器采集。请改用原生音轨，或在浏览器工作台录音。",
       );
+    if (
+      captureSource !== "browser" &&
+      nativeCapability?.ownership &&
+      nativeCapability.ownership.lease !== "free"
+    )
+      return toast(
+        "采集所有权待核对，请先检查正在进行的录音；不会自动接管或重复启动。",
+      );
     if (preflight && !preflight.storage.writable)
       return toast("数据目录无法写入，请修复后再录音");
     const plan = recordingPlan(

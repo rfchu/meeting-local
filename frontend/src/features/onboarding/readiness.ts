@@ -32,6 +32,11 @@ export function captureState(
         : permission === "granted"
           ? { state: "ready", label: "麦克风权限已允许" }
           : { state: "pending", label: "首次试录或开始录音时请求麦克风权限" };
+  if (native?.ownership && native.ownership.lease !== "free")
+    return {
+      state: "blocked",
+      label: "采集所有权待核对，请先检查正在进行的录音",
+    };
   if (!native?.available || !native.supported)
     return { state: "blocked", label: "原生采集器尚未就绪" };
   if (

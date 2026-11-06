@@ -305,7 +305,15 @@ export interface RecordingRuntime {
     gap_count: number;
   };
 }
+export interface CaptureOwnership {
+  protocol_version: number;
+  lease: "free" | "held" | "unknown";
+  decision: string;
+  reattach_supported: boolean;
+}
 export interface NativeCapability {
+  ownership_protocol_version?: number;
+  ownership?: CaptureOwnership;
   available: boolean;
   supported: boolean;
   screen_permission: boolean;

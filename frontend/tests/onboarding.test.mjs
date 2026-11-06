@@ -22,3 +22,12 @@ test('Native system and dual-track sources request only their relevant permissio
  assert.equal(captureState('macos-system',{...native,available:false},true,'granted').state,'blocked');
  assert.equal(captureState('macos-system',{...native,screen_permission:false},true,'granted').state,'pending');
 });
+test('Native ownership blocks duplicate capture while ordinary browser recording stays independent',()=>{
+ for(const lease of ['held','unknown']) {
+  const value={...native,ownership:{protocol_version:1,lease,decision:'controller_unavailable',reattach_supported:false}};
+  assert.equal(captureState('macos-system',value,true,'granted').state,'blocked');
+  assert.equal(captureState('macos-both',value,true,'granted').state,'blocked');
+  assert.equal(captureState('browser',value,true,'granted').state,'ready');
+ }
+ assert.equal(captureState('macos-system',{...native,ownership:{lease:'free'}},true,'granted').state,'ready');
+});

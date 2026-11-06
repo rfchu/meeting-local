@@ -8,12 +8,14 @@ import "./onboarding.css";
 const key = "tingji.recording-guide.v1";
 export default function RecordingReadiness({
   source,
+  nativeCapability,
   engine,
   onConfigure,
   onModels,
   onReadiness,
 }: {
   source: CaptureSource;
+  nativeCapability?: Readiness["native"] | null;
   engine: "qwen" | "whisper";
   onConfigure: () => void;
   onModels: () => void;
@@ -59,7 +61,7 @@ export default function RecordingReadiness({
   }, [refresh]);
   const input = captureState(
     source,
-    data?.native,
+    nativeCapability ?? data?.native,
     !!navigator.mediaDevices?.getUserMedia &&
       typeof MediaRecorder !== "undefined",
     permission,
@@ -95,7 +97,13 @@ export default function RecordingReadiness({
     <section className="recording-readiness" aria-label="开始前检查">
       <div className="readiness-heading">
         <div>
-          <h3>{completed ? "准备好就开始" : "第一次使用？先检查声音"}</h3>
+          <h3>
+            {input.state === "blocked"
+              ? "请先检查录音输入"
+              : completed
+                ? "准备好就开始"
+                : "第一次使用？先检查声音"}
+          </h3>
           <p>录音、识别和 AI 整理分别就绪，按需配置。</p>
         </div>
         <div className="guide-actions">

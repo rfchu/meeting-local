@@ -1,8 +1,9 @@
 """Control a local ScreenCaptureKit helper; preserve independent PCM tracks."""
-import io, json, math, os, platform, subprocess, threading, time, wave
+import io, json, math, os, platform, subprocess, threading, time, wave, uuid
 from array import array
 from pathlib import Path
 from .recordings import RecordingStore
+from .capture_ownership import inspect as inspect_ownership,blocks_publication
 from .capture_diagnostics import sanitize
 from .live_segmentation import elastic_plan,HARD_SECONDS
 
@@ -25,11 +26,23 @@ class NativeCapture:
             process=self.processes.get(rid)
             return process.poll() if process is not None else None
 
+    def ownership(self):
+        value=inspect_ownership(self.recordings.root)
+        rid=value['recording_id']
+        if value['lease']=='held' and rid:
+            try:
+                session=self.recordings.read(rid)
+                if not isinstance(session,dict) or session.get('capture_incarnation')!=value['incarnation']:
+                    return value|{'recording_id':None,'decision':'blocked_identity_mismatch'}
+                if self.is_running(rid):value['decision']='controlled'
+            except (OSError,ValueError):return value|{'recording_id':None,'decision':'blocked_unknown_owner'}
+        return value
+
     def available(self):return platform.system()=='Darwin' and HELPER.is_file()
 
     def capability(self):
         result={'available':self.available(),'screen_permission':False,'microphone_permission':False,
-                'supported':platform.system()=='Darwin','build_command':'bash scripts/build_capture.sh'}
+                'ownership':self.ownership(),'supported':platform.system()=='Darwin','build_command':'bash scripts/build_capture.sh'}
         if self.available():
             try:
                 probe=subprocess.run([str(HELPER),'--probe'],capture_output=True,timeout=5,check=True)
@@ -53,7 +66,7 @@ class NativeCapture:
                     if self.store.one('SELECT id FROM meetings WHERE id=?',(rid,)):continue
                     if session.get('state') in ('recording','paused','starting'):
                         session.update(state='interrupted',interrupted_at=time.time())
-                        session.setdefault('stop_reason','服务恢复时无法接管原采集进程，录音未重新开始；已保存音轨可恢复')
+                        session.setdefault('stop_reason','采集所有权待核对，未尝试接管或重新采集；请等待采集器退出后整理音轨' if blocks_publication(self.ownership(),rid) else '服务恢复时无法接管原采集进程，录音未重新开始；已保存音轨可恢复')
                         RecordingStore.write(path,session)
                         self.recordings.event('capture.reconciled',rid,duration_seconds=session.get('duration',0))
                 except (OSError,ValueError,KeyError):continue
@@ -93,11 +106,14 @@ class NativeCapture:
     def start(self,microphone=True):
         with self.lock:
             if not self.available():raise ValueError('原生采集器未安装，请运行 bash scripts/build_capture.sh')
+            if self.ownership()['lease']!='free':raise ValueError('采集所有权尚未释放或无法核对，未启动第二个采集器')
+            capability=self.capability()
+            if capability.get('ownership_protocol_version')!=1:raise ValueError('请先更新原生采集器（bash scripts/build_capture.sh），以启用跨进程采集保护')
             if any(p.poll() is None for p in self.processes.values()):raise ValueError('已有系统音频采集正在运行，请先停止')
             session=self.recordings.create('audio/wav');rid=session['id']
-            session.update(source='macos',include_microphone=microphone)
+            session.update(source='macos',include_microphone=microphone,capture_incarnation=uuid.uuid4().hex)
             folder=self.recordings.folder(rid);RecordingStore.write(folder/'session.json',session)
-            args=[str(HELPER),'--output',str(folder)]
+            args=[str(HELPER),'--output',str(folder),'--incarnation',session['capture_incarnation']]
             if microphone:args.append('--microphone')
             with (folder/'capture.log').open('ab') as log:
                 process=subprocess.Popen(args,stdin=subprocess.PIPE,stdout=log,stderr=log)
@@ -121,10 +137,12 @@ class NativeCapture:
         code=self.observe_exit(rid) if process else None
         if (not process or code is not None) and status['state'] in ('starting','recording','paused'):
             detail=f'（退出码 {code}）' if code is not None else ''
-            status.update(state='interrupted',error=f'采集进程已退出{detail}，已保存的音轨可恢复')
+            status.update(state='interrupted',error='采集器可能仍在写入，但当前服务无控制权；未接管或重新开始采集' if blocks_publication(self.ownership(),rid) else f'采集进程已退出{detail}，已保存的音轨可恢复')
         reason=session.get('stop_reason') or self.stop_reasons.get(rid)
         if reason:status['error']=status.get('error') or reason
         # Disk heartbeat is independent of browser polling. Do not mistake silence for a crash.
+        ownership=self.ownership()
+        status['ownership']=ownership|{'controlled_by_current_service':ownership['decision']=='controlled' and ownership['recording_id']==rid}
         status['diagnostics']=sanitize(status.get('diagnostics'))
         status['health']=self.health(session,status,path)
         return status
@@ -218,6 +236,7 @@ class NativeCapture:
             if command=='stop':self.recordings.event('capture.stop_requested',rid)
             self.status(rid);process=self.processes.get(rid)
             if not process or process.poll() is not None:
+                if blocks_publication(self.ownership(),rid):raise ValueError('当前服务无采集控制权，未发送停止或接管命令；请等待采集器退出后整理')
                 if command=='stop':return self.status(rid)
                 raise ValueError('采集器已停止')
             try:process.stdin.write((command+'\n').encode());process.stdin.flush()
@@ -249,7 +268,9 @@ class NativeCapture:
     def finish(self,rid):
         with self.lock:
             if self.store.one('SELECT id FROM meetings WHERE id=?',(rid,)):return rid
+            if not self.is_running(rid) and blocks_publication(self.ownership(),rid):raise ValueError('采集所有权未释放，不能整理仍可能在写入的音轨；未向旧 PID 发送命令')
             status=self.command(rid,'stop');folder=self.recordings.folder(rid)
+            if blocks_publication(self.ownership(),rid):raise ValueError('采集所有权尚未释放，音轨保留，请稍后重试整理')
             session=self.recordings.read(rid)
             if session['state']=='completed':raise ValueError('此录音已完成并被删除，不能重新恢复')
             sources=[folder/f'{name}.pcm' for name in ('system','microphone')]

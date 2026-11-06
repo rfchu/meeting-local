@@ -16,6 +16,7 @@ func jsonLine(_ value: [String: Any]) {
 final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
     let folder: URL
     let microphone: Bool
+    let incarnation: String
     let queue = DispatchQueue(label: "cn.seeknow.tingji.capture.audio")
     var stream: SCStream?
     var files: [String: FileHandle] = [:]
@@ -41,7 +42,7 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
     var elapsed: Double = 0
     let outputFormat = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: 16000, channels: 1, interleaved: true)!
 
-    init(folder: URL, microphone: Bool) { self.folder = folder; self.microphone = microphone }
+    init(folder: URL, microphone: Bool, incarnation: String) { self.folder = folder; self.microphone = microphone; self.incarnation = incarnation }
 
     func defaultDevice(_ selector: AudioObjectPropertySelector) -> AudioDeviceID? {
         var address = AudioObjectPropertyAddress(mSelector: selector, mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
@@ -99,7 +100,7 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
 
     func report() {
         if state == "recording" { elapsed = max(0, hostSeconds() - origin - pausedTotal) }
-        let report: [String: Any] = ["state": state, "duration": elapsed, "error": errorMessage,
+        let report: [String: Any] = ["state": state, "duration": elapsed, "error": errorMessage, "ownership_protocol_version":1,"capture_incarnation":incarnation,
             "system_frames": frames["system"] ?? 0, "microphone_frames": frames["microphone"] ?? 0,
             "system_levels": levels["system"] ?? [], "microphone_levels": levels["microphone"] ?? [],
             "diagnostics": diagnostics.payload(), "sample_rate": 16000, "updated": Date().timeIntervalSince1970,
@@ -260,15 +261,19 @@ if arguments.contains("--diagnostics-self-test") {
 if arguments.contains("--probe") {
     jsonLine(["screen_permission": CGPreflightScreenCaptureAccess(),
               "microphone_permission": AVCaptureDevice.authorizationStatus(for: .audio) == .authorized,
-              "supported": ProcessInfo.processInfo.operatingSystemVersion.majorVersion >= 15, "diagnostics_version": 1, "helper_build": 2])
+              "supported": ProcessInfo.processInfo.operatingSystemVersion.majorVersion >= 15, "diagnostics_version": 1, "helper_build": 3, "ownership_protocol_version": 1])
     exit(0)
 }
 guard let option = arguments.firstIndex(of: "--output"), arguments.indices.contains(option + 1) else {
     jsonLine(["error": "需要指定 --output"]); exit(2)
 }
+guard let identityOption = arguments.firstIndex(of:"--incarnation"), arguments.indices.contains(identityOption+1) else { jsonLine(["error":"缺少采集会话身份，请从工作台启动"]); exit(2) }
+let ownerLease: CaptureOwnerLease
+do { ownerLease = try CaptureOwnerLease(folder:URL(fileURLWithPath:arguments[option+1]),incarnation:arguments[identityOption+1]) }
+catch { jsonLine(["error":"采集所有权无法取得，未打开设备"]); exit(3) }
 let application = NSApplication.shared
 application.setActivationPolicy(.accessory)
-let capture = Capture(folder: URL(fileURLWithPath: arguments[option + 1]), microphone: arguments.contains("--microphone"))
+let capture = Capture(folder: URL(fileURLWithPath: arguments[option + 1]), microphone: arguments.contains("--microphone"), incarnation:ownerLease.incarnation)
 Task {
     do {
         try await capture.start()
@@ -288,4 +293,4 @@ Task {
         exit(1)
     }
 }
-RunLoop.main.run()
+withExtendedLifetime(ownerLease) { RunLoop.main.run() }

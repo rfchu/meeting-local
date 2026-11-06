@@ -27,9 +27,15 @@ def main():
             app.state.keep_awake.supported=False
             if args.static_dir:
                 next(route for route in app.routes if getattr(route,'path',None)=='').app=StaticFiles(directory=args.static_dir,html=True)
-            claims=[];services=app.state.services;store=services.store;rid=uid();jid=uid();mid=uid();pid=uid()
+            capture_leases=[];claims=[];services=app.state.services;store=services.store;rid=uid();jid=uid();mid=uid();pid=uid()
             @app.post('/_fixture/resources/{scenario}')
             def scenario(scenario:str):
+                if scenario=='capture-owner-unknown':
+                    import fcntl
+                    root=services.recordings.root
+                    path=root/'capture-owner.lock';path.touch(mode=0o600)
+                    stream=path.open('r');fcntl.flock(stream,fcntl.LOCK_EX|fcntl.LOCK_NB);capture_leases.append(stream)
+                    return {'synthetic':True,'ownership':'unknown'}
                 if scenario=='delivery-ready':
                     from app.minutes import MeetingMinutes,MinutesItem
                     from app import minutes_versions
@@ -111,5 +117,6 @@ def main():
             try:uvicorn.run(app,host='127.0.0.1',port=args.port,access_log=False)
             finally:
                 for claim in claims:claim.close()
+                for lease in capture_leases:lease.close()
 
 if __name__=='__main__':main()

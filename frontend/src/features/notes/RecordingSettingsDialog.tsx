@@ -303,6 +303,13 @@ export default function RecordingSettingsDialog({
               <small>
                 在系统设置中授权后重新检查；开始原生录音时会请求所需权限。
               </small>
+              {nativeCapability?.ownership &&
+                nativeCapability.ownership.lease !== "free" && (
+                  <small role="status">
+                    已有采集所有者或所有权尚未核对；不会重复启动或自动接管。请先检查正在进行的录音。
+                  </small>
+                )}
+              <small>API 重启后仅恢复已保存内容；连续采集接管尚未启用。</small>
             </div>
           )}
           {!nativeCapability?.available && (

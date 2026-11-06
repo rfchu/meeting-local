@@ -29,7 +29,7 @@ final class CaptureDiagnostics {
             (name, ["input_buffers": Int64(inputBuffers[name] ?? 0), "dropped_buffers": Int64(droppedBuffers[name] ?? 0),
                     "empty_outputs": Int64(emptyOutputs[name] ?? 0), "format_changes": Int64(formatChanges[name] ?? 0), "gap_frames": gapFrames[name] ?? 0])
         })
-        return ["version": 1, "helper_build": 2, "default_input_changes": defaultInputChanges, "default_output_changes": defaultOutputChanges,
+        return ["version": 1, "helper_build": 3, "default_input_changes": defaultInputChanges, "default_output_changes": defaultOutputChanges,
                 "audio_device_connections": connections, "audio_device_disconnections": disconnections,
                 "listener_failures": listenerFailures, "device_query_failures": deviceQueryFailures, "configured_microphone_is_default": microphoneMatchesDefault as Any? ?? NSNull(),
                 "failure_stage": failureStage, "stream_error_code": streamErrorCode as Any? ?? NSNull(), "tracks": tracks]
