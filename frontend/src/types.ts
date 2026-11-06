@@ -519,11 +519,18 @@ export interface LLMConfigInput {
   clear_api_key?: boolean;
 }
 
+export type RecordingReviewStatus = "pending" | "clear" | "gap" | "uncertain";
 export interface RecordingQuality {
   recorded: boolean;
   available: boolean;
   monitored: boolean;
   total_count: number;
+  retained_count?: number;
+  reviewed_count?: number;
+  gap_count?: number;
+  pending_count?: number;
+  offset?: number;
+  pending_only?: boolean;
   items: {
     id: number;
     component: string;
@@ -534,5 +541,8 @@ export interface RecordingQuality {
     start_seconds: number | null;
     end_seconds: number | null;
     end_state: string | null;
+    review_status?: RecordingReviewStatus;
+    review_version?: number;
+    reviewed_at?: number | null;
   }[];
 }

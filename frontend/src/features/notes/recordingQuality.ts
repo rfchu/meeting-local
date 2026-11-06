@@ -27,3 +27,13 @@ export function qualityResolution(item: Observation) {
     ? "后续状态恢复，仍建议回听确认"
     : "该状态已结束，未确认中途音频是否完整";
 }
+
+export const qualityReviewChoices = {
+  pending: "待回听",
+  clear: "回听无明显问题",
+  gap: "确认存在缺音",
+  uncertain: "仍需核实",
+} as const;
+export function qualityReviewLabel(item: Observation) {
+  return qualityReviewChoices[item.review_status || "pending"];
+}

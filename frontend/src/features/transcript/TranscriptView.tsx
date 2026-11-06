@@ -245,7 +245,11 @@ export default function TranscriptView({
   };
   return (
     <>
-      <MeetingRecordingQuality id={meeting.id} onSeek={onSeek} />
+      <MeetingRecordingQuality
+        key={meeting.id}
+        id={meeting.id}
+        onSeek={onSeek}
+      />
       {termsOpen && (
         <TermDialog
           scope={meeting.id}

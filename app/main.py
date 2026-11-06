@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Literal
 from urllib.parse import urlparse, quote
-from fastapi import FastAPI, File, Form, UploadFile, HTTPException, Request
+from fastapi import FastAPI, File, Form, UploadFile, HTTPException, Request, Query
 from fastapi.responses import FileResponse, Response, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
@@ -47,6 +47,10 @@ from .onboarding import register_onboarding
 from .live_overview import LiveOverview,register_overview
 
 BASE=Path(__file__).resolve().parents[1]
+
+class RecordingQualityReviewInput(BaseModel):
+    status: Literal['pending','clear','gap','uncertain']
+    expected_version: int=Field(ge=0)
 
 class Segment(BaseModel):
     id: str=Field(min_length=1,max_length=100)
@@ -853,9 +857,18 @@ def create_app(data_dir=None, start_worker=True):
         except FileNotFoundError:raise HTTPException(404,'录音会话不存在')
         except ValueError:raise HTTPException(409,'录音元数据无法读取，已有文件保留')
     @app.get('/api/meetings/{mid}/recording-quality')
-    def meeting_recording_quality(mid:str):
+    def meeting_recording_quality(mid:str,view:Literal['all','pending']='all',offset:int=Query(default=0,ge=0,le=10000)):
         row=meeting(mid)
-        return recording_quality(recordings,mid,float(row['duration']))
+        return recording_quality(recordings,mid,float(row['duration']),pending_only=view=='pending',offset=offset)
+    @app.post('/api/meetings/{mid}/recording-quality/{aid}/review')
+    def review_recording_quality(mid:str,aid:int,body:RecordingQualityReviewInput):
+        meeting(mid)
+        if native_capture.is_running(mid):raise HTTPException(409,'录音尚在进行，请结束后核对')
+        try:lifecycle.review_anomaly(mid,aid,body.status,body.expected_version)
+        except LookupError as error:raise HTTPException(404,str(error))
+        except ValueError as error:raise HTTPException(409,str(error))
+        except RuntimeError as error:raise HTTPException(503,str(error))
+        return {'ok':True}
     @app.get('/api/recordings/{rid}/completion')
     def recording_completion(rid:str,engine:Literal['whisper','qwen']='qwen'):
         try:return completion_report(store,recordings,live_results,rid,engine)

@@ -1,4 +1,4 @@
-import type { RecordingQuality } from "./types";
+import type { RecordingQuality, RecordingReviewStatus } from "./types";
 import type { RuntimeTasks } from "./features/management/TasksPanel";
 import type { RuntimeOverview } from "./features/management/RuntimeManagement";
 import type { OverviewStatus } from "./features/overview/types";
@@ -227,8 +227,21 @@ export const api = {
       ...json("POST", { state }),
       signal: AbortSignal.timeout(5000),
     }),
-  recordingQuality: (id: string) =>
-    request<RecordingQuality>(`/meetings/${id}/recording-quality`, {
+  recordingQuality: (id: string, view: "all" | "pending" = "all", offset = 0) =>
+    request<RecordingQuality>(
+      `/meetings/${id}/recording-quality?view=${view}&offset=${offset}`,
+      {
+        signal: AbortSignal.timeout(10000),
+      },
+    ),
+  reviewRecordingQuality: (
+    id: string,
+    aid: number,
+    status: RecordingReviewStatus,
+    expectedVersion: number,
+  ) =>
+    request(`/meetings/${id}/recording-quality/${aid}/review`, {
+      ...json("POST", { status, expected_version: expectedVersion }),
       signal: AbortSignal.timeout(10000),
     }),
   recordingCompletion: (id: string, engine: "whisper" | "qwen") =>

@@ -22,10 +22,10 @@ def completion_report(store, recordings, live_results, rid, engine):
                         'completed_ranges':len(reused),'failed_attempts':states.get('failed',0)}}
 
 
-def recording_quality(recordings,rid,duration):
+def recording_quality(recordings,rid,duration,*,pending_only=False,offset=0):
     if not (recordings.root/rid/'session.json').is_file():return {'recorded':False,'available':True,'monitored':False,'total_count':0,'items':[]}
     journal=recordings.lifecycle
-    result=journal.anomalies(rid) if journal else {'available':False,'total_count':0,'items':[]}
+    result=journal.anomalies(rid,pending_only=pending_only,offset=offset) if journal else {'available':False,'total_count':0,'items':[]}
     monitored=result.get('monitored',False)
     for item in result['items']:
         for key in ('start_seconds','end_seconds'):

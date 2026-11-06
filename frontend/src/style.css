@@ -3522,3 +3522,24 @@ button.note-options-trigger {
   color: #64748b;
   font-size: 12px;
 }
+
+.recording-quality-review .quality-review-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 12px 0;
+}
+.recording-quality-review li {
+  padding: 10px 0;
+}
+.recording-quality-review li label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: 12px;
+}
+.recording-quality-review li small {
+  display: block;
+  margin-top: 6px;
+}

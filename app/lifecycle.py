@@ -30,7 +30,8 @@ class Lifecycle:
                 CREATE TABLE IF NOT EXISTS anomalies(id INTEGER PRIMARY KEY AUTOINCREMENT,recording_id TEXT,component TEXT,state TEXT,started REAL,last_seen REAL,ended REAL,start_seconds REAL,last_seconds REAL,end_state TEXT);
                 CREATE INDEX IF NOT EXISTS recording_anomalies ON anomalies(recording_id,id);
                 CREATE TABLE IF NOT EXISTS anomaly_totals(recording_id TEXT PRIMARY KEY,total INTEGER NOT NULL);
-                CREATE TABLE IF NOT EXISTS quality_monitors(recording_id TEXT PRIMARY KEY,started REAL);''')
+                CREATE TABLE IF NOT EXISTS quality_monitors(recording_id TEXT PRIMARY KEY,started REAL);
+                CREATE TABLE IF NOT EXISTS anomaly_reviews(anomaly_id INTEGER PRIMARY KEY,recording_id TEXT,status TEXT,version INTEGER,updated REAL);''')
         except (OSError,sqlite3.Error):self.available=False
 
     def connect(self):return sqlite3.connect(self.path,timeout=.2)
@@ -87,19 +88,42 @@ class Lifecycle:
         if state in ANOMALIES[component]:
             db.execute('INSERT INTO anomalies(recording_id,component,state,started,last_seen,start_seconds,last_seconds) VALUES(?,?,?,?,?,?,?)',(rid,component,state,now,now,seconds,seconds))
             db.execute('INSERT INTO anomaly_totals VALUES(?,1) ON CONFLICT(recording_id) DO UPDATE SET total=total+1',(rid,))
-            # Retain recent details and a lifetime count; never trim an open observation.
-            db.execute('DELETE FROM anomalies WHERE recording_id=? AND ended IS NOT NULL AND id NOT IN (SELECT id FROM anomalies WHERE recording_id=? ORDER BY id DESC LIMIT 200)',(rid,rid))
+            # Keep recent automatic details; open observations and manual review history survive pruning.
+            db.execute('DELETE FROM anomalies WHERE recording_id=? AND ended IS NOT NULL AND id NOT IN (SELECT anomaly_id FROM anomaly_reviews) AND id NOT IN (SELECT id FROM anomalies WHERE recording_id=? ORDER BY id DESC LIMIT 200)',(rid,rid))
 
-    def anomalies(self,rid,limit=20):
-        if not self.available:return {'available':False,'monitored':False,'total_count':0,'items':[]}
+    def review_anomaly(self,rid,aid,status,expected_version):
+        if status not in {'pending','clear','gap','uncertain'}:raise ValueError('未知核对结论')
+        if not self.available:raise RuntimeError('录音异常记录暂不可用')
+        try:
+            with self.lock,self.connect() as db:
+                db.execute('BEGIN IMMEDIATE')
+                item=db.execute('SELECT ended FROM anomalies WHERE id=? AND recording_id=?',(aid,rid)).fetchone()
+                if not item:raise LookupError('异常详情不存在或已超出保留范围')
+                if item[0] is None:raise ValueError('异常状态仍在变化，请在状态结束后核对')
+                old=db.execute('SELECT status,version FROM anomaly_reviews WHERE anomaly_id=?',(aid,)).fetchone()
+                previous,version=old if old else ('pending',0)
+                # Retrying the same choice after a lost response is idempotent.
+                if previous==status:return
+                if version!=expected_version:raise ValueError('核对结果已在其他页面更新，请刷新后重试')
+                db.execute('INSERT INTO anomaly_reviews VALUES(?,?,?,?,?) ON CONFLICT(anomaly_id) DO UPDATE SET status=excluded.status,version=excluded.version,updated=excluded.updated',(aid,rid,status,version+1,time.time()))
+        except (OSError,sqlite3.Error) as error:raise RuntimeError('核对结果保存失败，请重试') from error
+
+    def anomalies(self,rid,limit=20,*,pending_only=False,offset=0):
+        unavailable={'available':False,'monitored':False,'total_count':0,'items':[]}
+        if not self.available:return unavailable
         try:
             with self.lock,self.connect() as db:
                 monitored=db.execute('SELECT started FROM quality_monitors WHERE recording_id=?',(rid,)).fetchone()
                 count=db.execute('SELECT total FROM anomaly_totals WHERE recording_id=?',(rid,)).fetchone()
-                rows=db.execute('SELECT id,component,state,started,last_seen,ended,start_seconds,last_seconds,end_state FROM anomalies WHERE recording_id=? ORDER BY id DESC LIMIT ?',(rid,limit)).fetchall()
-            return {'available':True,'monitored':bool(monitored),'total_count':count[0] if count else 0,'items':[
-                dict(zip(('id','component','state','observed_at','last_observed_at','closed_at','start_seconds','end_seconds','end_state'),row)) for row in rows]}
-        except (OSError,sqlite3.Error):return {'available':False,'monitored':False,'total_count':0,'items':[]}
+                joined="FROM anomalies a LEFT JOIN anomaly_reviews r ON r.anomaly_id=a.id WHERE a.recording_id=?"
+                retained,reviewed,gaps=db.execute("SELECT COUNT(*),COALESCE(SUM(COALESCE(r.status,'pending') IN ('clear','gap')),0),COALESCE(SUM(r.status='gap'),0) "+joined,(rid,)).fetchone()
+                clause=" AND COALESCE(r.status,'pending') IN ('pending','uncertain')" if pending_only else ''
+                rows=db.execute("SELECT a.id,a.component,a.state,a.started,a.last_seen,a.ended,a.start_seconds,a.last_seconds,a.end_state,COALESCE(r.status,'pending'),COALESCE(r.version,0),r.updated "+joined+clause+' ORDER BY a.id DESC LIMIT ? OFFSET ?',(rid,limit,offset)).fetchall()
+            return {'available':True,'monitored':bool(monitored),'total_count':count[0] if count else 0,
+                    'retained_count':retained,'reviewed_count':reviewed,'pending_count':retained-reviewed,'gap_count':gaps,
+                    'offset':offset,'pending_only':pending_only,'items':[
+                dict(zip(('id','component','state','observed_at','last_observed_at','closed_at','start_seconds','end_seconds','end_state','review_status','review_version','reviewed_at'),row)) for row in rows]}
+        except (OSError,sqlite3.Error):return unavailable
 
     def events(self,rid=None,limit=50):
         if not self.available:return []
