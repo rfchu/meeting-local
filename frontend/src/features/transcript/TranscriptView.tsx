@@ -1,3 +1,4 @@
+import MeetingRecordingQuality from "../notes/MeetingRecordingQuality";
 import TermDialog from "../terminology/TermDialog";
 import { searchForms, type Term } from "../terminology/terms";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -244,6 +245,7 @@ export default function TranscriptView({
   };
   return (
     <>
+      <MeetingRecordingQuality id={meeting.id} onSeek={onSeek} />
       {termsOpen && (
         <TermDialog
           scope={meeting.id}

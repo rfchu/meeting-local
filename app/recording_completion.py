@@ -13,9 +13,21 @@ def completion_report(store, recordings, live_results, rid, engine):
     attempts=store.all('SELECT state,COUNT(*) AS count FROM live_asr_ranges WHERE recording_id=? AND engine=? GROUP BY state',(rid,engine))
     states={row['state']:row['count'] for row in attempts}
     notes=store.one('SELECT COUNT(*) AS count FROM meeting_notes WHERE meeting_id=?',(rid,))['count'] if meeting else len(session.get('notes',[]))
-    return {'published':bool(meeting),'audio_saved':bool(meeting and size),
+    quality=recording_quality(recordings,rid,duration)
+    return {'quality':quality,'published':bool(meeting),'audio_saved':bool(meeting and size),
             'saved_bytes':size,'duration_seconds':duration,'notes_count':notes,
             'coverage':{'engine':engine,'covered_seconds':round(covered,2),
                         'uncovered_seconds':round(sum(b-a for a,b in gaps),2),
                         'gaps':[{'start':a,'end':b} for a,b in gaps],
                         'completed_ranges':len(reused),'failed_attempts':states.get('failed',0)}}
+
+
+def recording_quality(recordings,rid,duration):
+    if not (recordings.root/rid/'session.json').is_file():return {'recorded':False,'available':True,'monitored':False,'total_count':0,'items':[]}
+    journal=recordings.lifecycle
+    result=journal.anomalies(rid) if journal else {'available':False,'total_count':0,'items':[]}
+    monitored=result.get('monitored',False)
+    for item in result['items']:
+        for key in ('start_seconds','end_seconds'):
+            if item[key] is not None:item[key]=min(duration,max(0,item[key]))
+    return dict(result,recorded=True,monitored=monitored)

@@ -5,6 +5,9 @@ COMPONENTS={'capture','storage','asr','system_input','microphone_input'}
 STATES={'starting','recording','paused','unknown','interrupted','stopping','stopped','waiting','writing','available','partial','saved','missing','failed','running','behind','disabled','receiving','quiet','no_data','inactive','stalled','unconfirmed'}
 CODES={'service.observation_gap','page.detached','page.returned','service.started','service.shutdown_requested','service.clean_shutdown','service.shutdown_failed','service.previous_unclosed',
        'recording.created','capture.started','capture.paused','capture.resumed','capture.stop_requested','capture.exited','capture.reconciled','storage.completed','storage.failed'}
+ANOMALIES={'capture':{'unknown','interrupted','failed'},'storage':{'unconfirmed','failed'},
+           'system_input':{'no_data','stalled'},'microphone_input':{'no_data','stalled'}}
+
 METRICS={'pid','exit_code','saved_bytes','saved_seconds','duration_seconds','saved_chunks','missing_chunks','covered_seconds','heartbeat_age_seconds','previous_last_seen','gap_seconds'}
 
 
@@ -23,7 +26,11 @@ class Lifecycle:
                 CREATE TABLE IF NOT EXISTS events(seq INTEGER PRIMARY KEY AUTOINCREMENT,run_id TEXT,recording_id TEXT,at REAL,code TEXT,metrics TEXT);
                 CREATE INDEX IF NOT EXISTS recording_events ON events(recording_id,seq);
                 CREATE TABLE IF NOT EXISTS writes(recording_id TEXT PRIMARY KEY,state TEXT);
-                CREATE TABLE IF NOT EXISTS observations(recording_id TEXT,component TEXT,state TEXT,at REAL,metrics TEXT,PRIMARY KEY(recording_id,component));''')
+                CREATE TABLE IF NOT EXISTS observations(recording_id TEXT,component TEXT,state TEXT,at REAL,metrics TEXT,PRIMARY KEY(recording_id,component));
+                CREATE TABLE IF NOT EXISTS anomalies(id INTEGER PRIMARY KEY AUTOINCREMENT,recording_id TEXT,component TEXT,state TEXT,started REAL,last_seen REAL,ended REAL,start_seconds REAL,last_seconds REAL,end_state TEXT);
+                CREATE INDEX IF NOT EXISTS recording_anomalies ON anomalies(recording_id,id);
+                CREATE TABLE IF NOT EXISTS anomaly_totals(recording_id TEXT PRIMARY KEY,total INTEGER NOT NULL);
+                CREATE TABLE IF NOT EXISTS quality_monitors(recording_id TEXT PRIMARY KEY,started REAL);''')
         except (OSError,sqlite3.Error):self.available=False
 
     def connect(self):return sqlite3.connect(self.path,timeout=.2)
@@ -42,6 +49,7 @@ class Lifecycle:
                 component,state=code.split('.',1)
                 if rid and component in COMPONENTS and state in STATES:
                     db.execute('INSERT INTO observations VALUES(?,?,?,?,?) ON CONFLICT(recording_id,component) DO UPDATE SET state=excluded.state,at=excluded.at,metrics=excluded.metrics',(rid,component,state,time.time(),json.dumps(metrics_only(metrics))))
+                if rid and component in ANOMALIES:self._track_anomaly(db,rid,component,state,metrics)
                 db.execute('DELETE FROM events WHERE seq <= (SELECT MAX(seq)-10000 FROM events)')
             return True
         except (OSError,sqlite3.Error):self.available=False;return False
@@ -60,8 +68,38 @@ class Lifecycle:
             with self.lock,self.connect() as db:
                 old=db.execute('SELECT state FROM observations WHERE recording_id=? AND component=?',(rid,component)).fetchone()
                 if not old or old[0]!=state:self.record(component+'.'+state,rid,**metrics)
+                self._track_anomaly(db,rid,component,state,metrics)
                 db.execute('INSERT INTO observations VALUES(?,?,?,?,?) ON CONFLICT(recording_id,component) DO UPDATE SET state=excluded.state,at=excluded.at,metrics=excluded.metrics',(rid,component,state,time.time(),json.dumps(metrics_only(metrics))))
         except (OSError,sqlite3.Error):self.available=False
+
+    def _track_anomaly(self,db,rid,component,state,metrics):
+        if component not in ANOMALIES:return
+        if component in ('capture','system_input','microphone_input') and state in {'recording','paused','unknown','interrupted','failed','receiving','quiet','no_data','stalled'}:
+            db.execute('INSERT OR IGNORE INTO quality_monitors VALUES(?,?)',(rid,time.time()))
+        now=time.time();seconds=metrics_only(metrics).get('duration_seconds')
+        if seconds is not None:seconds=max(0,seconds)
+        current=db.execute('SELECT id,state FROM anomalies WHERE recording_id=? AND component=? AND ended IS NULL',(rid,component)).fetchone()
+        if current and current[1]==state:
+            db.execute('UPDATE anomalies SET last_seen=?,last_seconds=COALESCE(?,last_seconds) WHERE id=?',(now,seconds,current[0]))
+            return
+        if current:
+            db.execute('UPDATE anomalies SET ended=?,last_seen=?,last_seconds=COALESCE(?,last_seconds),end_state=? WHERE id=?',(now,now,seconds,state,current[0]))
+        if state in ANOMALIES[component]:
+            db.execute('INSERT INTO anomalies(recording_id,component,state,started,last_seen,start_seconds,last_seconds) VALUES(?,?,?,?,?,?,?)',(rid,component,state,now,now,seconds,seconds))
+            db.execute('INSERT INTO anomaly_totals VALUES(?,1) ON CONFLICT(recording_id) DO UPDATE SET total=total+1',(rid,))
+            # Retain recent details and a lifetime count; never trim an open observation.
+            db.execute('DELETE FROM anomalies WHERE recording_id=? AND ended IS NOT NULL AND id NOT IN (SELECT id FROM anomalies WHERE recording_id=? ORDER BY id DESC LIMIT 200)',(rid,rid))
+
+    def anomalies(self,rid,limit=20):
+        if not self.available:return {'available':False,'monitored':False,'total_count':0,'items':[]}
+        try:
+            with self.lock,self.connect() as db:
+                monitored=db.execute('SELECT started FROM quality_monitors WHERE recording_id=?',(rid,)).fetchone()
+                count=db.execute('SELECT total FROM anomaly_totals WHERE recording_id=?',(rid,)).fetchone()
+                rows=db.execute('SELECT id,component,state,started,last_seen,ended,start_seconds,last_seconds,end_state FROM anomalies WHERE recording_id=? ORDER BY id DESC LIMIT ?',(rid,limit)).fetchall()
+            return {'available':True,'monitored':bool(monitored),'total_count':count[0] if count else 0,'items':[
+                dict(zip(('id','component','state','observed_at','last_observed_at','closed_at','start_seconds','end_seconds','end_state'),row)) for row in rows]}
+        except (OSError,sqlite3.Error):return {'available':False,'monitored':False,'total_count':0,'items':[]}
 
     def events(self,rid=None,limit=50):
         if not self.available:return []

@@ -27,7 +27,7 @@ def project(health,session,live,ranges,last_events,write=None):
     phase='saved' if published and saved else 'interrupted' if published else capture
     if capture=='stopped' and not published:phase='saving' if any(e['code']=='capture.stop_requested' for e in last_events) else 'interrupted'
     end=health['duration_seconds'] if published and saved else max((t['saved_seconds'] for t in audio['tracks']),default=None)
-    return {'phase':phase,'capture':{'state':capture,'heartbeat_age_seconds':health['capture']['heartbeat_age_seconds'],'tracks':health['capture'].get('tracks',[])},
+    return {'phase':phase,'capture':{'state':capture,'heartbeat_age_seconds':health['capture']['heartbeat_age_seconds'],'tracks':health['capture'].get('tracks',[]),'timeline_seconds':health['duration_seconds']},
             'storage':{'state':storage,'saved_bytes':audio['saved_bytes'],'last_saved_seconds':end,'saved_chunks':audio['saved_chunks'],'missing_chunks':audio['missing_chunk_count']},
             'asr':{'state':recognition,'engine':engine,'covered_seconds':covered,'gap_count':len(gaps) if engine else 0},
             'observed_at':time.time()}
@@ -51,9 +51,9 @@ class RecordingRuntime:
         for rid in candidates:
             try:
                 value=self.read(rid)
-                self.journal.transition(rid,'capture',value['capture']['state'],{'heartbeat_age_seconds':value['capture']['heartbeat_age_seconds']})
+                self.journal.transition(rid,'capture',value['capture']['state'],{'heartbeat_age_seconds':value['capture']['heartbeat_age_seconds'],'duration_seconds':value['capture']['timeline_seconds']})
                 for track in value['capture']['tracks']:
-                    self.journal.transition(rid,track['name']+'_input',track['state'],{'saved_seconds':track['saved_seconds']})
-                self.journal.transition(rid,'storage',value['storage']['state'],{'saved_bytes':value['storage']['saved_bytes'],'saved_seconds':value['storage']['last_saved_seconds'],'saved_chunks':value['storage']['saved_chunks'],'missing_chunks':value['storage']['missing_chunks']})
+                    self.journal.transition(rid,track['name']+'_input',track['state'],{'saved_seconds':track['saved_seconds'],'duration_seconds':value['capture']['timeline_seconds']})
+                self.journal.transition(rid,'storage',value['storage']['state'],{'duration_seconds':value['capture']['timeline_seconds'],'saved_bytes':value['storage']['saved_bytes'],'saved_seconds':value['storage']['last_saved_seconds'],'saved_chunks':value['storage']['saved_chunks'],'missing_chunks':value['storage']['missing_chunks']})
                 self.journal.transition(rid,'asr',value['asr']['state'],{'covered_seconds':value['asr']['covered_seconds']})
             except (OSError,ValueError):continue

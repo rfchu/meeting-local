@@ -1,3 +1,4 @@
+import type { RecordingQuality } from "./types";
 import type { RuntimeTasks } from "./features/management/TasksPanel";
 import type { RuntimeOverview } from "./features/management/RuntimeManagement";
 import type { OverviewStatus } from "./features/overview/types";
@@ -226,8 +227,13 @@ export const api = {
       ...json("POST", { state }),
       signal: AbortSignal.timeout(5000),
     }),
+  recordingQuality: (id: string) =>
+    request<RecordingQuality>(`/meetings/${id}/recording-quality`, {
+      signal: AbortSignal.timeout(10000),
+    }),
   recordingCompletion: (id: string, engine: "whisper" | "qwen") =>
     request<{
+      quality: RecordingQuality;
       published: boolean;
       audio_saved: boolean;
       saved_bytes: number;

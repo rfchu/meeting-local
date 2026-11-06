@@ -1,3 +1,4 @@
+import RecordingQualityReview from "./RecordingQualityReview";
 import { useEffect, useState } from "react";
 import { api } from "../../api";
 import { clock } from "../../utils";
@@ -70,8 +71,9 @@ export default function RecordingReceipt({
           </p>
         </details>
       )}
+      <RecordingQualityReview quality={report.quality} />
       <small>
-        文件核对确认已落盘；识别覆盖不代表录音缺失，也不代表文字已校对。
+        文件存在不代表全程采集完整；待补识别范围与录音异常分别核对，补识别不能补回未采集到的声音。
       </small>
     </div>
   );

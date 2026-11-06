@@ -49,18 +49,21 @@ def main():
             capture.stale=False;capture.input_loss=False;capture.file_stall=False
             for rid in capture.states:os.utime(capture.recordings.folder(rid)/'system.pcm',None)
             for rid in capture.states:capture.status(rid)
+            app.state.recording_runtime.observe()
             return {'ok':True}
         app.router.routes.insert(0,app.router.routes.pop()) # Keep fixture controls before static catch-all.
         @app.post('/_fixture/input-loss')
         def input_loss():
             capture.stale=False;capture.input_loss=True
             for rid in capture.states:capture.status(rid)
+            app.state.recording_runtime.observe()
             return {'ok':True}
         app.router.routes.insert(0,app.router.routes.pop())
         @app.post('/_fixture/file-stall')
         def file_stall():
             capture.stale=False;capture.input_loss=False;capture.file_stall=True
             for rid in capture.states:capture.status(rid)
+            app.state.recording_runtime.observe()
             return {'ok':True}
         app.router.routes.insert(0,app.router.routes.pop())
         uvicorn.run(app,host='127.0.0.1',port=args.port,log_level='warning',timeout_graceful_shutdown=3)

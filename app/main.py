@@ -31,7 +31,7 @@ from .keep_awake import KeepAwake
 from .recording_health import RecordingHealth
 from .lifecycle import Lifecycle
 from .recording_runtime import RecordingRuntime
-from .recording_completion import completion_report
+from .recording_completion import completion_report,recording_quality
 from .meeting_review import MeetingReview
 from .qa import QA
 from .minutes_composition import ComposeInput,CompositionSettings,build_from_ai,publish_analysis,canonical_source
@@ -849,9 +849,13 @@ def create_app(data_dir=None, start_worker=True):
     def recording_inventory(rid:str):
         try:
             value=recording_health.snapshot(rid)
-            return value|{'runtime':recording_runtime.read(rid,value),'lifecycle':{'available':lifecycle.available,'events':lifecycle.events(rid,20),'checkpoints':lifecycle.checkpoints(rid)}}
+            return value|{'runtime':recording_runtime.read(rid,value),'lifecycle':{'available':lifecycle.available,'events':lifecycle.events(rid,20),'checkpoints':lifecycle.checkpoints(rid),'anomalies':lifecycle.anomalies(rid)}}
         except FileNotFoundError:raise HTTPException(404,'录音会话不存在')
         except ValueError:raise HTTPException(409,'录音元数据无法读取，已有文件保留')
+    @app.get('/api/meetings/{mid}/recording-quality')
+    def meeting_recording_quality(mid:str):
+        row=meeting(mid)
+        return recording_quality(recordings,mid,float(row['duration']))
     @app.get('/api/recordings/{rid}/completion')
     def recording_completion(rid:str,engine:Literal['whisper','qwen']='qwen'):
         try:return completion_report(store,recordings,live_results,rid,engine)

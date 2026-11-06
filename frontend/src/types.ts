@@ -518,3 +518,21 @@ export interface LLMConfigInput {
   is_default: boolean;
   clear_api_key?: boolean;
 }
+
+export interface RecordingQuality {
+  recorded: boolean;
+  available: boolean;
+  monitored: boolean;
+  total_count: number;
+  items: {
+    id: number;
+    component: string;
+    state: string;
+    observed_at: number;
+    last_observed_at: number;
+    closed_at: number | null;
+    start_seconds: number | null;
+    end_seconds: number | null;
+    end_state: string | null;
+  }[];
+}
