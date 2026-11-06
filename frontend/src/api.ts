@@ -1,3 +1,4 @@
+import type { ObservationTimelineData } from "./features/management/ObservationTimeline";
 import type { RecordingObservation } from "./features/management/RecordingValidationPanel";
 import type { RecordingQuality, RecordingReviewStatus } from "./types";
 import type { RuntimeTasks } from "./features/management/TasksPanel";
@@ -207,6 +208,11 @@ export const api = {
     request<RecordingObservation[]>("/runtime/recording-checks", {
       signal: AbortSignal.timeout(10000),
     }),
+  recordingCheckTimeline: (id: string, offset = 0) =>
+    request<ObservationTimelineData>(
+      `/runtime/recording-checks/${id}/timeline?offset=${offset}&limit=50`,
+      { signal: AbortSignal.timeout(10000) },
+    ),
   startRecordingCheck: (recordingId: string, targetSeconds: number) =>
     request<RecordingObservation>("/runtime/recording-checks", {
       ...json("POST", {

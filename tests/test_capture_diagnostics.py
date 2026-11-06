@@ -80,7 +80,7 @@ def test_health_and_observation_export_correlate_file_growth_and_telemetry_witho
     raw['default_input_changes']=3;raw['tracks']['system']['dropped_buffers']=1
     (folder/'system.pcm').write_bytes(b'\1\0'*96000);clock[0]=5;write();checks.sample()
     checks.stop(run['id']);report=checks.report(run['id'])
-    assert report['schema_version']==2 and report['native_diagnostics_available']
+    assert report['schema_version']==3 and report['native_diagnostics_available']
     assert report['native_counter_baseline']['default_input_changes']==2
     assert report['native_counter_increases']['default_input_changes']==1
     assert report['last_sample']['file_growth_bytes']==160000

@@ -1,7 +1,8 @@
 """Opt-in observation of existing native recordings. Never starts or controls capture."""
 import json,sqlite3,threading,time,uuid
 from .capture_diagnostics import sanitize,observe
-from fastapi import HTTPException
+from .recording_timeline import build_timeline
+from fastapi import HTTPException,Query
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel,Field
 from typing import Literal
@@ -153,11 +154,16 @@ class RecordingValidation:
             row=self.get(cid);row.pop('recording_id');row.pop('id')
             samples=[{'seq':r['seq'],'at':r['at'],'elapsed_seconds':r['elapsed'],**json.loads(r['payload'])} for r in db.execute('SELECT * FROM samples WHERE check_id=? ORDER BY seq',(cid,))]
             markers=[{k:r[k] for k in ('seq','at','elapsed','kind')} for r in db.execute('SELECT * FROM markers WHERE check_id=? ORDER BY seq',(cid,))]
-        return {'schema_version':2,'mode':'existing_native_recording_observation','result':'manual_review_required',
+        return {'schema_version':3,'mode':'existing_native_recording_observation','result':'manual_review_required',
                 'native_diagnostics_available':bool(row.get('last_sample',{}).get('native_diagnostics',{}).get('available')),
                 'target_elapsed':row['state']=='completed','hardware_capture_validated':False,'audio_content_validated':False,'sleep_wake_validated':False,
                 'other_app_contention_validated':False,'markers_are_user_reported':True,**row,
-                'retained_sample_count':len(samples),'samples_truncated':len(samples)<row['sample_count'],'samples':samples,'markers':markers}
+                'retained_sample_count':len(samples),'samples_truncated':len(samples)<row['sample_count'],'samples':samples,'markers':markers,
+                'timeline':build_timeline(samples,markers,source_truncated=len(samples)<row['sample_count'])}
+
+    def timeline(self,cid,offset=0,limit=50):
+        result=self.report(cid)['timeline'];events=result.pop('events')
+        return result|{'offset':offset,'limit':limit,'events':events[offset:offset+limit]}
 
     def close(self):
         self.closed.set()
@@ -185,5 +191,8 @@ def register_recording_validation(app,checks):
     def stop(cid:str):return call(checks.stop,cid)
     @app.post('/api/runtime/recording-checks/{cid}/markers')
     def mark(cid:str,body:ValidationMarker):return call(checks.mark,cid,body.kind)
+    @app.get('/api/runtime/recording-checks/{cid}/timeline')
+    def timeline(cid:str,offset:int=Query(default=0,ge=0,le=100000),limit:int=Query(default=50,ge=1,le=100)):
+        return call(checks.timeline,cid,offset,limit)
     @app.get('/api/runtime/recording-checks/{cid}/report')
     def report(cid:str):return JSONResponse(call(checks.report,cid),headers={'Content-Disposition':'attachment; filename="recording-observation.json"','Cache-Control':'no-store'})

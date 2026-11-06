@@ -375,3 +375,18 @@
     min-width: 76px;
   }
 }
+
+.observation-timeline ol {
+  padding-left: 22px;
+}
+.observation-timeline li {
+  padding: 10px 0;
+  border-top: 1px solid var(--line);
+}
+.observation-timeline li small {
+  color: var(--muted);
+}
+.observation-timeline .quality-review-controls {
+  display: flex;
+  gap: 8px;
+}
