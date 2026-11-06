@@ -194,3 +194,77 @@ def test_failed_sample_write_does_not_erase_the_observation_gap(tmp_path):
     clock[0]=35;checks.sample();report=checks.report(run['id'])
     assert report['sample_count']==2 and report['flags']['observation_gap']==1
     assert report['max_observation_gap_seconds']==35
+
+
+@pytest.mark.parametrize('published',[False,True])
+def test_confirmed_recording_stop_ends_observation_without_false_capture_failure(tmp_path,published):
+    checks,native,recordings,_,process,rid,folder,clock=fixture(tmp_path)
+    run=checks.start(rid);before=(folder/'system.pcm').read_bytes();lease=native.last_seen[rid]
+    recordings.write(folder/'capture.json',{'state':'stopped','duration':1,'error':'','system_frames':16000})
+    if published:
+        session=recordings.read(rid);session['state']='completed';recordings.write(folder/'session.json',session)
+    process.poll.return_value=0;clock[0]=5;checks.sample()
+    report=checks.report(run['id'])
+    assert report['state']=='stopped' and report['end_reason']=='recording_stopped'
+    assert report['sample_count']==2 and report['elapsed_seconds']==5
+    assert report['last_sample']['stop_confirmed'] is True
+    assert 'capture_not_running' not in report['flags'] and 'capture_ended' not in report['flags']
+    assert not report['target_elapsed'] and not report['audio_content_validated']
+    assert checks.stop(run['id'])['end_reason']=='recording_stopped'
+    clock[0]=10;checks.sample();assert checks.get(run['id'])['sample_count']==2
+    assert before==(folder/'system.pcm').read_bytes() and native.last_seen[rid]==lease
+    process.stdin.write.assert_not_called();process.terminate.assert_not_called()
+
+
+@pytest.mark.parametrize('metadata,exit_code,published',[
+    ({'state':'failed','error':'private raw failure'},0,True),
+    ({'state':'recording'},0,True),
+    ({'state':'stopped','error':'private raw failure'},0,False),
+    ({'state':'stopped','error':''},9,False),
+    ({'state':'stopped','error':''},-9,False),
+    ({'state':'stopped','error':'','diagnostics':{'version':1,'failure_stage':'storage'}},0,False),
+])
+def test_publish_or_zero_exit_does_not_hide_unconfirmed_capture_end(tmp_path,metadata,exit_code,published):
+    checks,_,recordings,_,process,rid,folder,clock=fixture(tmp_path);run=checks.start(rid)
+    recordings.write(folder/'capture.json',{'duration':1,'system_frames':16000,**metadata})
+    if published:
+        session=recordings.read(rid);session['state']='completed';recordings.write(folder/'session.json',session)
+    # The health projection reads the persisted exit evidence without controlling capture.
+    if exit_code!=-9:recordings.write(folder/'capture-exit.json',{'exit_code':exit_code,'observed_at':1005})
+    process.poll.return_value=exit_code;clock[0]=5;checks.sample();report=checks.report(run['id'])
+    assert report['state']=='interrupted' and report['end_reason']=='capture_not_running'
+    assert report['last_sample']['stop_confirmed'] is False
+    assert report['flags']['capture_not_running']==1
+    assert 'private raw' not in json.dumps(report)
+
+
+def test_clean_stop_on_target_boundary_is_recording_end_not_target_success(tmp_path):
+    checks,_,recordings,_,process,rid,folder,clock=fixture(tmp_path);run=checks.start(rid,60)
+    recordings.write(folder/'capture.json',{'state':'stopped','duration':1,'system_frames':16000})
+    process.poll.return_value=0;clock[0]=60;checks.sample()
+    report=checks.report(run['id'])
+    assert report['state']=='stopped' and report['end_reason']=='recording_stopped'
+    assert not report['target_elapsed'] and report['flags']['observation_gap']==1
+
+
+def test_clean_capture_end_keeps_previous_and_terminal_asr_failures(tmp_path,monkeypatch):
+    checks,_,recordings,runtime,process,rid,folder,clock=fixture(tmp_path)
+    original=runtime.read
+    def view(key):
+        result=original(key);result['asr']['state']='failed';return result
+    monkeypatch.setattr(runtime,'read',view);run=checks.start(rid)
+    recordings.write(folder/'capture.json',{'state':'stopped','duration':1,'system_frames':16000})
+    process.poll.return_value=0;clock[0]=5;checks.sample();report=checks.report(run['id'])
+    assert report['end_reason']=='recording_stopped' and report['flags']['asr_attention']==2
+    assert not report['audio_content_validated']
+
+
+def test_stopped_asr_after_confirmed_recording_end_is_not_a_new_asr_failure(tmp_path,monkeypatch):
+    checks,_,recordings,runtime,process,rid,folder,clock=fixture(tmp_path)
+    run=checks.start(rid);original=runtime.read
+    def view(key):
+        result=original(key);result['asr']['state']='stopped';return result
+    monkeypatch.setattr(runtime,'read',view)
+    recordings.write(folder/'capture.json',{'state':'stopped','duration':1,'system_frames':16000})
+    process.poll.return_value=0;clock[0]=5;checks.sample();report=checks.report(run['id'])
+    assert report['end_reason']=='recording_stopped' and 'asr_attention' not in report['flags']

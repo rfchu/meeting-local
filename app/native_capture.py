@@ -19,6 +19,12 @@ class NativeCapture:
             process=self.processes.get(rid)
             return process is not None and process.poll() is None
 
+    def exit_code(self,rid):
+        """Read an owned process exit without persisting events or renewing the page lease."""
+        with self.lock:
+            process=self.processes.get(rid)
+            return process.poll() if process is not None else None
+
     def available(self):return platform.system()=='Darwin' and HELPER.is_file()
 
     def capability(self):

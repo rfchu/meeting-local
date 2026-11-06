@@ -29,3 +29,35 @@ export const observationFlags: Record<string, string> = {
   native_counters_reset: "内部计数出现回退",
   audio_file_shrank: "音轨文件大小回退",
 };
+
+export function observationEndReason(reason: string | null | undefined) {
+  const reasons: Record<string, string> = {
+    target_elapsed: "已达到目标观察时长；录音不受影响。",
+    user_stopped_observation: "你已停止观察；此操作不会停止录音。",
+    recording_stopped:
+      "采集器已确认停止，观察随录音结束。仍需核对保存结果与回听。",
+    capture_not_running: "未观察到运行中的采集进程，无法确认是否正常停止。",
+    capture_ended: "采集状态已结束或中断，未获得正常停止确认。",
+    service_restart: "服务重启后未接续观察；中间状态未知。",
+    service_shutdown: "服务关闭时结束观察；不代表录音已正常保存。",
+    observer_not_attached: "观察未能接续计时，已结束；中间状态未知。",
+  };
+  return reason
+    ? reasons[reason] || "结束原因未识别，请核对保留采样。"
+    : "未记录结束原因，请核对保留采样。";
+}
+
+export function observationStateLabel(state: string, reason?: string | null) {
+  if (state === "stopped" && reason === "recording_stopped")
+    return "录音已结束，观察已停止";
+  return (
+    (
+      {
+        observing: "观察中",
+        completed: "目标时长已观察，待回听核验",
+        stopped: "已停止观察",
+        interrupted: "观察已中断",
+      } as Record<string, string>
+    )[state] || "状态待核对"
+  );
+}

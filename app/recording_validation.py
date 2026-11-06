@@ -96,10 +96,16 @@ class RecordingValidation:
                     previous_bytes=summary.get('last_sample',{}).get('saved_bytes')
                     sample['file_growth_bytes']=sample['saved_bytes']-previous_bytes if type(previous_bytes) is int and type(sample['saved_bytes']) is int else None
                     if sample['file_growth_bytes'] is not None and sample['file_growth_bytes']<0:flags.append('audio_file_shrank')
-                    if alive and sample['capture'] in ('stopped','interrupted'):state='interrupted';summary['end_reason']='capture_ended';flags.append('capture_ended')
+                    # Published audio alone does not prove that the helper stopped cleanly.
+                    # Only explicit stopped metadata without known failure confirms this boundary.
+                    sample['stop_confirmed']=view['capture'].get('stop_confirmed') is True
+                    if not alive and sample['stop_confirmed'] and sample['capture']=='stopped':
+                        state='stopped';summary['end_reason']='recording_stopped';flags.remove('capture_not_running')
+                    elif alive and sample['capture'] in ('stopped','interrupted') and not sample['stop_confirmed']:
+                        state='interrupted';summary['end_reason']='capture_ended';flags.append('capture_ended')
                     if sample['capture']=='unknown':flags.append('capture_unknown')
                     if sample['storage'] in ('unconfirmed','failed'):flags.append('storage_unconfirmed')
-                    if sample['asr'] in ('failed','stopped'):flags.append('asr_attention')
+                    if sample['asr']=='failed' or (sample['asr']=='stopped' and summary.get('end_reason')!='recording_stopped'):flags.append('asr_attention')
                     if sample['capture']=='recording' and sample['asr'] not in ('disabled','failed','stopped') and (sample['timeline_seconds'] or 0)-sample['covered_seconds']>60:flags.append('asr_lag_observed')
                     for track in view['capture'].get('tracks',[]):
                         if track['name'] in ('system','microphone') and track['state']=='no_data':flags.append(track['name']+'_no_data')

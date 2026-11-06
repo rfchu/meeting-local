@@ -2,6 +2,8 @@ import ObservationTimeline from "./ObservationTimeline";
 import {
   observationMarkers as markers,
   observationFlags as flags,
+  observationEndReason,
+  observationStateLabel,
 } from "./recordingValidationLabels";
 import type { NativeCaptureDiagnostics } from "../../types";
 import { useEffect, useState } from "react";
@@ -60,12 +62,6 @@ const stages: Record<string, string> = {
   storage: "文件保存",
   timeline_limit: "时间轴长度限制",
   unknown: "未识别",
-};
-const states: Record<string, string> = {
-  observing: "观察中",
-  completed: "目标时长已观察，待回听核验",
-  stopped: "已停止观察",
-  interrupted: "观察已中断",
 };
 export default function RecordingValidationPanel() {
   const client = useQueryClient();
@@ -186,8 +182,11 @@ export default function RecordingValidationPanel() {
               {item.state === "observing" &&
               (!item.status_fresh || now - item.updated_at > 20)
                 ? "观察状态未更新，请检查服务"
-                : states[item.state] || "状态待核对"}
+                : observationStateLabel(item.state, item.end_reason)}
             </summary>
+            {item.state !== "observing" && (
+              <p role="status">{observationEndReason(item.end_reason)}</p>
+            )}
             <p>
               观察 {clock(item.elapsed_seconds)} / {clock(item.target_seconds)}{" "}
               · {item.sample_count} 次采样 · {item.marker_count} 条现场标记 ·
