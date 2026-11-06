@@ -12,6 +12,7 @@ def project(health,session,live,ranges,last_events,write=None):
     if capture not in ('starting','recording','paused','unknown','interrupted','stopped'):capture='unknown'
     audio=health['audio'];saved=audio['saved_bytes']>0
     storage='saved' if published and saved else 'missing' if published else 'partial' if audio['missing_chunk_count'] else 'writing' if saved and capture in ('recording','paused','starting') else 'available' if saved else 'waiting'
+    if native and not published and capture=='recording' and any(t.get('file_state')=='unconfirmed' for t in health['capture'].get('tracks',[])):storage='unconfirmed'
     # A failed write stays visible until the next explicitly successful write.
     if (write=='storage.failed' or health.get('capture_failure_code')=='storage_failed') and not published:storage='failed'
     engine=session.get('draft_engine')

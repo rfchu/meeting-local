@@ -751,10 +751,12 @@ export default function RecordingDialog({
         setSaveStatus(
           status.health?.stalled
             ? `采集心跳未更新，最后确认位置 ${clock(status.duration)}；无法确认仍在采集`
-            : status.state === "starting"
-              ? "等待 macOS 采集权限…"
-              : status.error ||
-                `原生音轨保存中 · 电脑 ${((status.system_frames || 0) / 16000).toFixed(1)}s · 麦克风 ${((status.microphone_frames || 0) / 16000).toFixed(1)}s`,
+            : status.health?.tracks.some((t) => t.file_state === "unconfirmed")
+              ? "音轨文件更新待核对，请检查音轨与磁盘，已有文件保留"
+              : status.state === "starting"
+                ? "等待 macOS 采集权限…"
+                : status.error ||
+                  `音轨文件末端 · ${status.health?.tracks.map((t) => `${t.name === "system" ? "电脑" : "麦克风"} ${t.saved_seconds.toFixed(1)}s`).join(" · ") || "待核对"}`,
         );
         if (
           ["failed", "interrupted", "stopped"].includes(status.state) &&
@@ -1645,7 +1647,9 @@ export default function RecordingDialog({
         captureSource !== "browser" &&
         (captureHealth?.stalled ||
           nativeUnavailable ||
-          captureHealth?.tracks.some((t) => t.state === "no_data")) && (
+          captureHealth?.tracks.some(
+            (t) => t.state === "no_data" || t.file_state === "unconfirmed",
+          )) && (
           <section
             className="recording-end-guide"
             role="alert"
@@ -1657,11 +1661,15 @@ export default function RecordingDialog({
                   ? "暂时无法连接录音服务"
                   : captureHealth?.stalled
                     ? "采集心跳停止更新"
-                    : "部分音轨未收到音频"}
+                    : captureHealth?.tracks.some(
+                          (t) => t.file_state === "unconfirmed",
+                        )
+                      ? "音轨保存状态待核对"
+                      : "部分音轨未收到音频"}
               </strong>
               <span>
-                最后确认位置 {clock(accruedRef.current)}
-                。已落盘的音轨保留；请检查麦克风、系统音源及其他软件的设备使用，状态恢复后会自动更新。
+                采集上报位置 {clock(accruedRef.current)}
+                。已有音轨文件保留；请检查输入设备、其他软件的设备使用及磁盘空间，状态恢复后会自动更新。
               </span>
             </div>
             <button onClick={() => setInspectorOpen(true)}>检查运行详情</button>
@@ -1853,7 +1861,7 @@ export default function RecordingDialog({
                       (captureHealth?.stalled || nativeUnavailable)
                         ? "已保存的原音保留，当前采集状态异常；请检查上方提示。"
                         : recordOnly
-                          ? "录音正在独立保存。配置识别模型后，可在会后生成文字稿。"
+                          ? "本次未开启实时识别，请关注下方音轨与文件状态。会后可配置模型生成文字稿。"
                           : responsiveMode &&
                               draftEngine === "qwen" &&
                               streamEnabled

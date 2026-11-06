@@ -40,3 +40,11 @@ test('An alive capture heartbeat cannot hide missing microphone audio',()=>{
  assert.match(lifecycleLabel('microphone_input.no_data'),/麦克风音轨/);
  assert.match(lifecycleLabel('page.detached'),/继续托管/);
 });
+
+test('Unconfirmed disk progress is visible even while audio callbacks are healthy',()=>{
+ const view=recordingStatus({...runtime,storage:{...runtime.storage,state:'unconfirmed'}},'recording',false);
+ assert.equal(view.label,'录音保存待核对');
+ assert.match(lifecycleLabel('storage.unconfirmed'),/文件：保存状态待核对/);
+ assert.match(lifecycleLabel('service.observation_gap'),/观测出现较长间隔/);
+ assert.equal(recordingStatus({...runtime,storage:{...runtime.storage,state:'unconfirmed'}},'recording',true).label,'状态未知');
+});

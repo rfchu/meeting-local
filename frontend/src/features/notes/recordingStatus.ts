@@ -4,6 +4,7 @@ export function lifecycleLabel(code: string) {
   const events: Record<string, string> = {
     "page.detached": "页面已失联，原生采集继续托管，请返回核对音轨",
     "page.returned": "页面已恢复连接",
+    "service.observation_gap": "服务观测出现较长间隔，已重新核对录音状态",
     "service.started": "服务已启动",
     "service.shutdown_requested": "服务开始关闭",
     "service.clean_shutdown": "服务已正常关闭",
@@ -44,6 +45,7 @@ export function lifecycleLabel(code: string) {
     failed: "发生失败",
     disabled: "未开启",
     writing: "持续落盘中",
+    unconfirmed: "保存状态待核对，采集上报与文件更新不一致",
     available: "已有内容已落盘",
     partial: "存在缺段",
     saved: "已保存",
@@ -100,10 +102,12 @@ export function recordingStatus(
     label:
       local === "failed" && phase === "saving"
         ? "保存待重试"
-        : phase === "recording" &&
-            runtime?.capture.tracks?.some((t) => t.state === "no_data")
-          ? "录音输入待检查"
-          : phases[phase] || "正在核对状态",
+        : phase === "recording" && runtime?.storage.state === "unconfirmed"
+          ? "录音保存待核对"
+          : phase === "recording" &&
+              runtime?.capture.tracks?.some((t) => t.state === "no_data")
+            ? "录音输入待检查"
+            : phases[phase] || "正在核对状态",
     input:
       state === "recording" &&
       runtime?.capture.tracks?.some((t) => t.state === "no_data")

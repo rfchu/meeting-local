@@ -84,27 +84,29 @@ export default function RecordingHealthPanel({
   const storage =
     inventory?.runtime?.storage.state === "failed"
       ? "写盘失败，已有音频保留，请重试同步"
-      : localFailure || memoryOnly > 0
-        ? memoryOnly > 0
-          ? `保存异常 · ${memoryOnly} 段仅在内存中，请勿关闭页面`
-          : "浏览器暂存异常，请先重试保存，勿关闭页面"
-        : unavailable
-          ? "本机保存状态暂不可用，不能确认同步完成"
-          : !inventory
-            ? "正在核对已存音频…"
-            : native
-              ? inventory.audio.saved_bytes > 0
-                ? `本机音轨已落盘 ${(inventory.audio.saved_bytes / 1048576).toFixed(1)} MB`
-                : "等待首批音轨落盘"
-              : pending === null
-                ? "浏览器暂存状态不可用，请检查运行详情"
-                : pending > 0
-                  ? `${pending} 段待同步 · 浏览器暂存保留`
-                  : inventory.audio.missing_chunk_count > 0
-                    ? `本机缺 ${inventory.audio.missing_chunk_count} 段 · 请重试同步`
-                    : inventory.audio.saved_bytes > 0
-                      ? `本机已落盘 ${(inventory.audio.saved_bytes / 1048576).toFixed(1)} MB`
-                      : "尚无音频落盘，等待首个分段";
+      : inventory?.runtime?.storage.state === "unconfirmed"
+        ? "音轨文件未确认持续更新，请检查音轨与磁盘；已有文件保留"
+        : localFailure || memoryOnly > 0
+          ? memoryOnly > 0
+            ? `保存异常 · ${memoryOnly} 段仅在内存中，请勿关闭页面`
+            : "浏览器暂存异常，请先重试保存，勿关闭页面"
+          : unavailable
+            ? "本机保存状态暂不可用，不能确认同步完成"
+            : !inventory
+              ? "正在核对已存音频…"
+              : native
+                ? inventory.audio.saved_bytes > 0
+                  ? `本机音轨已落盘 ${(inventory.audio.saved_bytes / 1048576).toFixed(1)} MB`
+                  : "等待首批音轨落盘"
+                : pending === null
+                  ? "浏览器暂存状态不可用，请检查运行详情"
+                  : pending > 0
+                    ? `${pending} 段待同步 · 浏览器暂存保留`
+                    : inventory.audio.missing_chunk_count > 0
+                      ? `本机缺 ${inventory.audio.missing_chunk_count} 段 · 请重试同步`
+                      : inventory.audio.saved_bytes > 0
+                        ? `本机已落盘 ${(inventory.audio.saved_bytes / 1048576).toFixed(1)} MB`
+                        : "尚无音频落盘，等待首个分段";
   const asr = inventory?.asr;
   const failures = asr
     ? Object.values(asr).reduce((n, v) => n + v.failed_attempts, 0)

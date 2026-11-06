@@ -63,3 +63,47 @@ def test_record_only_capture_can_be_reattached_without_starting_recognition(tmp_
         assert client.get(f'/api/native-capture/{rid}').status_code==200
         assert rid not in native.detached
         native.processes.clear()
+
+
+def test_fresh_callbacks_do_not_prove_pcm_has_been_saved(tmp_path):
+    import os
+    _,recordings,journal,native,runtime,rid,folder=native_fixture(tmp_path)
+    process=Mock();process.poll.return_value=None;native.processes[rid]=process
+    status={'state':'recording','duration':60,'system_frames':960000,'buffer_age':{'system':0}}
+    recordings.write(folder/'capture.json',status)
+    native.last_seen[rid]=time.monotonic()
+    runtime.observe();view=runtime.read(rid)
+    assert view['capture']['tracks'][0]['state']=='receiving'
+    assert view['capture']['tracks'][0]['reported_seconds']==60
+    assert view['capture']['tracks'][0]['saved_seconds']==1
+    assert view['storage']['state']=='unconfirmed'
+    assert view['storage']['last_saved_seconds']==1
+    runtime.observe()
+    assert [e['code'] for e in journal.events(rid)].count('storage.unconfirmed')==1
+    (folder/'system.pcm').write_bytes(b'\1\0'*960000)
+    runtime.observe();assert runtime.read(rid)['storage']['state']=='writing'
+    assert runtime.read(rid)['storage']['last_saved_seconds']==60
+    # A fresh heartbeat plus unchanged file timestamps also requires investigation.
+    os.utime(folder/'system.pcm',(time.time()-30,)*2)
+    runtime.observe();assert runtime.read(rid)['storage']['state']=='unconfirmed'
+    # Paused or lost inputs must not be mislabeled as failed disk writes.
+    status['state']='paused';recordings.write(folder/'capture.json',status)
+    runtime.observe();assert runtime.read(rid)['storage']['state']=='writing'
+    status.update(state='recording',buffer_age={'system':30})
+    recordings.write(folder/'capture.json',status);runtime.observe()
+    assert runtime.read(rid)['capture']['tracks'][0]['state']=='no_data'
+    assert runtime.read(rid)['storage']['state']!='unconfirmed'
+    process.stdin.write.assert_not_called();process.terminate.assert_not_called()
+
+
+def test_observation_gap_rechecks_without_inventing_a_sleep_cause(tmp_path,monkeypatch):
+    from app.lifecycle import Lifecycle
+    journal=Lifecycle(tmp_path);clock=[100.]
+    monkeypatch.setattr('app.lifecycle.time.monotonic',lambda:clock[0])
+    journal.last_observed=clock[0];calls=[];journal.observer=lambda:calls.append(True)
+    clock[0]+=5;journal.observe_once()
+    clock[0]+=95;journal.observe_once();journal.observe_once()
+    gaps=[e for e in journal.events() if e['code']=='service.observation_gap']
+    assert len(gaps)==1 and gaps[0]['metrics']=={'gap_seconds':95}
+    assert len(calls)==3
+    assert 'sleep' not in str(gaps) and 'device' not in str(gaps)

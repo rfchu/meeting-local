@@ -260,7 +260,14 @@ export interface RecordingRuntime {
   capture: {
     state: string;
     heartbeat_age_seconds: number | null;
-    tracks?: { name: string; state: string; saved_seconds: number }[];
+    tracks?: {
+      name: string;
+      state: string;
+      saved_seconds: number;
+      reported_seconds?: number;
+      file_state?: string;
+      file_age_seconds?: number | null;
+    }[];
   };
   storage: {
     state: string;
@@ -302,6 +309,9 @@ export interface NativeCaptureStatus {
         | "receiving"
         | "waiting";
       saved_seconds: number;
+      reported_seconds?: number;
+      file_state?: string;
+      file_age_seconds?: number | null;
     }[];
   };
   system_frames?: number;

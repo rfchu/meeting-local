@@ -2,10 +2,10 @@
 import fcntl,json,math,os,sqlite3,threading,time,uuid
 
 COMPONENTS={'capture','storage','asr','system_input','microphone_input'}
-STATES={'starting','recording','paused','unknown','interrupted','stopping','stopped','waiting','writing','available','partial','saved','missing','failed','running','behind','disabled','receiving','quiet','no_data','inactive','stalled'}
-CODES={'page.detached','page.returned','service.started','service.shutdown_requested','service.clean_shutdown','service.shutdown_failed','service.previous_unclosed',
+STATES={'starting','recording','paused','unknown','interrupted','stopping','stopped','waiting','writing','available','partial','saved','missing','failed','running','behind','disabled','receiving','quiet','no_data','inactive','stalled','unconfirmed'}
+CODES={'service.observation_gap','page.detached','page.returned','service.started','service.shutdown_requested','service.clean_shutdown','service.shutdown_failed','service.previous_unclosed',
        'recording.created','capture.started','capture.paused','capture.resumed','capture.stop_requested','capture.exited','capture.reconciled','storage.completed','storage.failed'}
-METRICS={'pid','exit_code','saved_bytes','saved_seconds','duration_seconds','saved_chunks','missing_chunks','covered_seconds','heartbeat_age_seconds','previous_last_seen'}
+METRICS={'pid','exit_code','saved_bytes','saved_seconds','duration_seconds','saved_chunks','missing_chunks','covered_seconds','heartbeat_age_seconds','previous_last_seen','gap_seconds'}
 
 
 def metrics_only(values):
@@ -15,7 +15,7 @@ def metrics_only(values):
 class Lifecycle:
     def __init__(self,root):
         self.root=root;self.path=root/'lifecycle.sqlite3';self.run_id=None;self.available=True
-        self.lock=threading.RLock();self.stop=threading.Event();self.thread=None;self.lease=None;self.observer=None
+        self.lock=threading.RLock();self.stop=threading.Event();self.thread=None;self.lease=None;self.observer=None;self.last_observed=None
         try:
             with self.connect() as db:
                 db.executescript('''PRAGMA journal_mode=WAL;
@@ -93,14 +93,22 @@ class Lifecycle:
                     db.execute('DELETE FROM runs WHERE id NOT IN (SELECT id FROM runs ORDER BY started DESC LIMIT 100)')
             except (OSError,sqlite3.Error):self.available=False
         self.record('service.started',pid=os.getpid())
+        self.last_observed=time.monotonic()
         def loop():
-            while not self.stop.wait(5):
-                try:
-                    if self.available:
-                        with self.connect() as db:db.execute('UPDATE runs SET last_seen=? WHERE id=?',(time.time(),self.run_id))
-                    if self.observer:self.observer()
-                except (OSError,ValueError,sqlite3.Error):pass
+            while not self.stop.wait(5):self.observe_once()
         self.thread=threading.Thread(target=loop,daemon=True);self.thread.start()
+
+    def observe_once(self):
+        now=time.monotonic()
+        if self.last_observed is not None and now-self.last_observed>20:
+            # A scheduling gap alone cannot establish sleep, device loss or a crash.
+            self.record('service.observation_gap',gap_seconds=round(now-self.last_observed,1))
+        self.last_observed=now
+        try:
+            if self.available:
+                with self.connect() as db:db.execute('UPDATE runs SET last_seen=? WHERE id=?',(time.time(),self.run_id))
+            if self.observer:self.observer()
+        except (OSError,ValueError,sqlite3.Error):pass
 
     def close(self,clean=True):
         self.stop.set()

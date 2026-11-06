@@ -138,7 +138,22 @@ class NativeCapture:
             elif silence is not None and silence>=10:signal='quiet'
             elif frames:signal='receiving'
             else:signal='waiting'
-            tracks.append({'name':name,'state':signal,'saved_seconds':round(frames/16000,1)})
+            # Callback counters are not evidence that the corresponding PCM file grew.
+            try:
+                info=(path.parent/(name+'.pcm')).stat()
+                saved_frames=info.st_size//2;write_age=max(0,time.time()-info.st_mtime)
+            except FileNotFoundError:saved_frames=0;write_age=None
+            if state=='paused':file_state='paused'
+            elif state!='recording':file_state='inactive'
+            elif stalled:file_state='unknown'
+            elif signal=='no_data':file_state='available' if saved_frames else 'waiting'
+            elif duration>=10 and age is not None and age<10 and frames and (
+                write_age is None or write_age>=10 or frames-saved_frames>32000
+            ):file_state='unconfirmed'
+            else:file_state='available' if signal=='quiet' else 'writing' if saved_frames else 'waiting'
+            tracks.append({'name':name,'state':signal,'saved_seconds':round(saved_frames/16000,1),
+                           'reported_seconds':round(frames/16000,1),'file_state':file_state,
+                           'file_age_seconds':round(write_age,1) if write_age is not None else None})
         return {'stalled':stalled,'heartbeat_age_seconds':round(heartbeat_age,1) if heartbeat_age is not None else None,'tracks':tracks}
 
     def draft_window(self,rid,offset,window_seconds=15,responsive=False,allow_stopped=False,sentence_end=None):
