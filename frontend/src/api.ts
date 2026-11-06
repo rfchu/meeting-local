@@ -1,3 +1,4 @@
+import { RecordingCommandClient } from "./features/notes/recordingCommands";
 import type { ObservationTimelineData } from "./features/management/ObservationTimeline";
 import type { RecordingObservation } from "./features/management/RecordingValidationPanel";
 import type { RecordingQuality, RecordingReviewStatus } from "./types";
@@ -42,20 +43,39 @@ import type {
   NativeCaptureStatus,
 } from "./types";
 
+export class APIError extends Error {
+  constructor(
+    message: string,
+    public status: number,
+    public code?: string,
+  ) {
+    super(message);
+  }
+}
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`/api${path}`, init);
   if (!response.ok) {
     let detail = response.statusText;
+    let code: string | undefined;
     try {
       const body = (await response.json()) as { detail?: unknown };
-      detail =
-        typeof body.detail === "string"
-          ? body.detail
-          : JSON.stringify(body.detail);
+      if (
+        body.detail &&
+        typeof body.detail === "object" &&
+        "message" in body.detail
+      ) {
+        const structured = body.detail as { message: string; code?: string };
+        detail = structured.message;
+        code = structured.code;
+      } else
+        detail =
+          typeof body.detail === "string"
+            ? body.detail
+            : JSON.stringify(body.detail);
     } catch {
       /* retain status text */
     }
-    throw new Error(detail);
+    throw new APIError(detail, response.status, code);
   }
   return response.status === 204
     ? (undefined as T)
@@ -67,6 +87,29 @@ const json = (method: string, body?: unknown): RequestInit => ({
   headers: { "Content-Type": "application/json" },
   body: body === undefined ? undefined : JSON.stringify(body),
 });
+
+const recordingCommands = new RecordingCommandClient(
+  async (id) => {
+    const health = await request<RecordingHealth>(`/recordings/${id}/health`, {
+      signal: AbortSignal.timeout(10000),
+    });
+    const version = health.runtime?.control?.version;
+    if (version == null)
+      throw new Error("本机服务尚未提供录音控制版本，请刷新或更新服务后重试");
+    return version;
+  },
+  (id, body) =>
+    request(`/recordings/${id}/commands`, {
+      ...json("POST", body),
+      signal: AbortSignal.timeout(30000),
+    }),
+  (error) =>
+    error instanceof APIError &&
+    error.status >= 400 &&
+    error.status < 500 &&
+    error.status !== 408 &&
+    error.code !== "command_unconfirmed",
+);
 
 export const api = {
   runtimeTasks: (state: string) =>
@@ -264,10 +307,18 @@ export const api = {
     id: string,
     state: "recording" | "paused" | "stopped" | "interrupted",
   ) =>
-    request(`/recordings/${id}/capture-state`, {
-      ...json("POST", { state }),
-      signal: AbortSignal.timeout(5000),
-    }),
+    recordingCommands.execute(
+      id,
+      (
+        {
+          recording: "resume",
+          paused: "pause",
+          stopped: "stop",
+          interrupted: "report_interrupted",
+        } as const
+      )[state],
+      state,
+    ),
   recordingQuality: (
     id: string,
     view: "all" | "pending" | "gaps" = "all",
@@ -414,11 +465,19 @@ export const api = {
       },
       onPartial,
     ),
-  nativeCommand: (id: string, command: "pause" | "resume" | "stop") =>
-    request<NativeCaptureStatus>(
-      `/native-capture/${id}/command`,
-      json("POST", { command }),
-    ),
+  nativeCommand: async (id: string, command: "pause" | "resume" | "stop") => {
+    const result = await recordingCommands.execute(id, command);
+    const status = result.native;
+    const expected =
+      command === "pause"
+        ? ["paused"]
+        : command === "resume"
+          ? ["recording"]
+          : ["stopped", "interrupted", "failed"];
+    if (!status || !expected.includes(status.state))
+      throw new Error("当前采集状态已变化，请重新核对；未重放旧操作");
+    return status;
+  },
   nativeFinish: (id: string) =>
     request<Meeting>(`/native-capture/${id}/finish`, { method: "POST" }),
   liveCoverage: (id: string, engine: "whisper" | "qwen") =>

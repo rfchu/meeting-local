@@ -31,6 +31,7 @@ from .keep_awake import KeepAwake
 from .recording_health import RecordingHealth
 from .lifecycle import Lifecycle
 from .recording_runtime import RecordingRuntime
+from .recording_commands import RecordingCommands,CommandError,register_recording_commands
 from .recording_validation import RecordingValidation,register_recording_validation
 from .recording_completion import completion_report,recording_quality,recording_quality_summary
 from .meeting_review import MeetingReview
@@ -322,6 +323,9 @@ def create_app(data_dir=None, start_worker=True):
     register_model_preferences(app,store)
     register_task_management(app,store,worker)
     app.state.live_sessions=live_sessions
+    recording_commands=RecordingCommands(recordings,native_capture,live_sessions.pause_boundary)
+    app.state.recording_commands=recording_commands
+    register_recording_commands(app,recording_commands)
     live_overview=LiveOverview(store,recordings,live_results)
     app.state.live_overview=live_overview
     register_overview(app,live_overview)
@@ -762,14 +766,14 @@ def create_app(data_dir=None, start_worker=True):
     @app.post('/api/native-capture/{rid}/command')
     def native_command(rid:str,body:NativeCommandInput):
         try:
-            result=native_capture.command(rid,body.command)
-            if body.command=='pause':live_sessions.pause_boundary(rid,round(result['duration']*16000))
-            return result
+            result=recording_commands.execute(rid,body.command,source='native')
+            return result['native']
         except FileNotFoundError as error:raise HTTPException(404,str(error))
         except (ValueError,RuntimeError) as error:raise HTTPException(409,str(error))
     @app.post('/api/native-capture/{rid}/finish')
     async def native_finish(rid:str):
         try:
+            await run_in_threadpool(recording_commands.execute,rid,'stop',source='native')
             await live_sessions.finish(rid)
             mid=await run_in_threadpool(native_capture.finish,rid);keep_awake.release(rid);return decorated(meeting(mid))
         except FileNotFoundError as error:raise HTTPException(404,str(error))
@@ -883,16 +887,9 @@ def create_app(data_dir=None, start_worker=True):
     @app.post('/api/recordings/{rid}/capture-state')
     def browser_capture_state(rid:str,body:CaptureStateInput):
         try:
-            with recordings.lock:
-                value=recordings.read(rid)
-                if value.get('source')=='macos' or value['state']=='completed':raise ValueError('此会话不能更新浏览器采集状态')
-                if value['state'] in ('stopped','interrupted') and body.state in ('recording','paused'):raise ValueError('已停止的浏览器采集不能重新开启')
-                if value.get('capture_reported') and value['state']==body.state:return {'ok':True}
-                first=not value.get('capture_reported')
-                value['capture_reported']=True
-                value.update(state=body.state,updated=time.time());recordings.write(recordings.folder(rid)/'session.json',value)
-                lifecycle.record('capture.started' if first and body.state=='recording' else {'recording':'capture.resumed','paused':'capture.paused','stopped':'capture.stop_requested','interrupted':'capture.interrupted'}[body.state],rid)
-            return {'ok':True}
+            command={'recording':'resume','paused':'pause','stopped':'stop','interrupted':'report_interrupted'}[body.state]
+            result=recording_commands.execute(rid,command,observed_state=body.state,source='browser')
+            return {'ok':True,'control':result['control']}
         except FileNotFoundError:raise HTTPException(404,'录音会话不存在')
         except ValueError as error:raise HTTPException(409,str(error))
     @app.get('/api/recordings/{rid}/diagnostics')
@@ -929,7 +926,7 @@ def create_app(data_dir=None, start_worker=True):
     @app.post('/api/recordings/{rid}/finish')
     async def finish_recording(rid:str,body:RecordingFinish):
         try:
-            lifecycle.record('capture.stop_requested',rid)
+            await run_in_threadpool(recording_commands.execute,rid,'stop',observed_state='stopped',source='browser')
             await live_sessions.finish(rid)
             mid=await run_in_threadpool(recordings.finish,rid,body.chunk_count);keep_awake.release(rid)
             try:await run_in_threadpool(live_sessions.published,rid)

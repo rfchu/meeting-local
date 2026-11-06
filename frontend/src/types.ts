@@ -255,6 +255,11 @@ export interface LifecycleEvent {
   metrics: Record<string, number | boolean | null>;
 }
 export interface RecordingRuntime {
+  control?: {
+    version: number;
+    status: "idle" | "unconfirmed";
+    pending_command: string | null;
+  };
   schema_version?: number;
   recording_id?: string;
   source?: "native" | "browser";

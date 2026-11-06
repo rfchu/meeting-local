@@ -1,6 +1,7 @@
 """One read-only projection for capture, durable files and confirmed live ASR."""
 import json,time,threading,uuid
 from .live_results import plan_ranges,RATE
+from .recording_commands import control_view
 
 
 def project(health,session,live,ranges,last_events,write=None):
@@ -45,7 +46,7 @@ class RecordingRuntime:
         ranges=self.store.all('SELECT engine,start_frame,end_frame,state FROM live_asr_ranges WHERE recording_id=? ORDER BY rowid',(rid,))
         value=project(health,session,live,ranges,self.journal.events(rid),self.journal.write_state(rid))
         self.sequence+=1
-        return value|{'schema_version':1,'recording_id':rid,'source':health['source'],
+        return value|{'control':control_view(session),'schema_version':1,'recording_id':rid,'source':health['source'],
             'identity':{'recording_id':rid,'live_session_id':rid if live else None,'meeting_id':meeting['id'] if meeting else None},
             'ownership':{'capture':'native_service' if health['source']=='native' else 'browser_page','storage':'local_service','recognition':'local_service'},
             'snapshot':{'scope_id':self.scope_id,'sequence':self.sequence}}
