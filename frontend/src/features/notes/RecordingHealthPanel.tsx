@@ -67,15 +67,17 @@ export default function RecordingHealthPanel({
           ? "采集已中断，可恢复已存内容"
           : state === "paused"
             ? "录音已暂停"
-            : native
-              ? tracks?.tracks.some((t) =>
-                  ["stalled", "no_data"].includes(t.state),
-                )
-                ? "音源异常，请检查声音和权限"
-                : tracks?.tracks.some((t) => t.state === "quiet")
-                  ? "声音较弱，请确认音源"
-                  : "原生采集中 · 详见音轨状态"
-              : "麦克风采集中";
+            : native && unavailable
+              ? "本机状态不可用，不能确认采集仍在继续"
+              : native
+                ? tracks?.tracks.some((t) =>
+                    ["stalled", "no_data"].includes(t.state),
+                  )
+                  ? "音源异常，请检查声音和权限"
+                  : tracks?.tracks.some((t) => t.state === "quiet")
+                    ? "声音较弱，请确认音源"
+                    : "原生采集中 · 详见音轨状态"
+                : "麦克风采集中";
   const storage =
     localFailure || memoryOnly > 0
       ? memoryOnly > 0

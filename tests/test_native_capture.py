@@ -46,6 +46,43 @@ def test_dead_helper_marks_saved_audio_recoverable(capture):
     assert status['state']=='interrupted'
     assert (folder/'system.pcm').stat().st_size==32000
 
+def test_observed_helper_exit_is_persisted_once_without_guessing_cause(capture):
+    from unittest.mock import Mock
+    value,folder=session(capture);rid=value['id']
+    process=Mock();process.poll.return_value=-9;capture.processes[rid]=process
+    (folder/'system.pcm').write_bytes(b'audio')
+    status=capture.status(rid)
+    assert status['state']=='interrupted' and '-9' in status['error']
+    assert '内存' not in status['error'] and '休眠' not in status['error']
+    path=folder/'capture-exit.json';before=path.read_bytes()
+    capture.stop_abandoned();capture.status(rid)
+    assert before==path.read_bytes() and json.loads(before)['exit_code']==-9
+    assert (folder/'system.pcm').read_bytes()==b'audio'
+
+def test_stale_capture_preserves_duration_and_does_not_stop_live_helper(capture):
+    rid,folder=running_window(capture,duration=60)
+    path=folder/'capture.json';os.utime(path,(time.time()-90,time.time()-90))
+    status=capture.status(rid)
+    assert status['state']=='recording' and status['duration']==60
+    assert status['health']['stalled'] and status['health']['heartbeat_age_seconds']>=90
+    assert capture.processes[rid].commands==[]
+
+def test_restart_marks_unowned_recording_interrupted_without_restarting_capture(capture):
+    value,folder=session(capture);rid=value['id'];audio=b'preserved'
+    (folder/'system.pcm').write_bytes(audio)
+    capture.reconcile_interrupted()
+    restored=capture.recordings.read(rid)
+    assert restored['state']=='interrupted' and '未重新开始' in restored['stop_reason']
+    assert not capture.processes and (folder/'system.pcm').read_bytes()==audio
+    before=(folder/'session.json').read_bytes();capture.reconcile_interrupted()
+    assert (folder/'session.json').read_bytes()==before
+
+def test_restart_reconciliation_never_changes_owned_live_capture(capture):
+    rid,folder=running_window(capture)
+    before=(folder/'session.json').read_bytes()
+    capture.reconcile_interrupted()
+    assert before==(folder/'session.json').read_bytes()
+
 class Process:
     def __init__(self,folder):
         self.folder=folder;self.stdin=self;self.stopped=False;self.commands=[]

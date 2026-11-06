@@ -21,12 +21,31 @@
             "source": "s1"
           }
         ],
-        "required": [
-          "日期尚未确定",
-          "周五前交付"
-        ],
         "forbidden": [
           "决定下周一上线"
+        ],
+        "required_rules": [
+          {
+            "kinds": [
+              "question"
+            ],
+            "all": [
+              "日期"
+            ],
+            "patterns_any": [
+              "未.{0,4}(确定|决定)|待定|待确认|未定"
+            ]
+          },
+          {
+            "kinds": [
+              "action"
+            ],
+            "all": [
+              "陈明",
+              "周五",
+              "预览稿"
+            ]
+          }
         ]
       },
       {
@@ -38,29 +57,79 @@
         ],
         "items": [
           {
-            "reuse": "日期尚未确定",
+            "reuse": "上线日期尚未确定",
             "kind": "decision",
             "content": "讨论明确下周三上线。",
             "source": "s2"
           },
           {
-            "reuse": "周五前交付",
+            "reuse": "陈明负责周五前交付预览稿",
             "kind": "action",
             "content": "陈明的预览稿改为下周一交付。",
             "source": "s2"
           }
         ],
-        "required": [
-          "下周三上线",
-          "下周一交付"
-        ],
-        "forbidden": [
-          "日期尚未确定",
-          "周五前交付"
-        ],
         "stable": [
           "下周三上线",
           "下周一交付"
+        ],
+        "required_rules": [
+          {
+            "kinds": [
+              "decision"
+            ],
+            "all": [
+              "下周三",
+              "上线"
+            ]
+          },
+          {
+            "kinds": [
+              "action"
+            ],
+            "all": [
+              "陈明",
+              "下周一",
+              "交付"
+            ]
+          }
+        ],
+        "forbidden_rules": [
+          {
+            "kinds": [
+              "question"
+            ],
+            "all": [
+              "上线",
+              "日期"
+            ]
+          },
+          {
+            "kinds": [
+              "action"
+            ],
+            "all": [
+              "周五"
+            ],
+            "none": [
+              "下周一"
+            ]
+          },
+          {
+            "kinds": [
+              "decision"
+            ],
+            "all": [
+              "上线",
+              "下周一",
+              "调整"
+            ],
+            "none": [
+              "建议",
+              "提议",
+              "未定"
+            ]
+          }
         ]
       },
       {
@@ -77,10 +146,35 @@
             "source": "s3"
           }
         ],
-        "required": [
-          "下周三上线",
-          "下周一交付",
-          "导出样式"
+        "required_rules": [
+          {
+            "kinds": [
+              "decision"
+            ],
+            "all": [
+              "下周三",
+              "上线"
+            ]
+          },
+          {
+            "kinds": [
+              "action"
+            ],
+            "all": [
+              "下周一",
+              "预览稿"
+            ]
+          },
+          {
+            "kinds": [
+              "topic",
+              "point"
+            ],
+            "all": [
+              "导出",
+              "样式"
+            ]
+          }
         ]
       }
     ]
@@ -107,18 +201,38 @@
             "source": "s1"
           }
         ],
-        "required": [
-          "测试清单",
-          "日期还未决定"
-        ],
         "reviews": [
           {
-            "contains": "测试清单",
+            "source": "s1",
+            "kind": "action",
             "state": "confirmed"
           },
           {
-            "contains": "日期还未决定",
+            "source": "s1",
+            "kind": "question",
             "state": "dismissed"
+          }
+        ],
+        "required_rules": [
+          {
+            "kinds": [
+              "action"
+            ],
+            "all": [
+              "张敏",
+              "测试清单"
+            ]
+          },
+          {
+            "kinds": [
+              "question"
+            ],
+            "all": [
+              "日期"
+            ],
+            "patterns_any": [
+              "未.{0,4}(确定|决定)|待定|待确认|未定"
+            ]
           }
         ]
       },
@@ -141,12 +255,41 @@
             "source": "s1"
           }
         ],
-        "required": [
-          "张敏整理测试清单",
-          "测试范围"
-        ],
         "forbidden": [
           "日期还未决定"
+        ],
+        "required_rules": [
+          {
+            "kinds": [
+              "action"
+            ],
+            "all": [
+              "张敏",
+              "测试清单"
+            ]
+          },
+          {
+            "kinds": [
+              "topic",
+              "point"
+            ],
+            "all": [
+              "测试",
+              "范围"
+            ]
+          }
+        ],
+        "forbidden_rules": [
+          {
+            "kinds": [
+              "question"
+            ],
+            "any": [
+              "发布日期",
+              "上线日期",
+              "发布的日期"
+            ]
+          }
         ]
       },
       {
@@ -165,13 +308,42 @@
           }
         ],
         "expect_failure": true,
-        "required": [
-          "张敏整理测试清单",
-          "测试范围"
-        ],
         "forbidden": [
           "李华",
           "必须上线"
+        ],
+        "required_rules": [
+          {
+            "kinds": [
+              "action"
+            ],
+            "all": [
+              "张敏",
+              "测试清单"
+            ]
+          },
+          {
+            "kinds": [
+              "topic",
+              "point"
+            ],
+            "all": [
+              "测试",
+              "范围"
+            ]
+          }
+        ],
+        "forbidden_rules": [
+          {
+            "kinds": [
+              "question"
+            ],
+            "any": [
+              "发布日期",
+              "上线日期",
+              "发布的日期"
+            ]
+          }
         ]
       }
     ]
@@ -208,9 +380,21 @@
           "15万元"
         ],
         "forbidden": [
-          "已批准"
+          "已批准",
+          "被否决",
+          "已否决",
+          "被拒绝"
         ],
-        "expected_count": 2
+        "forbidden_rules": [
+          {
+            "kinds": [
+              "decision"
+            ],
+            "all": [
+              "预算"
+            ]
+          }
+        ]
       }
     ]
   }

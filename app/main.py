@@ -248,6 +248,7 @@ def create_app(data_dir=None, start_worker=True):
         if start_worker: worker.start()
         resident.start_monitor()
         store.execute("UPDATE live_asr_ranges SET state='failed',error='服务重启，识别未完成；快速完成会补识别该范围' WHERE state='running'")
+        await run_in_threadpool(native_capture.reconcile_interrupted)
         await live_sessions.resume()
         native_capture.start_monitor()
         capture_probes.start_monitor()
@@ -265,6 +266,10 @@ def create_app(data_dir=None, start_worker=True):
         local_embedding().release()
     app=FastAPI(title='听记 · Local Meeting',lifespan=lifespan)
     app.state.store=store; app.state.worker=worker
+    @app.get('/api/runtime/service')
+    def service_identity():
+        return {'pid':os.getpid(),'instance_id':os.getenv('TINGJI_INSTANCE_ID'),
+                'mode':os.getenv('TINGJI_SERVICE_MODE','foreground')}
     recordings=RecordingStore(store)
     native_capture=NativeCapture(store,recordings)
     capture_probes=CaptureProbe(native_capture)

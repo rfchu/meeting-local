@@ -74,6 +74,22 @@ def test_native_inspection_does_not_renew_capture_heartbeat(inventory):
     assert report['audio']['tracks'][0]['saved_seconds']==1
     assert 'private-error' not in json.dumps(report)
 
+def test_stale_capture_and_exit_code_are_reported_without_touching_audio(inventory):
+    import os,time
+    store,recordings,native,health=inventory
+    session=recordings.create('audio/wav');rid=session['id'];session['source']='macos'
+    recordings.write(recordings.folder(rid)/'session.json',session)
+    folder=recordings.folder(rid);path=folder/'capture.json'
+    recordings.write(path,{'state':'recording','duration':649})
+    (folder/'system.pcm').write_bytes(b'saved-audio')
+    recordings.write(folder/'capture-exit.json',{'exit_code':-9,'private_error':'secret'})
+    os.utime(path,(time.time()-180,time.time()-180));before=path.read_bytes()
+    report=health.snapshot(rid)
+    assert report['capture']['heartbeat_stale'] and report['capture']['heartbeat_age_seconds']>=180
+    assert report['capture']['exit_code']==-9 and 'capture_heartbeat_stale' in report['warning_codes']
+    assert report['audio']['recoverable'] and 'secret' not in json.dumps(report)
+    assert path.read_bytes()==before and (folder/'system.pcm').read_bytes()==b'saved-audio'
+
 
 def test_preview_overlap_and_failures_do_not_inflate_confirmed_coverage(inventory):
     store,recordings,_,health=inventory

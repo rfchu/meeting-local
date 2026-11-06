@@ -259,6 +259,7 @@ export interface NativeCaptureStatus {
   error: string;
   health?: {
     stalled: boolean;
+    heartbeat_age_seconds?: number | null;
     tracks: {
       name: "system" | "microphone";
       state:

@@ -36,6 +36,7 @@ import RecordingWaveform from "./RecordingWaveform";
 import RecordingHealthPanel from "./RecordingHealthPanel";
 import RecordingCompletionPanel from "./RecordingCompletionPanel";
 import RecordingEndGuide, { useRecordingEnd } from "./RecordingEndGuide";
+import { nativeCaptureSeconds } from "./nativeCaptureClock";
 import { clientRecordingDiagnostics } from "./recordingInventory";
 import { stopRecorder } from "./stopRecorder";
 import LiveDraftList from "./LiveDraftList";
@@ -168,6 +169,8 @@ export default function RecordingDialog({
   const [silenceReminder, setSilenceReminder] = useState(
     preferences.silenceReminder,
   );
+  const [nativeUnavailable, setNativeUnavailable] = useState(false);
+  const nativeHealthyRef = useRef(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [inspectorOpen, setInspectorOpen] = useState(false),
     [noteOptionsOpen, setNoteOptionsOpen] = useState(false);
@@ -540,10 +543,17 @@ export default function RecordingDialog({
   };
 
   const currentSeconds = () =>
-    accruedRef.current +
-    (stateRef.current === "recording"
-      ? (performance.now() - activeSinceRef.current) / 1000
-      : 0);
+    sessionRef.current?.source === "macos"
+      ? nativeCaptureSeconds(
+          accruedRef.current,
+          activeSinceRef.current,
+          performance.now(),
+          stateRef.current === "recording" && nativeHealthyRef.current,
+        )
+      : accruedRef.current +
+        (stateRef.current === "recording"
+          ? (performance.now() - activeSinceRef.current) / 1000
+          : 0);
 
   const checkCapture = async () => {
     setCheckingCapture(true);
@@ -686,6 +696,9 @@ export default function RecordingDialog({
         if (!active || ["saving", "finished"].includes(stateRef.current))
           return;
         accruedRef.current = status.duration;
+        nativeHealthyRef.current =
+          status.state === "recording" && !status.health?.stalled;
+        setNativeUnavailable(false);
         activeSinceRef.current = performance.now();
         setElapsed(status.duration);
         setCaptureHealth(status.health);
@@ -708,9 +721,11 @@ export default function RecordingDialog({
           setState(status.state as "recording" | "paused");
         }
         setSaveStatus(
-          status.state === "starting"
-            ? "等待 macOS 采集权限…"
-            : status.error ||
+          status.health?.stalled
+            ? `采集心跳未更新，最后确认位置 ${clock(status.duration)}；无法确认仍在采集`
+            : status.state === "starting"
+              ? "等待 macOS 采集权限…"
+              : status.error ||
                 `原生音轨保存中 · 电脑 ${((status.system_frames || 0) / 16000).toFixed(1)}s · 麦克风 ${((status.microphone_frames || 0) / 16000).toFixed(1)}s`,
         );
         if (
@@ -722,6 +737,8 @@ export default function RecordingDialog({
           toast(status.error || "采集已停止，可以恢复已有录音");
         }
       } catch (error) {
+        nativeHealthyRef.current = false;
+        if (active) setNativeUnavailable(true);
         if (active)
           setSaveStatus(`采集状态暂时不可用：${(error as Error).message}`);
       } finally {
@@ -1588,6 +1605,28 @@ export default function RecordingDialog({
         </div>
       </div>
       <RecordingEndGuide guide={endGuide} />
+      {recording &&
+        captureSource !== "browser" &&
+        (captureHealth?.stalled || nativeUnavailable) && (
+          <section
+            className="recording-end-guide"
+            role="alert"
+            aria-label="采集状态异常"
+          >
+            <div>
+              <strong>
+                {nativeUnavailable
+                  ? "暂时无法连接录音服务"
+                  : "采集心跳停止更新"}
+              </strong>
+              <span>
+                最后确认位置 {clock(accruedRef.current)}
+                。已落盘的音轨保留，当前不能确认录音仍在继续；状态恢复后会自动更新。
+              </span>
+            </div>
+            <button onClick={() => setInspectorOpen(true)}>检查运行详情</button>
+          </section>
+        )}
       {state === "idle" ? (
         <RecordingSetupBar
           source={sourceLabel}
@@ -1769,13 +1808,17 @@ export default function RecordingDialog({
                     canAddNote={recording}
                     partial={partialDraft}
                     emptyText={
-                      recordOnly
-                        ? "录音正在独立保存。配置识别模型后，可在会后生成文字稿。"
-                        : responsiveMode &&
-                            draftEngine === "qwen" &&
-                            streamEnabled
-                          ? "约 3 秒开始预览，后端根据识别速度调整更新节奏。"
-                          : undefined
+                      recording &&
+                      captureSource !== "browser" &&
+                      (captureHealth?.stalled || nativeUnavailable)
+                        ? "已保存的原音保留，当前采集状态异常；请检查上方提示。"
+                        : recordOnly
+                          ? "录音正在独立保存。配置识别模型后，可在会后生成文字稿。"
+                          : responsiveMode &&
+                              draftEngine === "qwen" &&
+                              streamEnabled
+                            ? "约 3 秒开始预览，后端根据识别速度调整更新节奏。"
+                            : undefined
                     }
                     onAddNote={(draft) =>
                       setNotes((old) => [

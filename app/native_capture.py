@@ -36,10 +36,27 @@ class NativeCapture:
                 self.stop_abandoned()
         self.monitor=threading.Thread(target=loop,daemon=True);self.monitor.start()
 
+    def reconcile_interrupted(self):
+        """A new backend never claims an old native stream is still being captured."""
+        with self.lock,self.recordings.lock:
+            for path in self.recordings.root.glob('*/session.json'):
+                try:
+                    session=json.loads(path.read_text());rid=session['id']
+                    if session.get('source')!='macos' or session.get('state')=='completed' or self.is_running(rid):continue
+                    if self.store.one('SELECT id FROM meetings WHERE id=?',(rid,)):continue
+                    if session.get('state') in ('recording','paused','starting'):
+                        session.update(state='interrupted',interrupted_at=time.time())
+                        session.setdefault('stop_reason','服务恢复时无法接管原采集进程，录音未重新开始；已保存音轨可恢复')
+                        RecordingStore.write(path,session)
+                except (OSError,ValueError,KeyError):continue
+
     def stop_abandoned(self):
         # Background browser tabs may throttle their heartbeat to a minute.
         with self.lock:
             for rid in list(self.processes):
+                if self.processes[rid].poll() is not None:
+                    self.observe_exit(rid)
+                    continue
                 if time.monotonic()-self.last_seen.get(rid,0)>300:
                     try:
                         self.record_stop_reason(rid,'页面失联超过 5 分钟，已自动停止采集；可以恢复已保存的录音')
@@ -51,6 +68,19 @@ class NativeCapture:
         with self.recordings.lock:
             session=self.recordings.read(rid);session['stop_reason']=reason
             RecordingStore.write(self.recordings.folder(rid)/'session.json',session)
+
+    def observe_exit(self,rid):
+        """Persist an observed exit once. Never infer OOM/sleep from a signal alone."""
+        with self.lock:
+            process=self.processes.get(rid)
+            code=process.poll() if process else None
+            if code is None:return None
+            try:path=self.recordings.folder(rid)/'capture-exit.json'
+            except OSError:return code
+            if not path.exists():
+                try:RecordingStore.write(path,{'exit_code':code,'observed_at':time.time()})
+                except OSError:pass # A full disk must not hide the known process exit.
+            return code
 
     def start(self,microphone=True):
         with self.lock:
@@ -73,8 +103,10 @@ class NativeCapture:
         try:status=json.loads(path.read_text())
         except (FileNotFoundError,ValueError):status={'state':'starting','duration':0,'error':''}
         process=self.processes.get(rid)
-        if (not process or process.poll() is not None) and status['state'] in ('starting','recording','paused'):
-            status.update(state='interrupted',error='采集进程已退出，已保存的音轨可恢复')
+        code=self.observe_exit(rid) if process else None
+        if (not process or code is not None) and status['state'] in ('starting','recording','paused'):
+            detail=f'（退出码 {code}）' if code is not None else ''
+            status.update(state='interrupted',error=f'采集进程已退出{detail}，已保存的音轨可恢复')
         reason=session.get('stop_reason') or self.stop_reasons.get(rid)
         if reason:status['error']=status.get('error') or reason
         # Disk heartbeat is independent of browser polling. Do not mistake silence for a crash.
@@ -84,7 +116,8 @@ class NativeCapture:
     @staticmethod
     def health(session,status,path):
         state=status['state'];duration=status.get('duration',0)
-        stalled=state=='recording' and path.exists() and time.time()-path.stat().st_mtime>10
+        heartbeat_age=max(0,time.time()-path.stat().st_mtime) if path.exists() else None
+        stalled=state=='recording' and heartbeat_age is not None and heartbeat_age>10
         tracks=[]
         for name in ('system','microphone') if session.get('include_microphone') else ('system',):
             frames=status.get(name+'_frames',0)
@@ -98,7 +131,7 @@ class NativeCapture:
             elif frames:signal='receiving'
             else:signal='waiting'
             tracks.append({'name':name,'state':signal,'saved_seconds':round(frames/16000,1)})
-        return {'stalled':stalled,'tracks':tracks}
+        return {'stalled':stalled,'heartbeat_age_seconds':round(heartbeat_age,1) if heartbeat_age is not None else None,'tracks':tracks}
 
     def draft_window(self,rid,offset,window_seconds=15,responsive=False,allow_stopped=False,sentence_end=None):
         """Read a bounded snapshot from original PCM; never advance shared cursors."""

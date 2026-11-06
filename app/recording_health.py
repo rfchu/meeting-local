@@ -72,9 +72,18 @@ class RecordingHealth:
         if not saved_bytes:warnings.append('no_saved_audio')
         if missing and not native and not completed:warnings.append('missing_chunks')
         if native and not running and not completed:warnings.append('capture_not_running')
+        heartbeat_age=round(max(0,time.time()-(folder/'capture.json').stat().st_mtime),1) if native and (folder/'capture.json').exists() else None
+        heartbeat_stale=bool(native and not completed and capture.get('state')=='recording' and heartbeat_age is not None and heartbeat_age>10)
+        if heartbeat_stale:warnings.append('capture_heartbeat_stale')
+        exit_code=None
+        try:
+            observed=json.loads((folder/'capture-exit.json').read_text()).get('exit_code')
+            if type(observed) is int:exit_code=observed
+        except (OSError,ValueError,AttributeError):pass
         return {'schema_version':1,'source':'native' if native else 'browser','state':state,
                 'duration_seconds':round(duration,2),'native_running':bool(running),
                 'metadata_age_seconds':round(max(0,time.time()-number(session.get('updated'))),1),
+                'capture':{'heartbeat_age_seconds':heartbeat_age,'heartbeat_stale':heartbeat_stale,'exit_code':exit_code},
                 'audio':{'saved_bytes':saved_bytes,'saved_chunks':sum(size>0 for size in parts.values()),
                          'expected_chunks':expected,'missing_chunk_count':len(missing) if not completed else 0,
                          'missing_chunk_indices':missing[:50] if not completed else [],
