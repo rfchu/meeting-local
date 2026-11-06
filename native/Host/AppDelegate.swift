@@ -1,13 +1,27 @@
 import AppKit
 
-final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
-    private let configuration: HostConfiguration
+final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDelegate {
+    private var configuration: HostConfiguration
+    private let defaults: HostConfiguration
+    private let preferences: HostPreferences
+    private var loaded: HostConfigurationLoad
+    private var settings: HostSettingsController?
+    private var activationObserver: NSObjectProtocol?
+    private var statusItem: NSStatusItem?
+    private var menuStatus: NSMenuItem?
+    private var menuOpen: NSMenuItem?
+    private var menuStart: NSMenuItem?
+    private var menuSettings: NSMenuItem?
+    private var menuRefresh: NSMenuItem?
+    private var configurationButton: NSButton?
     private let client = ServiceClient()
     private let starter = ServiceStarter()
     private var generation = ProbeGeneration()
     private var probing = false
+    private var opening = false
     private var starting = false
     private var startupDeadline: Date?
+    private var configurationGeneration = 0
     private var timer: Timer?
     private var state = ConnectionState.checking
     private var window: NSWindow!
@@ -18,19 +32,32 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private let startButton = NSButton(title: "启动本机服务", target: nil, action: nil)
     private let refreshButton = NSButton(title: "重新检查", target: nil, action: nil)
 
-    init(configuration: HostConfiguration) { self.configuration = configuration; super.init() }
+    init(defaults: HostConfiguration, loaded: HostConfigurationLoad, preferences: HostPreferences) {
+        self.configuration = loaded.configuration; self.defaults = defaults; self.loaded = loaded; self.preferences = preferences; super.init()
+    }
     func applicationDidFinishLaunching(_ notification: Notification) {
-        buildMenu(); buildWindow(); probe()
-        timer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in self?.probe() }
+        buildMenu(); buildWindow(); buildStatusItem(); probe()
+        activationObserver = DistributedNotificationCenter.default().addObserver(forName: HostInstanceLock.activationName(preferences: preferences), object: nil, queue: .main) { [weak self] _ in self?.showWindow() }
+        timer = Timer(timeInterval: 5, repeats: true) { [weak self] _ in self?.probe() }
+        if let timer { RunLoop.main.add(timer, forMode: .common) }
         NSApp.activate(ignoringOtherApps: true)
     }
-    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard settings?.isPresented == true && settings?.hasUnsavedChanges == true else { return .terminateNow }
+        let alert = NSAlert(); alert.messageText = "连接设置尚未保存"
+        alert.informativeText = "继续编辑，或放弃本次修改并退出宿主。服务会继续运行。"
+        alert.addButton(withTitle: "继续编辑"); alert.addButton(withTitle: "放弃修改并退出")
+        return alert.runModal() == .alertFirstButtonReturn ? .terminateCancel : .terminateNow
+    }
     func applicationWillTerminate(_ notification: Notification) {
-        timer?.invalidate(); client.close()
+        timer?.invalidate(); settings?.close(); client.close()
+        if let activationObserver { DistributedNotificationCenter.default().removeObserver(activationObserver) }
+        if let statusItem { NSStatusBar.system.removeStatusItem(statusItem) }
         // Closing this UI never sends a stop, restart or recording command to the service.
     }
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        window.makeKeyAndOrderFront(nil); return true
+        showWindow(); return true
     }
     private func label(_ text: String, size: CGFloat = 13, color: NSColor = .secondaryLabelColor) -> NSTextField {
         let value = NSTextField(wrappingLabelWithString: text)
@@ -39,8 +66,9 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func buildMenu() {
         let menu = NSMenu(); let app = NSMenuItem(); let submenu = NSMenu()
         submenu.addItem(withTitle: "关于听记宿主", action: #selector(about), keyEquivalent: "")
+        let config = submenu.addItem(withTitle: "连接设置…", action: #selector(showConfiguration), keyEquivalent: ","); config.target = self
         submenu.addItem(.separator())
-        submenu.addItem(withTitle: "退出听记宿主", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        let quit = submenu.addItem(withTitle: "退出听记宿主", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"); quit.target = NSApp
         app.submenu = submenu; menu.addItem(app); NSApp.mainMenu = menu
     }
     private func buildWindow() {
@@ -71,27 +99,36 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         feedback.setAccessibilityIdentifier("host-open-feedback"); root.addArrangedSubview(feedback)
         feedback.widthAnchor.constraint(equalTo: root.widthAnchor).isActive = true
         root.addArrangedSubview(label("会议编辑、录音和模型配置继续在浏览器工作台完成。", size: 13))
-        let note = label("退出此窗口不会停止本机服务。浏览器录音由录音页面持有，原生音轨由 API 服务管理；本轮尚不支持 API 重启后接管采集。", size: 12)
+        let note = label("关闭窗口后可从菜单栏重新打开。退出宿主不会停止本机服务；浏览器录音仍由页面持有，原生音轨仍由 API 管理。", size: 12)
         root.addArrangedSubview(note); note.widthAnchor.constraint(equalTo: root.widthAnchor).isActive = true
-        let config = NSButton(title: "查看连接配置…", target: self, action: #selector(showConfiguration)); config.bezelStyle = .inline; root.addArrangedSubview(config)
+        let config = NSButton(title: "连接设置…", target: self, action: #selector(showConfiguration)); config.bezelStyle = .inline; configurationButton = config
+        let menuButton = NSButton(title: "宿主菜单", target: self, action: #selector(showStatusMenu(_:))); menuButton.bezelStyle = .inline
+        let quitButton = NSButton(title: "退出宿主", target: NSApp, action: #selector(NSApplication.terminate(_:))); quitButton.bezelStyle = .inline
+        let secondary = NSStackView(views: [config, menuButton, quitButton]); secondary.spacing = 20; root.addArrangedSubview(secondary)
         render(); window.center(); window.makeKeyAndOrderFront(nil)
     }
     private func render() {
-        status.stringValue = starting ? "正在请求启动，等待连接确认…" : state.title
+        status.stringValue = loaded.problem ? "连接配置需要修复" : starting ? "正在请求启动，等待连接确认…" : state.title
         status.textColor = state.canOpen ? .systemGreen : .labelColor
-        openButton.isEnabled = state.canOpen && !starting && !probing
-        startButton.isEnabled = state.canStart && !starting && !probing
-        refreshButton.isEnabled = !probing && !starting
+        openButton.isEnabled = state.canOpen && !loaded.problem && !starting && !opening && settings?.isPresented != true
+        startButton.isEnabled = state.canStart && !loaded.problem && !starting && !opening && settings?.isPresented != true && (try? ServiceStartPlan(configuration)) != nil
+        refreshButton.isEnabled = !probing && !starting && !loaded.problem
+        menuRefresh?.isEnabled = refreshButton.isEnabled
+        configurationButton?.isEnabled = !starting
+        menuStatus?.title = loaded.problem ? "连接配置需要修复" : status.stringValue
+        menuOpen?.isEnabled = openButton.isEnabled; menuStart?.isEnabled = startButton.isEnabled; menuSettings?.isEnabled = !starting
+        statusItem?.button?.toolTip = "听记 · " + status.stringValue
+        if loaded.problem { detail.stringValue = "已保存配置无法使用。请打开连接设置修复；当前没有连接或启动任何服务。"; return }
         switch state {
-        case let .connected(pid, mode): detail.stringValue = "\(configuration.workspaceURL.absoluteString)\n服务 PID \(pid) · \(mode) · 工作空间匹配"
+        case let .connected(pid, mode): detail.stringValue = "\(configuration.workspaceURL.absoluteString)\n服务 PID \(pid) · \(mode) · 工作空间匹配 · \(loaded.saved ? "已保存配置" : "构建默认")"
         case .differentWorkspace: detail.stringValue = "端口上已有其他工作空间的听记服务。请核对连接配置；不会启动第二个实例。"
         case .incompatible: detail.stringValue = "端口响应无法通过宿主协议核对。请更新对应服务或检查端口；不会自动替换。"
-        case .unavailable: detail.stringValue = "\(configuration.workspaceURL.absoluteString)\n可重新检查，或明确启动此配置对应的本机服务。"
+        case .unavailable: detail.stringValue = "\(configuration.workspaceURL.absoluteString)\n" + ((try? ServiceStartPlan(configuration)) != nil ? "可重新检查，或明确启动此配置对应的本机服务。" : "当前项目缺少可用 Python 环境或服务管理脚本，请检查连接设置。")
         case .checking: detail.stringValue = "仅连接 127.0.0.1，正在核对协议、项目和数据目录。"
         }
     }
     private func probe() {
-        guard !probing else { return }
+        guard !probing, !loaded.problem else { return }
         probing = true; let token = generation.next(); render()
         client.probe(configuration) { [weak self] result in
             DispatchQueue.main.async {
@@ -106,13 +143,13 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
     @objc private func refresh() { probe() }
     @objc private func openWorkspace() {
-        guard state.canOpen, !starting, !probing else { return }
+        guard state.canOpen, !loaded.problem, !starting, !opening, settings?.isPresented != true else { return }
         // Verify again at the click; a stale green indicator cannot open a different workspace.
-        probing = true; let token = generation.next(); render()
+        opening = true; probing = true; let token = generation.next(); render()
         client.probe(configuration) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self, self.generation.accepts(token) else { return }
-                self.probing = false; self.state = result; self.render()
+                self.opening = false; self.probing = false; self.state = result; self.render()
                 if result.canOpen {
                     let opened = NSWorkspace.shared.open(self.configuration.workspaceURL)
                     self.feedback.stringValue = opened ? "已请求系统默认浏览器打开工作台。" : "未能打开默认浏览器。请在浏览器访问上方本机地址。"
@@ -121,11 +158,12 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
     @objc private func startService() {
-        guard state.canStart, !starting, !probing else { return }
+        guard state.canStart, !loaded.problem, !starting, !opening, settings?.isPresented != true else { return }
         starting = true; startupDeadline = Date().addingTimeInterval(50); _ = generation.next(); probing = false; render()
+        let operation = configurationGeneration
         starter.start(configuration) { [weak self] success in
             DispatchQueue.main.async {
-                guard let self else { return }
+                guard let self, self.configurationGeneration == operation else { return }
                 if !success {
                     self.starting = false; self.startupDeadline = nil
                     let alert = NSAlert(); alert.messageText = "服务启动尚未确认"
@@ -136,14 +174,52 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             }
         }
     }
+    @objc private func showWindow() {
+        window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true)
+    }
+    private func buildStatusItem() {
+        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        statusItem = item; item.button?.title = " 听记"
+        item.button?.image = NSImage(systemSymbolName: "waveform", accessibilityDescription: "听记菜单栏")
+        item.button?.image?.isTemplate = true
+        let menu = NSMenu(); menu.autoenablesItems = false
+        let summary = menu.addItem(withTitle: "正在检查连接", action: nil, keyEquivalent: ""); summary.isEnabled = false; menuStatus = summary
+        menu.addItem(.separator())
+        func action(_ title: String, _ selector: Selector) -> NSMenuItem {
+            let value = menu.addItem(withTitle: title, action: selector, keyEquivalent: ""); value.target = self; return value
+        }
+        _ = action("显示主窗口", #selector(showWindow))
+        menuOpen = action("打开会议工作台", #selector(openWorkspace))
+        menuSettings = action("连接设置…", #selector(showConfiguration))
+        menuRefresh = action("重新检查", #selector(refresh))
+        menuStart = action("启动本机服务", #selector(startService))
+        menu.addItem(.separator())
+        let quit = menu.addItem(withTitle: "退出听记宿主（服务继续运行）", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"); quit.target = NSApp
+        menu.delegate = self; item.menu = menu; render()
+    }
+    func menuWillOpen(_ menu: NSMenu) { probe() }
+    @objc private func showStatusMenu(_ sender: NSButton) {
+        statusItem?.menu?.popUp(positioning: nil, at: NSPoint(x: 0, y: sender.bounds.maxY), in: sender)
+    }
+    func windowShouldClose(_ sender: NSWindow) -> Bool { settings?.isPresented != true }
     @objc private func showConfiguration() {
-        let alert = NSAlert(); alert.messageText = "本次连接配置"
-        alert.informativeText = "工作台：\(configuration.workspaceURL.absoluteString)\n项目：\(configuration.projectRoot)\n数据：\(configuration.dataRoot)\n备份：\(configuration.backupsRoot)\n\n此构建固定上述目录；移动项目或切换工作空间后请重新构建。"
-        alert.beginSheetModal(for: window)
+        guard !starting else { return }
+        showWindow()
+        if settings?.isPresented == true { return }
+        // Re-read on opening so external edits become visible; active connection changes only on save.
+        let latest = preferences.load(defaults: defaults)
+        let initial = HostConfigurationLoad(configuration: latest.saved || latest.problem ? latest.configuration : configuration, token: latest.token, saved: latest.saved, problem: latest.problem)
+        let controller = HostSettingsController(defaults: defaults, load: initial, preferences: preferences, onCancel: { [weak self] in self?.settings = nil; self?.render() }) { [weak self] value in
+            guard let self else { return }
+            self.configurationGeneration += 1; self.loaded = value; self.configuration = value.configuration
+            _ = self.generation.next(); self.opening = false; self.probing = false; self.state = .checking; self.feedback.stringValue = "连接配置已保存；服务未被启停。"
+            self.settings = nil; self.render(); self.probe()
+        }
+        settings = controller; controller.present(on: window); render()
     }
     @objc private func about() {
-        let alert = NSAlert(); alert.messageText = "听记宿主 · E1"
-        alert.informativeText = "本机连接与启动底座。关闭宿主不停止服务；未包含采集所有权迁移、菜单栏常驻、内嵌工作区或自动更新。"
+        let alert = NSAlert(); alert.messageText = "听记宿主 · E2"
+        alert.informativeText = "本机连接与启动底座。连接设置保存在本机，菜单栏可随时打开工作台。关闭窗口保留菜单栏，退出宿主不停止服务；采集仍由原页面／API 管理。"
         alert.beginSheetModal(for: window)
     }
 }

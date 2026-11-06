@@ -4,7 +4,7 @@ import Darwin
 
 enum HostFailure: Error { case invalidConfiguration, invalidResponse }
 
-struct HostConfiguration: Codable {
+struct HostConfiguration: Codable, Equatable {
     let version: Int
     let projectRoot: String
     let dataRoot: String
@@ -40,8 +40,10 @@ struct HostConfiguration: Codable {
     var pythonURL: URL { URL(fileURLWithPath: projectRoot).appendingPathComponent(".venv/bin/python") }
     var managerURL: URL { URL(fileURLWithPath: projectRoot).appendingPathComponent("scripts/manage_service.py") }
 
-    static func load(_ url: URL) throws -> HostConfiguration {
-        let decoded = try JSONDecoder().decode(HostConfiguration.self, from: Data(contentsOf: url))
+    static func dataFingerprint(_ data: Data) -> String { SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined() }
+    static func load(_ url: URL) throws -> HostConfiguration { try decode(Data(contentsOf: url)) }
+    static func decode(_ data: Data) throws -> HostConfiguration {
+        let decoded = try JSONDecoder().decode(HostConfiguration.self, from: data)
         // Synthesized Decodable does not invoke the validating initializer.
         return try HostConfiguration(version: decoded.version, projectRoot: decoded.projectRoot, dataRoot: decoded.dataRoot, backupsRoot: decoded.backupsRoot, port: decoded.port)
     }
