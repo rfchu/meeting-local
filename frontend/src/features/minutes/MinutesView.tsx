@@ -231,7 +231,7 @@ export default function MinutesView(props: Props) {
           className="analysis-notice"
           role={automaticJob.state === "failed" ? "alert" : "status"}
         >
-          自动纪要：{automaticJob.stage}
+          纪要任务：{automaticJob.stage}
           {automaticJob.error ? ` · ${automaticJob.error}` : ""}
           <button
             onClick={() =>
@@ -241,14 +241,15 @@ export default function MinutesView(props: Props) {
               )
             }
           >
-            {automaticBusy ? "取消自动纪要" : "只重试纪要步骤"}
+            {automaticBusy ? "取消纪要任务" : "重试纪要任务"}
           </button>
           <small>文字稿仍保留；来源已变化时请用当前文字稿重新生成。</small>
         </div>
       )}
-      {generation?.state === "waiting" && (
+      {generation?.state === "waiting" && !automaticBusy && (
         <p role="status">
-          会中识别优先，纪要任务等待继续；已有纪要和检查点保留，可在运行管理中取消任务。
+          {generation.message ||
+            "纪要任务等待继续；已有纪要和检查点保留，可在运行管理中取消。"}
         </p>
       )}
       {generation?.state === "running" && (

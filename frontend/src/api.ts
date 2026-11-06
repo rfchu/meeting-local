@@ -878,6 +878,13 @@ export const api = {
     id: string,
     body: import("./features/minutes/composition").MinutesOptions & {
       also_analyze?: boolean;
+      confirm_cloud?: boolean;
+      expected_provider?: {
+        id: string;
+        base_url: string;
+        provider_type: "local" | "cloud";
+        model: string;
+      };
       profile_id?: string;
       model?: string;
       source_minutes_id?: string;
@@ -888,7 +895,10 @@ export const api = {
       job_id?: string;
       analysis_job_id?: string;
       warning?: string;
-    }>(`/meetings/${id}/minutes/compose`, json("POST", body)),
+    }>(
+      `/meetings/${id}/minutes/${body.method === "analysis" ? "compose" : "jobs"}`,
+      json("POST", body),
+    ),
   adoptMinutes: (id: string, artifactId: string) =>
     request(`/meetings/${id}/minutes/${artifactId}/adopt`, json("POST")),
   saveMinutes: (

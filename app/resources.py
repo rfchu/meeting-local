@@ -53,10 +53,16 @@ class ResourceScheduler:
         with self.condition:
             claims=[claim for claim in self.requests.values() if claim.owner==owner and claim.state=='waiting' and (workloads is None or claim.workload in workloads)]
             for claim in claims:self._close(claim,'cancelled')
+            observed=self.observed.get(owner)
+            if observed and (workloads is None or observed['claim'].workload in workloads):self.observed.pop(owner,None)
             if owner in self.deferred:
                 self.deferred.pop(owner);self.deferred_total=max(0,self.deferred_total-1)
             self.condition.notify_all()
             return len(claims)
+
+    def admission_reason(self,workload,requirements):
+        claim=self.request(workload,requirements)
+        with self.condition:return self._reason(claim)
 
     def _acquire(self,claim,blocking,timeout):
         if not isinstance(timeout,(int,float)) or not math.isfinite(timeout):raise ValueError('资源等待超时无效')
@@ -121,7 +127,10 @@ class ResourceScheduler:
         with self.condition:
             if owner in self.deferred:return {'code':'realtime_index_yield','message':REASONS['realtime_index_yield']}
             claim=next((c for c in self.requests.values() if c.owner==owner and c.state=='waiting'),None)
-            if not claim:return None
+            if not claim:
+                observed=self.observed.get(owner)
+                if not observed or observed['expires']<=time.monotonic():return None
+                claim=observed['claim']
             reason=self._reason(claim)
             return {'code':reason or 'awaiting_dispatch','message':REASONS.get(reason,'等待资源调度')}
 
@@ -146,7 +155,7 @@ class ResourceScheduler:
                 'requests':values,'history':list(self.history),'finished_count':self.finished,'rejected_count':self.rejected,
                 'request_limit':self.max_requests,'deferred_limit':self.max_requests,'observed_limit':self.max_requests,'deferred_total':self.deferred_total,'deferred_truncated':self.deferred_total>len(self.deferred),
                 'capture_independent':True,'memory_bytes_estimated':False,
-                'coverage':['worker_jobs','live_asr','live_overview','live_correction','retrieval_api','inline_minutes','inline_speaker_review'],
+                'coverage':['worker_jobs','editorial_jobs','live_asr','live_overview','live_correction','retrieval_api','inline_minutes','inline_speaker_review'],
                 'excluded':['model_connection_tests','model_residency','external_processes']}
 
     def close(self):

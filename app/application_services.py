@@ -25,6 +25,7 @@ if TYPE_CHECKING:
     from .meeting_queries import MeetingQueries
     from .configuration_queries import ConfigurationQueries
     from .analysis_jobs import AnalysisJobs
+    from .minutes_jobs import MinutesJobs
     from .qa import QA
     from .retrieval import Retrieval
 
@@ -61,6 +62,7 @@ class ApplicationServices:
     meetings: MeetingQueries
     configurations: ConfigurationQueries
     analysis_jobs: AnalysisJobs
+    minutes_jobs: MinutesJobs
     qa: QA
     retrieval: Retrieval
     providers: ProviderBindings

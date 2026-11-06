@@ -22,6 +22,7 @@ export interface Segment {
 }
 
 export interface Job {
+  recorded_retries?: number;
   id: string;
   meeting_id: string;
   state: JobState;
@@ -450,6 +451,7 @@ export interface MeetingSummary {
 }
 
 export interface MinutesGenerationStatus {
+  message?: string;
   id: string;
   state: "running" | "waiting" | "completed" | "failed" | "cancelled";
   revision: number;

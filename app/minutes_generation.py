@@ -14,7 +14,14 @@ class MinutesGeneration:
     def status(self,mid):
         folder=self.store.directory(mid);path=folder/'minutes-generation.json'
         try:value=json.loads(path.read_text())
-        except (OSError,ValueError):return None
+        except (OSError,ValueError):value=None
+        pending=self.store.one("SELECT id,state,config,CAST(strftime('%s',created) AS INTEGER) AS started_at FROM jobs WHERE meeting_id=? AND kind='minutes' AND state IN ('queued','running') ORDER BY created,rowid LIMIT 1",(mid,))
+        if pending and (not isinstance(value,dict) or value.get('job_id')!=pending['id'] or pending['state']=='queued'):
+            started=pending['started_at'] or time.time()
+            try:revision=json.loads(pending['config']).get('revision',0)
+            except (ValueError,TypeError,AttributeError):revision=0
+            return {'id':pending['id'],'job_id':pending['id'],'state':'waiting','revision':revision,'started_at':started,'elapsed_seconds':round(max(0,time.time()-started)),
+                    'error':'','message':'纪要任务已排队，等待资源或前序步骤；刷新页面可继续查看'}
         if not isinstance(value,dict) or not isinstance(value.get('started_at'),(int,float)):return None
         if value.get('state')=='waiting':
             pending=self.store.one('SELECT state FROM jobs WHERE id=?',(value.get('job_id'),))
@@ -59,6 +66,8 @@ class MinutesGeneration:
             with (folder/'minutes-generation.lock').open('a') as handle:
                 try:fcntl.flock(handle,fcntl.LOCK_EX|fcntl.LOCK_NB)
                 except BlockingIOError:raise HTTPException(409,'本场会议已有纪要正在生成，请等待当前请求完成')
+                active=self.store.one("SELECT id FROM jobs WHERE meeting_id=? AND kind='minutes' AND state IN ('queued','running') AND id!=? LIMIT 1",(mid,getattr(body,'job_id',None) or ''))
+                if active:raise HTTPException(409,'本场已有纪要后台任务，请先完成或取消')
                 try:previous=json.loads((folder/'minutes-generation.json').read_text())
                 except (OSError,ValueError):previous={}
                 if not isinstance(previous,dict):previous={}

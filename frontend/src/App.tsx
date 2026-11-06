@@ -656,7 +656,11 @@ export default function App() {
   };
   const jobAction = async (id: string, action: "cancel" | "retry") => {
     try {
-      await api.jobAction(id, action);
+      await api.jobAction(
+        id,
+        action,
+        meeting?.jobs.find((job) => job.id === id)?.recorded_retries,
+      );
       if (meeting) setMeeting(await api.meeting(meeting.id));
     } catch (error) {
       toast((error as Error).message);
@@ -708,6 +712,17 @@ export default function App() {
       const response = await api.composeMinutes(target.id, {
         ...options,
         also_analyze: withAnalysis && options.method === "ai",
+        ...(profile?.provider_type === "cloud" && options.method !== "analysis"
+          ? {
+              confirm_cloud: true,
+              expected_provider: {
+                id: profile.id,
+                base_url: profile.base_url,
+                provider_type: profile.provider_type,
+                model: profile.model,
+              },
+            }
+          : {}),
         ...(environment?.analysis.profiles.length
           ? { profile_id: minutesModel }
           : { model: minutesModel }),
@@ -721,7 +736,9 @@ export default function App() {
       }
       toast(
         response.job_id
-          ? "已开始分析，完成后将自动保存纪要草稿；刷新页面不会丢失后续步骤"
+          ? options.method === "analysis"
+            ? "已排队分析，完成后保存纪要草稿"
+            : "纪要任务已排队，完成后自动保存草稿；刷新页面可继续查看"
           : response.artifact?.id === fresh.active_minutes_id
             ? "会议纪要已生成，可核对编辑后导出"
             : "新草稿已保存；当前采用稿保持不变，可查看、对比后采用",

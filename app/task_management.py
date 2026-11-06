@@ -1,6 +1,7 @@
 """Safe operational views: never expose model logs, prompts, credentials or audio."""
 import json,re,time
 from .job_checkpoints import recovery_view,recovery_blocker
+from .resources import PRIORITIES,REASONS
 from fastapi import HTTPException
 from fastapi.responses import JSONResponse
 
@@ -54,9 +55,11 @@ def register_task_management(app,store,worker,resources=None):
         where="WHERE j.state IN ('queued','running')" if state=='active' else "WHERE j.state IN ('failed','cancelled')" if state=='failed' else ''
         rows=store.all("SELECT j.*,m.title AS meeting_title FROM jobs j LEFT JOIN meetings m ON m.id=j.meeting_id "+where+" ORDER BY CASE j.state WHEN 'running' THEN 0 WHEN 'queued' THEN 1 ELSE 2 END,CASE WHEN j.state IN ('queued','running') THEN j.created END,CASE WHEN j.state NOT IN ('queued','running') THEN j.created END DESC,j.rowid LIMIT ?",(limit,))
         live=bool(store.one("SELECT 1 FROM live_sessions WHERE status IN ('running','paused','draining') LIMIT 1"))
-        queued=store.all("SELECT id,kind FROM jobs WHERE state='queued' ORDER BY created,rowid")
+        queued=store.all("SELECT * FROM jobs WHERE state='queued' ORDER BY created,rowid")
         processing=bool(worker.busy_jid or store.one("SELECT 1 FROM jobs WHERE state='running' LIMIT 1"))
-        positions={r['id']:i+1 for i,r in enumerate(r for r in queued if not (live and r['kind']=='retrieval_index'))}
+        queued.sort(key=lambda job:PRIORITIES[worker.resource_spec(job)[0]])
+        eligible=[r for r in queued if not (live and r['kind']=='retrieval_index') and (not resources or not resources.admission_reason(*worker.dispatch_spec(r)))]
+        positions={r['id']:i+1 for i,r in enumerate(eligible)}
         values=[]
         for job in rows:
             try:config=json.loads(job['config'])
@@ -65,6 +68,9 @@ def register_task_management(app,store,worker,resources=None):
             blocked=retry_blocker(store,job,worker)
             wait='实时识别期间暂缓索引，录音结束后继续' if live and job['kind']=='retrieval_index' and job['state']=='queued' else ('等待处理资源' if job['state']=='running' and '等待' in (job['stage'] or '') else (('等待前序任务' if processing or positions.get(job['id'],1)>1 else '等待调度启动') if job['state']=='queued' else ''))
             resource_wait=resources.waiting_for(job['id']) if resources else None
+            if not resource_wait and resources and job['state']=='queued':
+                code=resources.admission_reason(*worker.dispatch_spec(job))
+                if code:resource_wait={'code':code,'message':REASONS[code]}
             if resource_wait:wait=resource_wait['message']
             values.append({k:job[k] for k in ('id','meeting_id','meeting_title','kind','state','stage','progress','created')}|{
                 'recovery':recovery_view(store,job),'resource_wait':resource_wait,'kind_label':KINDS.get(job['kind'],'后台处理'),'queue_position':positions.get(job['id']), 'waiting_reason':wait,

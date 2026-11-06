@@ -3,16 +3,17 @@ from .job_checkpoints import JobCheckpoints,file_digest,validate_segments,Resour
 import fcntl, hashlib, json, math, os, subprocess, threading, time
 from pathlib import Path
 from .db import uid, encode
-from .resources import request_for,ResourceYielded as Yielded
+from .resources import request_for,ResourceYielded as Yielded,PRIORITIES,REASONS
 from .live_results import plan_ranges, RATE
 from .providers import WhisperCpp, get_asr_provider, LocalDiarization, LocalPunctuation, attach_speakers, merge_overlapping_chunks, checkpoint_identity_matches
 from .analysis import LMStudioProvider,OpenAICompatibleProvider,MeetingAnalysis,chunk_segments,save_meeting_analysis,validate_citations,TEMPLATE_VERSION
 
 class Cancelled(Exception): pass
+class DispatchDeferred(Yielded):pass
 
 class Worker:
     def __init__(self, store):
-        self.store=store; self.stop=threading.Event(); self.thread=None; self.busy_jid=None; self.lock_file=None;self.asr_lock=None;self.release_model=None;self.resources=None;self.resource_claim=None
+        self.store=store; self.stop=threading.Event(); self.thread=None; self.busy_jid=None; self.lock_file=None;self.asr_lock=None;self.release_model=None;self.resources=None;self.resource_claim=None;self.nonblocking_dispatch=False;self.observed_jobs=set();self.minutes_jobs=None
     def start(self):
         self.lock_file=(self.store.root/'worker.lock').open('a')
         try: fcntl.flock(self.lock_file,fcntl.LOCK_EX|fcntl.LOCK_NB)
@@ -27,6 +28,8 @@ class Worker:
     def close(self):
         self.stop.set()
         if self.thread: self.thread.join(timeout=10)
+        if self.resources:
+            for jid in self.observed_jobs:self.resources.clear_observed(jid)
         if self.lock_file and (not self.thread or not self.thread.is_alive()):
             self.lock_file.close(); self.lock_file=None
     def check(self,jid):
@@ -71,7 +74,24 @@ class Worker:
             self.resources.set_index_deferred(owners,total)
         if live:
             self.store.execute("UPDATE jobs SET stage='实时识别期间暂缓索引' WHERE state='queued' AND kind='retrieval_index' AND stage!='实时识别期间暂缓索引'")
-        return self.store.one("SELECT * FROM jobs WHERE state='queued'"+(" AND COALESCE(kind,'transcription')!='retrieval_index'" if live else '')+" ORDER BY created,rowid LIMIT 1")
+        jobs=self.store.all("SELECT * FROM jobs WHERE state='queued'"+(" AND COALESCE(kind,'transcription')!='retrieval_index'" if live else '')+" ORDER BY created,rowid")
+        if not self.resources:return jobs[0] if jobs else None
+        active={job['id'] for job in jobs}
+        for jid in self.observed_jobs-active:self.resources.clear_observed(jid)
+        self.observed_jobs=active
+        # SQLite preserves same-priority order. Probes never reserve partial slots.
+        jobs.sort(key=lambda job:PRIORITIES[self.resource_spec(job)[0]])
+        for job in jobs:
+            workload,requirements=self.dispatch_spec(job)
+            reason=self.resources.admission_reason(workload,requirements)
+            if not reason:
+                self.resources.clear_observed(job['id']);return job
+            self.resources.observe_wait(job['id'],workload,requirements)
+        return None
+    def dispatch_spec(self,job):
+        workload,requirements=self.resource_spec(job)
+        if 'cloud_llm' not in requirements:requirements={'legacy_inference':1,**requirements}
+        return workload,requirements
     def loop(self):
         while not self.stop.is_set():
             job=self.next_job()
@@ -82,6 +102,7 @@ class Worker:
             if not changed: continue
             self.busy_jid=job['id']
             try:
+                self.nonblocking_dispatch=self.resources is not None
                 self.process(job)
                 stage={'analysis':'分析完成','note_expansion':'简记扩写完成','retrieval_index':'检索索引建立完成','retrieval_answer':'引用问答完成','minutes':'AI 纪要草稿已保存，待人工核对','terminology':'术语候选已整理，待确认'}.get(job.get('kind'),'转写完成')
                 if job.get('kind')=='analysis' and json.loads(job['config']).get('minutes_followup'):stage='分析与纪要草稿完成'
@@ -89,11 +110,13 @@ class Worker:
             except ResourceInterrupted:
                 self.store.execute("UPDATE jobs SET state='queued',stage='服务已停止，等待恢复' WHERE id=? AND state='running'",(job['id'],))
             except Cancelled: pass
+            except DispatchDeferred as error:
+                self.store.execute("UPDATE jobs SET state='queued',stage=? WHERE id=? AND state='running'",(str(error),job['id']))
             except Yielded:
                 self.store.execute("UPDATE jobs SET state='queued',stage='会中识别优先，等待继续' WHERE id=? AND state='running'",(job['id'],))
             except Exception as e:
                 self.store.execute("UPDATE jobs SET state='failed',error=?,stage='处理失败' WHERE id=? AND state='running'",(str(e),job['id']))
-            finally: self.busy_jid=None
+            finally:self.busy_jid=None;self.nonblocking_dispatch=False
     def resource_spec(self,job):
         kind=job.get('kind') or 'transcription'
         workload={'retrieval_index':'index','retrieval_answer':'qa'}.get(kind,kind)
@@ -118,9 +141,12 @@ class Worker:
         try:
             if self.asr_lock:
                 waiting=False;last_wait=''
-                workload,requirements=self.resource_spec(job)
-                claim=request_for(self.asr_lock,workload,requirements,job['id'])
-                while not claim.acquire(timeout=.2):
+                workload,requirements=self.dispatch_spec(job)
+                claim=self.resources.request(workload,requirements,job['id']) if self.resources else request_for(self.asr_lock,workload,requirements,job['id'])
+                if self.nonblocking_dispatch and not claim.acquire(False):
+                    self.resources.observe_wait(job['id'],workload,requirements)
+                    raise DispatchDeferred(REASONS.get(claim.reason,'等待资源调度'))
+                while not self.nonblocking_dispatch and not claim.acquire(timeout=.2):
                     self.check(job['id'])
                     reason=self.resources.waiting_for(job['id']) if self.resources else None
                     message=reason['message'] if reason else '等待语音识别资源'
@@ -129,8 +155,9 @@ class Worker:
                 self.boundary(job['id'])
                 if waiting:self.update(job['id'],'准备处理',job.get('progress',0))
             from .local_embedding import local_embedding
-            local_embedding().release()
-            if self.release_model:self.release_model()
+            if 'cloud_llm' not in self.resource_spec(job)[1]:
+                local_embedding().release()
+                if self.release_model:self.release_model()
             if job.get('kind')=='retrieval_answer':
                 from .qa import QA
                 return QA(self.store).process(self,job)
@@ -143,6 +170,9 @@ class Worker:
             if job.get('kind')=='note_expansion':return self.process_note_expansion(job)
             if job.get('kind')=='analysis':return self.process_analysis(job)
             if job.get('kind')=='minutes':
+                if json.loads(job['config']).get('operation'):
+                    if not self.minutes_jobs:raise RuntimeError('纪要后台服务未装配')
+                    return self.minutes_jobs.process(self,job)
                 from .auto_minutes import process
                 return process(self,job)
             return self.process_transcription(job)

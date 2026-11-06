@@ -41,6 +41,7 @@ from .application_lifecycle import application_lifespan
 from .meeting_queries import MeetingQueries
 from .configuration_queries import ConfigurationQueries
 from .analysis_jobs import AnalysisJobs
+from .minutes_jobs import MinutesJobs
 from .http_security import register_local_only
 from .routes.runtime import register_routes as runtime_routes
 from .routes.retrieval import register_routes as retrieval_routes
@@ -85,6 +86,9 @@ def _create_app(data_dir=None,start_worker=True):
         speaker_review=lambda *args,**kwargs:generate_review(*args,**kwargs),
         auto_minutes=lambda *args,**kwargs:prepare_auto_minutes(*args,**kwargs),
         embedding=lambda:local_embedding())
+    analysis_jobs=AnalysisJobs(store,meetings,providers)
+    minutes_jobs=MinutesJobs(store,meetings,providers,minutes_generation)
+    worker.minutes_jobs=minutes_jobs
     services=ApplicationServices(
         store=store,worker=worker,lifecycle=lifecycle,recordings=recordings,resources=resources,
         native_capture=native_capture,capture_probes=capture_probes,keep_awake=keep_awake,
@@ -93,7 +97,7 @@ def _create_app(data_dir=None,start_worker=True):
         live_corrections=live_corrections,live_results=live_results,live_sessions=live_sessions,
         live_overview=live_overview,live_asr_lock=live_asr_lock,resident=resident,
         meeting_review=meeting_review,minutes_generation=minutes_generation,meetings=meetings,
-        configurations=ConfigurationQueries(store),analysis_jobs=AnalysisJobs(store,meetings,providers),
+        configurations=ConfigurationQueries(store),analysis_jobs=analysis_jobs,minutes_jobs=minutes_jobs,
         qa=QA(store),retrieval=Retrieval(store),providers=providers)
     app=FastAPI(title='听记 · Local Meeting',lifespan=application_lifespan(services,start_worker))
     app.state.services=services

@@ -1,11 +1,12 @@
 """Minutes HTTP routes; shared services are supplied by the composition root."""
 from ..resources import optional_slot
+from ..minutes_jobs import MinutesTaskInput
 from ..model_preferences import resolve_profile
 from ..interview import InterviewPreparation
 import json, os, subprocess
 from urllib.parse import quote
-from fastapi import HTTPException
-from fastapi.responses import Response
+from fastapi import HTTPException,Request
+from fastapi.responses import Response,JSONResponse
 from ..db import uid, encode
 from ..analysis import OpenAICompatibleProvider, MeetingAnalysis
 from ..minutes import MeetingMinutes, build_minutes, build_ai_minutes, apply_polished_minutes, validate_minutes_citations, minutes_markdown, minutes_docx, minutes_pdf, MINUTES_VERSION
@@ -90,7 +91,9 @@ def register_routes(app,services:ApplicationServices):
 
 
     @app.post('/api/meetings/{mid}/minutes/compose',status_code=201)
-    def compose_minutes(mid:str,body:ComposeInput):
+    def compose_minutes(mid:str,body:ComposeInput,request:Request):
+        if 'respond-async' in request.headers.get('Prefer','').lower():
+            return submit_minutes_task(mid,MinutesTaskInput(**body.model_dump()))
         row=meeting(mid);settings=CompositionSettings.model_validate(body.model_dump())
         from ..minutes_composition import semantic_template
         template=semantic_template(settings.template_id,minutes_template(settings.template_id))
@@ -105,7 +108,7 @@ def register_routes(app,services:ApplicationServices):
             except ValueError as error:raise HTTPException(409,str(error))
             return {'artifact':public_artifact(store.one('SELECT * FROM artifacts WHERE id=?',(aid,)))}
         if settings.method=='current' and not body.source_minutes_id:raise HTTPException(409,'请先选择要整理的纪要版本')
-        result=generate_ai_minutes(mid,AIMinutesGenerateInput(profile_id=body.profile_id,model=body.model,composition=settings,source_minutes_id=body.source_minutes_id))
+        result=generate_ai_minutes_sync(mid,AIMinutesGenerateInput(profile_id=body.profile_id,model=body.model,composition=settings,source_minutes_id=body.source_minutes_id))
         response={'artifact':result}
         if body.also_analyze and settings.method=='ai' and template.id!='online-interview' and not store.one("SELECT id FROM artifacts WHERE meeting_id=? AND revision=? AND kind='meeting_analysis'",(mid,result['revision'])):
             try:
@@ -127,9 +130,20 @@ def register_routes(app,services:ApplicationServices):
         return {'id':aid}
 
 
+    @app.post('/api/meetings/{mid}/minutes/jobs',status_code=202)
+    def submit_minutes_task(mid:str,body:MinutesTaskInput):
+        try:result=services.minutes_jobs.submit(mid,body)
+        except (ValueError,RuntimeError) as error:raise HTTPException(409,str(error))
+        return JSONResponse(result,status_code=202,headers={'Location':'/api/runtime/tasks','Cache-Control':'no-store'})
+
     @app.post('/api/meetings/{mid}/minutes/ai',status_code=201)
+    def generate_ai_minutes(mid:str,body:AIMinutesGenerateInput,request:Request):
+        if 'respond-async' in request.headers.get('Prefer','').lower():
+            return submit_minutes_task(mid,MinutesTaskInput(**(body.composition.model_dump() if body.composition else {'template_id':body.template_id}),profile_id=body.profile_id,model=body.model,source_minutes_id=body.source_minutes_id,mode=body.mode))
+        return generate_ai_minutes_sync(mid,body)
+
     @minutes_generation.track
-    def generate_ai_minutes(mid:str,body:AIMinutesGenerateInput):
+    def generate_ai_minutes_sync(mid:str,body:AIMinutesGenerateInput):
         row=meeting(mid);segments=json.loads(row['segments'])
         if not segments:raise HTTPException(409,'文字稿为空，无法生成 AI 会议纪要')
         template=minutes_template(body.composition.template_id if body.composition else body.template_id)
@@ -209,7 +223,13 @@ def register_routes(app,services:ApplicationServices):
 
 
     @app.post('/api/meetings/{mid}/minutes/polish',status_code=201)
-    def polish_minutes(mid:str,body:MinutesPolishInput):
+    def polish_minutes(mid:str,body:MinutesPolishInput,request:Request):
+        if 'respond-async' in request.headers.get('Prefer','').lower():
+            return submit_minutes_task(mid,MinutesTaskInput(operation='polish',profile_id=body.profile_id,model=body.model))
+        return polish_minutes_sync(mid,body)
+
+    @minutes_generation.track
+    def polish_minutes_sync(mid:str,body:MinutesPolishInput):
         row=meeting(mid)
         with store.connect() as db:source=minutes_versions.selected(db,mid,row['revision'])
         if not source:raise HTTPException(409,'请先生成会议纪要')
