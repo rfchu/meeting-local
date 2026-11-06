@@ -1,5 +1,5 @@
 """One read-only projection for capture, durable files and confirmed live ASR."""
-import json,time
+import json,time,threading,uuid
 from .live_results import plan_ranges,RATE
 
 
@@ -36,12 +36,29 @@ def project(health,session,live,ranges,last_events,write=None):
 class RecordingRuntime:
     def __init__(self,store,recordings,native,health,journal):
         self.store=store;self.recordings=recordings;self.native=native;self.health=health;self.journal=journal
+        self.snapshot_lock=threading.RLock();self.scope_id=uuid.uuid4().hex;self.sequence=0
 
-    def read(self,rid,health=None):
+    def _read(self,rid,health):
         session=self.recordings.read(rid)
         live=self.store.one('SELECT config,status FROM live_sessions WHERE recording_id=?',(rid,))
+        meeting=self.store.one('SELECT id FROM meetings WHERE id=?',(rid,))
         ranges=self.store.all('SELECT engine,start_frame,end_frame,state FROM live_asr_ranges WHERE recording_id=? ORDER BY rowid',(rid,))
-        return project(health or self.health.snapshot(rid),session,live,ranges,self.journal.events(rid),self.journal.write_state(rid))
+        value=project(health,session,live,ranges,self.journal.events(rid),self.journal.write_state(rid))
+        self.sequence+=1
+        return value|{'schema_version':1,'recording_id':rid,'source':health['source'],
+            'identity':{'recording_id':rid,'live_session_id':rid if live else None,'meeting_id':meeting['id'] if meeting else None},
+            'ownership':{'capture':'native_service' if health['source']=='native' else 'browser_page','storage':'local_service','recognition':'local_service'},
+            'snapshot':{'scope_id':self.scope_id,'sequence':self.sequence}}
+
+    def read(self,rid,health=None):
+        with self.snapshot_lock:
+            return self._read(rid,health if health is not None else self.health.snapshot(rid))
+
+    def inspect(self,rid):
+        # One ordered read entry; sequence orders observations, not business commands.
+        with self.snapshot_lock:
+            health=self.health.snapshot(rid)
+            return health|{'runtime':self._read(rid,health)}
 
     def observe(self):
         # Observe only active or recently synchronized sessions; historical views stay read-only.

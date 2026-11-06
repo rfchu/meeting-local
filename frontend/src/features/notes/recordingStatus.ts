@@ -1,4 +1,5 @@
 import type { RecordingRuntime } from "../../types";
+import { coordinateRecording } from "./recordingCoordinator";
 import { clock } from "../../utils";
 export function lifecycleLabel(code: string) {
   const events: Record<string, string> = {
@@ -77,26 +78,11 @@ export function recordingStatus(
   local: string,
   unavailable: boolean,
 ) {
-  const unresolvedFailure =
-    local === "failed" &&
-    ["recording", "paused", "starting"].includes(runtime?.phase || "");
-  const phase =
-    local === "finished"
-      ? "saved"
-      : unavailable || unresolvedFailure
-        ? "unknown"
-        : runtime?.phase ||
-          (local === "failed"
-            ? "interrupted"
-            : local === "saving"
-              ? "saving"
-              : local);
-  const state =
-    local === "finished"
-      ? "stopped"
-      : unavailable || unresolvedFailure
-        ? "unknown"
-        : runtime?.capture.state;
+  const coordinated = coordinateRecording(runtime, local, unavailable);
+  const phase = coordinated.phase;
+  const state = coordinated.capture;
+  unavailable = coordinated.unavailable;
+
   return {
     phase,
     label:

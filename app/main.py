@@ -859,8 +859,8 @@ def create_app(data_dir=None, start_worker=True):
     @app.get('/api/recordings/{rid}/health')
     def recording_inventory(rid:str):
         try:
-            value=recording_health.snapshot(rid)
-            return value|{'runtime':recording_runtime.read(rid,value),'lifecycle':{'available':lifecycle.available,'events':lifecycle.events(rid,20),'checkpoints':lifecycle.checkpoints(rid),'anomalies':lifecycle.anomalies(rid)}}
+            value=recording_runtime.inspect(rid)
+            return value|{'lifecycle':{'available':lifecycle.available,'events':lifecycle.events(rid,20),'checkpoints':lifecycle.checkpoints(rid),'anomalies':lifecycle.anomalies(rid)}}
         except FileNotFoundError:raise HTTPException(404,'录音会话不存在')
         except ValueError:raise HTTPException(409,'录音元数据无法读取，已有文件保留')
     @app.get('/api/meetings/{mid}/recording-quality')

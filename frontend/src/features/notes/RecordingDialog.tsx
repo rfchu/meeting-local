@@ -1,3 +1,4 @@
+import { useNativeCaptureStatus } from "./useNativeCaptureStatus";
 import { useModelChoice } from "../../preferences/useModelChoice";
 import { ensureNoteIds, toggleOverviewFocus } from "../overview/notes";
 import LiveOverviewPanel from "../overview/LiveOverviewPanel";
@@ -707,22 +708,13 @@ export default function RecordingDialog({
   useEffect(() => {
     void checkCapture();
   }, []);
-  useEffect(() => {
-    if (
-      !sessionRef.current ||
-      sessionRef.current.source !== "macos" ||
-      !["requesting", "recording", "paused"].includes(state)
-    )
-      return;
-    let active = true,
-      polling = false;
-    const poll = async () => {
-      if (!active || polling) return;
-      polling = true;
-      try {
-        const status = await api.nativeStatus(sessionRef.current!.id);
-        if (!active || ["saving", "finished"].includes(stateRef.current))
-          return;
+  useNativeCaptureStatus(
+    nativeSessionId,
+    sessionRef.current?.source === "macos" &&
+      ["requesting", "recording", "paused"].includes(state),
+    {
+      status: (status) => {
+        if (["saving", "finished"].includes(stateRef.current)) return;
         accruedRef.current = status.duration;
         nativeHealthyRef.current =
           status.state === "recording" && !status.health?.stalled;
@@ -766,24 +758,20 @@ export default function RecordingDialog({
           setState("failed");
           toast(status.error || "采集已停止，可以恢复已有录音");
         }
-      } catch (error) {
+      },
+      failure: (error) => {
         nativeHealthyRef.current = false;
-        if (active) setNativeUnavailable(true);
-        if (active)
-          setSaveStatus(`采集状态暂时不可用：${(error as Error).message}`);
-      } finally {
-        polling = false;
-      }
-    };
-    void poll();
-    const timer = window.setInterval(() => void poll(), 1000);
-    const unwatch = watchRecordingRecovery(() => void poll());
-    return () => {
-      active = false;
-      window.clearInterval(timer);
-      unwatch();
-    };
-  }, [state, captureSource, nativeSessionId]);
+        setNativeUnavailable(true);
+        setSaveStatus(`采集状态暂时不可用：${(error as Error).message}`);
+      },
+      checking: () => {
+        nativeHealthyRef.current = false;
+        setNativeUnavailable(true);
+        setSaveStatus("正在重新核对采集状态，已有音轨保留");
+      },
+    },
+    state,
+  );
   useEffect(() => {
     if (
       !nativeSessionId ||

@@ -255,10 +255,25 @@ export interface LifecycleEvent {
   metrics: Record<string, number | boolean | null>;
 }
 export interface RecordingRuntime {
+  schema_version?: number;
+  recording_id?: string;
+  source?: "native" | "browser";
+  identity?: {
+    recording_id: string;
+    live_session_id: string | null;
+    meeting_id: string | null;
+  };
+  ownership?: {
+    capture: "native_service" | "browser_page";
+    storage: "local_service";
+    recognition: "local_service";
+  };
+  snapshot?: { scope_id: string; sequence: number };
   phase: string;
   observed_at: number;
   capture: {
     native_diagnostics?: NativeCaptureDiagnostics;
+    stop_confirmed?: boolean;
     state: string;
     heartbeat_age_seconds: number | null;
     tracks?: {

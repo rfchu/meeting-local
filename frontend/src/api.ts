@@ -334,9 +334,11 @@ export const api = {
       "/native-capture",
       json("POST", { microphone, keep_awake: keepAwake }),
     ),
-  nativeStatus: (id: string) =>
+  nativeStatus: (id: string, signal?: AbortSignal) =>
     request<NativeCaptureStatus>(`/native-capture/${id}`, {
-      signal: AbortSignal.timeout(10000),
+      signal: signal
+        ? AbortSignal.any([signal, AbortSignal.timeout(10000)])
+        : AbortSignal.timeout(10000),
     }),
   nativeRecordings: () =>
     request<{ recording: RecordingSession; config: SessionConfig | null }[]>(
