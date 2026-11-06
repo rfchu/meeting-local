@@ -1,4 +1,4 @@
-"""C1/C2/C3/C4/D1 follow-up synthetic resource UI: PYTHONPATH=. .venv/bin/python scripts/resource_ui_fixture.py.
+"""C1/C2/C3/C4/D1/D2 synthetic resource UI: PYTHONPATH=. .venv/bin/python scripts/resource_ui_fixture.py.
 No models, microphone or user data. Scenario controls exist only in this fixture.
 """
 import argparse,os,tempfile
@@ -10,7 +10,7 @@ def main():
     parser.add_argument('--port',type=int,default=9876)
     parser.add_argument('--static-dir',type=Path)
     args=parser.parse_args()
-    with tempfile.TemporaryDirectory(prefix='tingji-d1-followup-ui-') as directory:
+    with tempfile.TemporaryDirectory(prefix='tingji-d2-ui-') as directory:
         os.environ['MEETING_DATA']=directory
         from unittest.mock import patch
         from fastapi.staticfiles import StaticFiles
@@ -30,6 +30,14 @@ def main():
             claims=[];services=app.state.services;store=services.store;rid=uid();jid=uid();mid=uid();pid=uid()
             @app.post('/_fixture/resources/{scenario}')
             def scenario(scenario:str):
+                if scenario=='source-changed':
+                    from app.minutes import MeetingMinutes,MinutesItem
+                    from app import minutes_versions
+                    with store.connect() as db:
+                        if not minutes_versions.selected(db,mid):
+                            minutes_versions.publish_draft(db,mid,1,MeetingMinutes(title='合成纪要来源核对',style='ai',overview=[MinutesItem(content='周五提交材料',source_segment_ids=['s1'])]),{})
+                    store.save_revision(mid,[{'id':'s1','start':0,'end':2,'speaker':'甲','text':'更正：周四由甲提交合成材料。'}],'manual')
+                    return {'synthetic':True,'source_changed':True}
                 if scenario=='handoff-interrupted':
                     from app.db import encode
                     job_id=uid()

@@ -15,6 +15,7 @@ const labels = {
 };
 export default function LiveOverviewPanel({
   recordingId,
+  focusItemId,
   engine = "qwen",
   active = false,
   profiles = [],
@@ -23,6 +24,7 @@ export default function LiveOverviewPanel({
   locateLabel = "查看原文",
 }: {
   recordingId: string;
+  focusItemId?: string;
   engine?: "qwen" | "whisper";
   active?: boolean;
   profiles?: LLMConfig[];
@@ -65,6 +67,22 @@ export default function LiveOverviewPanel({
     setVersion(0);
     setEditing(null);
   }, [recordingId]);
+  const locatedItem = useRef("");
+  useEffect(() => {
+    if (!focusItemId || !data || locatedItem.current === focusItemId) return;
+    setExpanded(focusItemId);
+    setShowIgnored(true);
+    const timer = window.setTimeout(() => {
+      const item = Array.from(
+        document.querySelectorAll<HTMLElement>("[data-overview-item]"),
+      ).find((el) => el.dataset.overviewItem === focusItemId);
+      if (item) {
+        item.scrollIntoView({ block: "center" });
+        locatedItem.current = focusItemId;
+      }
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [focusItemId, data]);
   const run = async (action: () => Promise<OverviewStatus>) => {
     setBusy(true);
     setError("");
@@ -354,6 +372,7 @@ export default function LiveOverviewPanel({
                 {group.map((item) => (
                   <article
                     key={item.id}
+                    data-overview-item={item.id}
                     className={`overview-item ${item.decision}${item.stale ? " stale" : ""}`}
                   >
                     <div className="overview-item-main">

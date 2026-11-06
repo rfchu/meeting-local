@@ -1,3 +1,6 @@
+import { useState } from "react";
+import HandoffSourcesDialog from "../features/meeting/HandoffSourcesDialog";
+import type { HandoffSource } from "../features/meeting/handoffSources";
 import {
   currentHandoff,
   handoffAction,
@@ -17,6 +20,7 @@ interface Props {
   transcriptDirty: boolean;
   minutesDirty: boolean;
   reviewBusy: boolean;
+  onSourceLocate?: (source: HandoffSource) => void;
   onTranscribe: () => void;
   onRecordingReview?: () => void;
   onSave: () => void;
@@ -46,6 +50,7 @@ const hints: Record<ReviewStep, string> = {
 };
 
 export default function Workflow(props: Props) {
+  const [sourcesOpen, setSourcesOpen] = useState(false);
   const {
     meeting,
     transcriptDirty,
@@ -243,6 +248,19 @@ export default function Workflow(props: Props) {
           {label}
         </button>
       </div>
+      {sourcesOpen && (
+        <HandoffSourcesDialog
+          key={meeting.id}
+          meeting={meeting}
+          dirty={transcriptDirty || minutesDirty}
+          onClose={() => setSourcesOpen(false)}
+          onLocate={(source) => {
+            setSourcesOpen(false);
+            if (props.onSourceLocate) props.onSourceLocate(source);
+            else onReview("transcript");
+          }}
+        />
+      )}
       <details className="postmeeting-review">
         <summary>
           会后交接与核对 · {progress.complete}/4
@@ -294,6 +312,14 @@ export default function Workflow(props: Props) {
               </p>
             )}
           </div>
+        )}
+        {handoff && (
+          <button
+            disabled={transcriptDirty || minutesDirty}
+            onClick={() => setSourcesOpen(true)}
+          >
+            查看具体来源与处理
+          </button>
         )}
         {handoff && <h4>人工核对记录</h4>}
         <div className="review-grid">

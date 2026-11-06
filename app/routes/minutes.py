@@ -76,7 +76,7 @@ def register_routes(app,services:ApplicationServices):
                 latest=db.execute("SELECT id FROM artifacts WHERE meeting_id=? AND revision=? AND kind='meeting_minutes' ORDER BY created DESC,rowid DESC LIMIT 1",(mid,row['revision'])).fetchone()
                 if not base or (not body.allow_branch and (not latest or latest['id']!=body.source_minutes_id)):raise HTTPException(409,'纪要版本已变化，请刷新后再保存')
                 original=json.loads(base['provenance'])
-                for key in ('flow_context_hash','reviewed_attention','composition','source_minutes_dependencies'):
+                for key in ('flow_context_hash','reviewed_attention','reviewed_live_overview','composition','source_minutes_dependencies'):
                     if key in original:provenance[key]=original[key]
                 adopted=[n for n in original.get('adopted_notes',[]) if any(item.content==n['content'] and item.source_segment_ids==n['source_segment_ids'] for item in getattr(body.document,n['section']))]
                 if adopted:provenance['adopted_notes']=adopted
@@ -205,7 +205,7 @@ def register_routes(app,services:ApplicationServices):
         except (RuntimeError,ValueError,subprocess.TimeoutExpired) as error:raise HTTPException(409,str(error))
         aid=uid();provenance={'minutes_version':MINUTES_VERSION,'style':'ai','template_id':template.id,
             'template_version':template.version,'edited':False,'ai_generated':True,
-            'flow_context_hash':context_hash,'reviewed_attention':context['reviewed_attention'],
+            'flow_context_hash':context_hash,'reviewed_attention':context['reviewed_attention'],'reviewed_live_overview':context.get('reviewed_live_overview',[]),
             'generation_mode':body.mode,'source_transcript_revision':row['revision'],'provider':provider_name,'provider_type':provider_type,'model':model}
         if source_analysis:provenance['source_analysis_id']=source_analysis['id']
         if body.composition:provenance.update(composition=body.composition.model_dump(),parent_minutes_id=body.source_minutes_id)
@@ -269,7 +269,7 @@ def register_routes(app,services:ApplicationServices):
             'minutes_version':MINUTES_VERSION,'style':polished.style,'template_id':polished.template_id,
             'template_version':polished.template_version,'edited':False,'llm_polished':True,
             'provider':provider_name,'provider_type':provider_type,'model':model}
-        for key in ('flow_context_hash','reviewed_attention','composition','source_minutes_dependencies'):
+        for key in ('flow_context_hash','reviewed_attention','reviewed_live_overview','composition','source_minutes_dependencies'):
             if key in source_provenance:provenance[key]=source_provenance[key]
         adopted=[n for n in source_provenance.get('adopted_notes',[]) if any(item.content==n['content'] and item.source_segment_ids==n['source_segment_ids'] for item in getattr(polished,n['section']))]
         if adopted:provenance['adopted_notes']=adopted

@@ -22,3 +22,16 @@ test('An interrupted stage can focus its own task instead of a different primary
 test('Stale source projection cannot send an old task focus to another meeting view',()=>{const value={...fixture(),id:'m',revision:2};assert.equal(handoffTaskFocus(value,'old-job'),undefined);});
 test('Scoped task query encodes IDs as values and keeps completed tasks visible with all filter',()=>{const query=taskQuery('all',{meetingId:'m & other=1',jobId:'job?#'});const params=new URLSearchParams(query.split('?')[1]);assert.equal(params.get('meeting_id'),'m & other=1');assert.equal(params.get('job_id'),'job?#');assert.equal(params.get('state'),'all');assert.equal(params.size,3);});
 test('Unscoped task query retains the old runtime task URL',()=>{assert.equal(taskQuery('active'),'/runtime/tasks?state=active');});
+const {feedbackLabel,sourceCommandKey}=await load('../src/features/meeting/handoffSources.ts');
+test('Human source feedback remains distinct from provenance validity and stale feedback is explicit',()=>{
+  assert.equal(feedbackLabel({feedback:null}),'待处理');
+  assert.equal(feedbackLabel({feedback:{decision:'reviewed',stale:false}}),'已人工核对');
+  assert.equal(feedbackLabel({feedback:{decision:'keep_history',stale:false}}),'已标记保留历史');
+  assert.equal(feedbackLabel({feedback:{decision:'reset',stale:false}}),'已撤回处理');
+  assert.equal(feedbackLabel({feedback:{decision:'reviewed',stale:true}}),'来源又有变化，需重新处理');
+});
+test('Source command reuse is bound to artifact, item, fingerprint and decision',()=>{
+  const item={source_id:'segment:s1',fingerprint:'x'};const key=sourceCommandKey('a',item,'reviewed');
+  assert.equal(key,sourceCommandKey('a',item,'reviewed'));
+  for(const other of [sourceCommandKey('b',item,'reviewed'),sourceCommandKey('a',{...item,fingerprint:'y'},'reviewed'),sourceCommandKey('a',item,'reset')])assert.notEqual(key,other);
+});

@@ -6,15 +6,15 @@ import hashlib, json, shutil, subprocess
 from pathlib import Path
 from typing import Literal
 from urllib.parse import quote
-from fastapi import File, UploadFile, HTTPException, Request
+from fastapi import Query, File, UploadFile, HTTPException, Request
 from fastapi.responses import FileResponse, Response
 from ..db import uid, encode
 from ..providers import LocalDiarization
 from ..analysis import OpenAICompatibleProvider, analysis_chunk_chars, SECTION_NAMES
 from ..transcript_paragraphs import paragraphs
 from ..qa import QA
-from .. import meeting_flow, minutes_delivery
-from ..http_schemas import ActionTrackInput, AnalysisJobInput, AttentionDecisionInput, DeliveryInput, JobInput, MeetingBriefInput, MeetingNoteInput, MeetingNoteUpdate, MeetingNotesBatchInput, NoteAcceptInput, NoteUseInput, RenameInput, ReviewCheckpointInput, RevisionInput, SpeakerReviewApplyInput, TodoUpdate
+from .. import meeting_flow, minutes_delivery, handoff_sources
+from ..http_schemas import SourceReviewInput, ActionTrackInput, AnalysisJobInput, AttentionDecisionInput, DeliveryInput, JobInput, MeetingBriefInput, MeetingNoteInput, MeetingNoteUpdate, MeetingNotesBatchInput, NoteAcceptInput, NoteUseInput, RenameInput, ReviewCheckpointInput, RevisionInput, SpeakerReviewApplyInput, TodoUpdate
 from ..application_services import ApplicationServices
 
 def register_routes(app,services:ApplicationServices):
@@ -30,6 +30,17 @@ def register_routes(app,services:ApplicationServices):
     LMStudioProvider=services.providers.llm
     generate_review=services.providers.speaker_review
     prepare_auto_minutes=services.providers.auto_minutes
+
+    @app.get('/api/meetings/{mid}/handoff/sources')
+    def handoff_source_report(mid:str,artifact_id:str|None=Query(default=None,min_length=1,max_length=100),offset:int=Query(default=0,ge=0),limit:int=Query(default=25,ge=1,le=50)):
+        try:return handoff_sources.report(store,mid,artifact_id,offset,limit)
+        except KeyError:raise HTTPException(404,'会议或纪要不存在')
+
+    @app.post('/api/meetings/{mid}/handoff/source-reviews')
+    def handoff_source_review(mid:str,body:SourceReviewInput):
+        try:return handoff_sources.review(store,mid,body)
+        except KeyError:raise HTTPException(404,'会议或纪要不存在')
+        except ValueError as error:raise HTTPException(409,str(error))
 
     @app.put('/api/meetings/{mid}/review/{step}')
     def confirm_review(mid:str,step:Literal['transcript','speakers','notes','minutes'],body:ReviewCheckpointInput):

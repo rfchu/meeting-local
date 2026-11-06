@@ -1,3 +1,7 @@
+import type {
+  HandoffSources,
+  SourceDecision,
+} from "./features/meeting/handoffSources";
 import { taskQuery } from "./features/management/taskScope";
 import type { ResourceStatus } from "./features/management/ResourceStatusPanel";
 import { reportRecordingCommand } from "./features/notes/recordingCommandEvents";
@@ -150,6 +154,25 @@ const recordingCommands = new RecordingCommandClient(
 );
 
 export const api = {
+  handoffSources: (mid: string, artifactId?: string, offset = 0) =>
+    request<HandoffSources>(
+      `/meetings/${mid}/handoff/sources?${new URLSearchParams({ offset: String(offset), ...(artifactId ? { artifact_id: artifactId } : {}) })}`,
+    ),
+  reviewHandoffSource: (
+    mid: string,
+    body: {
+      artifact_id: string;
+      source_id: string;
+      fingerprint: string;
+      decision: SourceDecision;
+      request_id: string;
+      confirmed: boolean;
+    },
+  ) =>
+    request<{ id: string; reused: boolean; decision: SourceDecision }>(
+      `/meetings/${mid}/handoff/source-reviews`,
+      json("POST", body),
+    ),
   runtimeRecordings: (signal?: AbortSignal) =>
     request<{
       items: {

@@ -7,10 +7,12 @@ export default function OverviewArchiveButton({
   onSeek,
   openRequested = false,
   onOpened,
+  focusItemId,
 }: {
   meeting: Meeting;
   openRequested?: boolean;
   onOpened?: () => void;
+  focusItemId?: string;
   onSeek: (time: number) => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -40,6 +42,7 @@ export default function OverviewArchiveButton({
           <LiveOverviewPanel
             key={meeting.id}
             recordingId={meeting.id}
+            focusItemId={focusItemId}
             onLocate={(e) => onSeek(e.start)}
             locateLabel="回听来源"
           />

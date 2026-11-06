@@ -88,6 +88,8 @@ export default function App() {
     [workspace, setWorkspace] = useState<Workspace>("transcript");
   const [actionsFocus, setActionsFocus] = useState(false);
   const [overviewFocus, setOverviewFocus] = useState(false);
+  const [overviewSourceId, setOverviewSourceId] = useState<string>();
+  const [noteSourceId, setNoteSourceId] = useState<string>();
   const [transcriptDirty, setTranscriptDirty] = useState(false),
     [savingTranscript, setSavingTranscript] = useState(false);
   const [minutesDraft, setMinutesDraft] = useState<MeetingMinutes | null>(null),
@@ -965,6 +967,7 @@ export default function App() {
               <button onClick={() => setRenameOpen(true)}>重命名</button>
               <OverviewArchiveButton
                 openRequested={overviewFocus}
+                focusItemId={overviewSourceId}
                 onOpened={() => setOverviewFocus(false)}
                 key={meeting.id}
                 meeting={meeting}
@@ -1114,6 +1117,20 @@ export default function App() {
                 }));
                 navigateReview("transcript");
               }}
+              onSourceLocate={(source) => {
+                if (source.target?.item_id) {
+                  setOverviewSourceId(source.target.item_id);
+                  setOverviewFocus(true);
+                } else if (source.target?.note_id) {
+                  setNoteSourceId(source.target.note_id);
+                  locateReview(source.target.start ?? 0);
+                  setReviewSourceOpen(true);
+                  navigateReview("notes");
+                } else {
+                  navigateReview("transcript");
+                  setRestoredSegment(source.target?.segment_id);
+                }
+              }}
               onReview={navigateReview}
               onConfirm={(step, decision) => void confirmReview(step, decision)}
               onTranscribe={() => void startTranscription()}
@@ -1126,7 +1143,10 @@ export default function App() {
                 setActionsFocus(true);
                 navigateReview("minutes");
               }}
-              onOverview={() => setOverviewFocus(true)}
+              onOverview={() => {
+                setOverviewSourceId(undefined);
+                setOverviewFocus(true);
+              }}
               onAnalysis={() => setWorkspace("analysis")}
               onMinutes={() => navigateReview("minutes")}
               onPreview={() => void openMinutesPreview()}
@@ -1273,6 +1293,8 @@ export default function App() {
                       <NotesView
                         key={meeting.id}
                         inlineReview
+                        focusNoteId={noteSourceId}
+                        onNoteFocused={() => setNoteSourceId(undefined)}
                         onLocate={(time) => {
                           locateReview(time);
                           setReviewSourceOpen(true);

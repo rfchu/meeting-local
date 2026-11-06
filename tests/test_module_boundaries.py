@@ -10,6 +10,9 @@ from app.main import create_app
 def test_http_contract_matches_pre_split_v22(tmp_path):
     app=create_app(tmp_path/'contract',start_worker=False)
     schema=app.openapi()
+    assert schema['paths'].pop('/api/meetings/{mid}/handoff/sources')
+    assert schema['paths'].pop('/api/meetings/{mid}/handoff/source-reviews')
+    assert schema['components']['schemas'].pop('SourceReviewInput')
     assert schema['paths'].pop('/api/runtime/resources')
     assert schema['paths'].pop('/api/meetings/{mid}/minutes/jobs')
     assert schema['components']['schemas'].pop('MinutesTaskInput')
@@ -18,7 +21,7 @@ def test_http_contract_matches_pre_split_v22(tmp_path):
     # Captured from the running v22 service before splitting: 116 paths, 135 operations.
     assert hashlib.sha256(payload.encode()).hexdigest()=='fac4d2387540dd6ea2f8f29205390b870e6d7a8695f1f743831ce1f2ec026b90'
     operations=[(method,route.path) for route in app.routes if isinstance(route,APIRoute) for method in route.methods]
-    assert len(operations)==len(set(operations))==137
+    assert len(operations)==len(set(operations))==139
 
 
 def test_two_applications_do_not_share_recording_or_meeting_resources(tmp_path):

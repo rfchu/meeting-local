@@ -275,3 +275,12 @@ class AIMinutesGenerateInput(MinutesPolishInput):
     source_minutes_id: str | None=Field(default=None,max_length=100)
     mode: Literal['quick','full']='quick'
     template_id: str=Field(default='general-meeting',max_length=100)
+
+
+class SourceReviewInput(BaseModel):
+    artifact_id: str=Field(min_length=1,max_length=100)
+    source_id: str=Field(min_length=1,max_length=300)
+    fingerprint: str=Field(pattern=r'^[a-f0-9]{64}$')
+    request_id: str=Field(min_length=1,max_length=80)
+    decision: Literal['reviewed','keep_history','reset']
+    confirmed: bool=False

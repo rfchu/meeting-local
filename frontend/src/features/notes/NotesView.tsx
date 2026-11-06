@@ -28,9 +28,13 @@ export default function NotesView({
   minutesDirty,
   onMinutes,
   inlineReview = false,
+  focusNoteId,
+  onNoteFocused,
   onLocate,
 }: {
   inlineReview?: boolean;
+  focusNoteId?: string;
+  onNoteFocused?: () => void;
   onLocate?: (time: number) => void;
   meeting: Meeting;
   onMinutes: () => void;
@@ -56,6 +60,13 @@ export default function NotesView({
     [profileId, setProfileId] = useModelChoice("notes"),
     [busy, setBusy] = useState(false),
     [selected, setSelected] = useState<string | null>(null);
+  useEffect(() => {
+    if (focusNoteId && meeting.notes.some((n) => n.id === focusNoteId)) {
+      setFilter("all");
+      setSelected(focusNoteId);
+      onNoteFocused?.();
+    }
+  }, [focusNoteId, meeting.notes, onNoteFocused]);
   useEffect(() => {
     api
       .environment()

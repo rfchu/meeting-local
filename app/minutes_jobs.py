@@ -146,7 +146,7 @@ class MinutesJobs:
             existing=db.execute("SELECT id FROM artifacts WHERE meeting_id=? AND kind='meeting_minutes' AND json_extract(provenance,'$.job')=?",(mid,jid)).fetchone()
             provenance={'job':jid,'minutes_version':MINUTES_VERSION,'style':document.style,'template_id':document.template_id,'template_version':document.template_version,
                 'edited':False,'ai_generated':True,'provider':snapshot['name'],'provider_type':snapshot['provider_type'],'model':config['model'],
-                'source_transcript_revision':config['revision'],'flow_context_hash':context_hash,'reviewed_attention':context['reviewed_attention'],'composition':settings.model_dump(),
+                'source_transcript_revision':config['revision'],'flow_context_hash':context_hash,'reviewed_attention':context['reviewed_attention'],'reviewed_live_overview':context.get('reviewed_live_overview',[]),'composition':settings.model_dump(),
                 'source_analysis_id':config['source_analysis_id'],'parent_minutes_id':config['source_minutes_id'],'source_minutes_dependencies':[source['id']] if source else []}
             if config['operation']=='polish':
                 provenance['llm_polished']=True
