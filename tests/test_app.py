@@ -87,12 +87,13 @@ def test_recording_chunks_retry_and_finish_are_idempotent(client):
     assert (client.app.state.store.directory(rid)/'original').read_bytes()==payload
     assert client.get('/api/recordings').json()==[]
 
-def test_interrupted_recording_survives_restart_and_missing_chunks(client):
-    rid=client.post('/api/recordings',json={'mime_type':'audio/webm'}).json()['id']
-    payload=wav_bytes()
-    assert client.put(f'/api/recordings/{rid}/chunks/0',files={'file':('chunk',payload[:1000])}).status_code==200
-    assert client.put(f'/api/recordings/{rid}/chunks/2',files={'file':('chunk',payload[2000:])}).status_code==200
-    root=client.app.state.store.root
+def test_interrupted_recording_survives_restart_and_missing_chunks(tmp_path):
+    root=tmp_path
+    with TestClient(create_app(root,start_worker=False)) as client:
+        rid=client.post('/api/recordings',json={'mime_type':'audio/webm'}).json()['id']
+        payload=wav_bytes()
+        assert client.put(f'/api/recordings/{rid}/chunks/0',files={'file':('chunk',payload[:1000])}).status_code==200
+        assert client.put(f'/api/recordings/{rid}/chunks/2',files={'file':('chunk',payload[2000:])}).status_code==200
     with TestClient(create_app(root,start_worker=False)) as restarted:
         pending=restarted.get('/api/recordings').json()[0]
         assert pending['chunk_count']==3 and pending['saved_chunks']==2

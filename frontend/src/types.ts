@@ -215,9 +215,12 @@ export interface RecordingSession {
   health?: RecordingHealth;
 }
 export interface RecordingHealth {
+  runtime?: RecordingRuntime;
+  lifecycle?: { available: boolean; events: LifecycleEvent[] };
   empty_session?: boolean;
   recovery_archived?: boolean;
-  capture_failure_code?: "permission_required" | "capture_failed" | "";
+  capture_failure_code?:
+    "permission_required" | "capture_failed" | "storage_failed" | "";
   schema_version: number;
   source: "browser" | "native";
   state: string;
@@ -244,6 +247,30 @@ export interface RecordingHealth {
     }
   >;
   warning_codes: string[];
+}
+export interface LifecycleEvent {
+  seq: number;
+  at: number;
+  code: string;
+  metrics: Record<string, number | boolean | null>;
+}
+export interface RecordingRuntime {
+  phase: string;
+  observed_at: number;
+  capture: { state: string; heartbeat_age_seconds: number | null };
+  storage: {
+    state: string;
+    saved_bytes: number;
+    last_saved_seconds: number | null;
+    saved_chunks: number;
+    missing_chunks: number;
+  };
+  asr: {
+    state: string;
+    engine: string | null;
+    covered_seconds: number;
+    gap_count: number;
+  };
 }
 export interface NativeCapability {
   available: boolean;

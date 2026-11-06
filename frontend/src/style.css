@@ -2321,6 +2321,9 @@ dialog code {
 .recording-health-panel .health-warning span {
   color: #9b5812;
 }
+.recording-status-summary {
+  grid-column: 1 / -1;
+}
 .recording-recovery-banner {
   display: flex;
   flex-wrap: wrap;

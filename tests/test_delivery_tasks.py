@@ -96,6 +96,7 @@ def test_delivery_frozen_after_draft_task_transcript_changes_and_restart(setup,t
     assert c.get(path).content==original
     assert c.get(path+'&include_citations=false').content==original
     assert c.get(f'/api/meetings/{other}/minutes/export/md?delivery_id={did}').status_code==404
+    c.__exit__(None,None,None)  # Release the previous service before a real restart.
     with TestClient(create_app(tmp_path,start_worker=False)) as restarted:
         assert restarted.get(path).content==original
         snapshots=restarted.get(f'/api/meetings/{mid}').json()['deliveries']

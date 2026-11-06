@@ -29,6 +29,8 @@ from .live_stream import inspect_audio, qwen_events
 from .qwen_resident import QwenResident
 from .keep_awake import KeepAwake
 from .recording_health import RecordingHealth
+from .lifecycle import Lifecycle
+from .recording_runtime import RecordingRuntime
 from .recording_completion import completion_report
 from .meeting_review import MeetingReview
 from .qa import QA
@@ -183,6 +185,9 @@ class RecordingMetadata(MeetingNotesBatchInput):
     brief: MeetingBriefInput | None=None
     duration: float=Field(default=0,ge=0,allow_inf_nan=False)
     chunk_count: int=Field(default=0,ge=0,le=100000)
+class CaptureStateInput(BaseModel):
+    state:Literal['recording','paused','stopped','interrupted']
+
 class RecordingFinish(BaseModel):
     chunk_count: int=Field(ge=1,le=100000)
 class NativeDraftInput(BaseModel):
@@ -236,41 +241,54 @@ class AIMinutesGenerateInput(MinutesPolishInput):
 
 def create_app(data_dir=None, start_worker=True):
     store=Store(data_dir or os.getenv('MEETING_DATA',str(BASE/'data')))
+    lifecycle=Lifecycle(store.root)
     live_corrections=LiveCorrections(store)
     minutes_generation=MinutesGeneration(store)
     worker=Worker(store)
     retrieval=Retrieval(store)
     @asynccontextmanager
     async def lifespan(app):
-        loop=asyncio.get_running_loop()
-        worker.asr_lock=live_asr_lock
-        worker.release_model=lambda:asyncio.run_coroutine_threadsafe(resident.close(),loop).result(timeout=10)
-        if start_worker: worker.start()
-        resident.start_monitor()
-        store.execute("UPDATE live_asr_ranges SET state='failed',error='服务重启，识别未完成；快速完成会补识别该范围' WHERE state='running'")
-        await run_in_threadpool(native_capture.reconcile_interrupted)
-        await live_sessions.resume()
-        native_capture.start_monitor()
-        capture_probes.start_monitor()
-        live_overview.start_monitor()
-        keep_awake.start_monitor()
-        yield
-        await run_in_threadpool(live_overview.close)
-        await live_sessions.close()
-        await run_in_threadpool(capture_probes.close)
-        await run_in_threadpool(keep_awake.close)
-        await run_in_threadpool(native_capture.close)
-        await run_in_threadpool(worker.close)
-        await resident.shutdown()
-        local_embedding().cancel.set()
-        local_embedding().release()
+        lifecycle.start()
+        try:
+            loop=asyncio.get_running_loop()
+            worker.asr_lock=live_asr_lock
+            worker.release_model=lambda:asyncio.run_coroutine_threadsafe(resident.close(),loop).result(timeout=10)
+            if start_worker: worker.start()
+            resident.start_monitor()
+            store.execute("UPDATE live_asr_ranges SET state='failed',error='服务重启，识别未完成；快速完成会补识别该范围' WHERE state='running'")
+            await run_in_threadpool(native_capture.reconcile_interrupted)
+            await live_sessions.resume()
+            native_capture.start_monitor()
+            capture_probes.start_monitor()
+            live_overview.start_monitor()
+            keep_awake.start_monitor()
+            yield
+        finally:
+            lifecycle.record('service.shutdown_requested')
+            clean=False
+            try:
+                await run_in_threadpool(live_overview.close)
+                await live_sessions.close()
+                await run_in_threadpool(capture_probes.close)
+                await run_in_threadpool(keep_awake.close)
+                await run_in_threadpool(native_capture.close)
+                await run_in_threadpool(worker.close)
+                await resident.shutdown()
+                local_embedding().cancel.set()
+                local_embedding().release()
+                clean=True
+            finally:lifecycle.close(clean)
     app=FastAPI(title='听记 · Local Meeting',lifespan=lifespan)
     app.state.store=store; app.state.worker=worker
     @app.get('/api/runtime/service')
     def service_identity():
         return {'pid':os.getpid(),'instance_id':os.getenv('TINGJI_INSTANCE_ID'),
-                'mode':os.getenv('TINGJI_SERVICE_MODE','foreground')}
+                'mode':os.getenv('TINGJI_SERVICE_MODE','foreground'),'journal_available':lifecycle.available}
+    @app.get('/api/runtime/lifecycle')
+    def service_lifecycle():return {'available':lifecycle.available,'events':lifecycle.events(),'mode':os.getenv('TINGJI_SERVICE_MODE','foreground')}
     recordings=RecordingStore(store)
+    recordings.lifecycle=lifecycle
+    app.state.lifecycle=lifecycle
     native_capture=NativeCapture(store,recordings)
     capture_probes=CaptureProbe(native_capture)
     app.state.capture_probes=capture_probes
@@ -281,6 +299,9 @@ def create_app(data_dir=None, start_worker=True):
     keep_awake=KeepAwake(recording_open,lambda rid:getattr(native_capture,'is_running',lambda _:False)(rid))
     app.state.keep_awake=keep_awake
     recording_health=RecordingHealth(store,recordings,native_capture)
+    recording_runtime=RecordingRuntime(store,recordings,native_capture,recording_health,lifecycle)
+    lifecycle.observer=recording_runtime.observe
+    app.state.recording_runtime=recording_runtime
     meeting_review=MeetingReview(store)
     qa=QA(store)
     live_results=LiveResults(store,recordings)
@@ -741,6 +762,9 @@ def create_app(data_dir=None, start_worker=True):
             await live_sessions.finish(rid)
             mid=await run_in_threadpool(native_capture.finish,rid);keep_awake.release(rid);return decorated(meeting(mid))
         except FileNotFoundError as error:raise HTTPException(404,str(error))
+        except OSError:
+            lifecycle.record('storage.failed',rid)
+            raise HTTPException(503,'会议文件写盘未完成，原始音轨保留，可重试保存')
         except (ValueError,RuntimeError,subprocess.SubprocessError) as error:raise HTTPException(409,str(error))
     @app.get('/api/live-sessions')
     def active_live_sessions():
@@ -811,13 +835,30 @@ def create_app(data_dir=None, start_worker=True):
     def create_recording(body:RecordingInput):return recordings.create(body.mime_type)
     @app.get('/api/recordings/{rid}/health')
     def recording_inventory(rid:str):
-        try:return recording_health.snapshot(rid)
+        try:
+            value=recording_health.snapshot(rid)
+            return value|{'runtime':recording_runtime.read(rid,value),'lifecycle':{'available':lifecycle.available,'events':lifecycle.events(rid,20),'checkpoints':lifecycle.checkpoints(rid)}}
         except FileNotFoundError:raise HTTPException(404,'录音会话不存在')
         except ValueError:raise HTTPException(409,'录音元数据无法读取，已有文件保留')
     @app.get('/api/recordings/{rid}/completion')
     def recording_completion(rid:str,engine:Literal['whisper','qwen']='qwen'):
         try:return completion_report(store,recordings,live_results,rid,engine)
         except FileNotFoundError:raise HTTPException(404,'录音会话不存在')
+    @app.post('/api/recordings/{rid}/capture-state')
+    def browser_capture_state(rid:str,body:CaptureStateInput):
+        try:
+            with recordings.lock:
+                value=recordings.read(rid)
+                if value.get('source')=='macos' or value['state']=='completed':raise ValueError('此会话不能更新浏览器采集状态')
+                if value['state'] in ('stopped','interrupted') and body.state in ('recording','paused'):raise ValueError('已停止的浏览器采集不能重新开启')
+                if value.get('capture_reported') and value['state']==body.state:return {'ok':True}
+                first=not value.get('capture_reported')
+                value['capture_reported']=True
+                value.update(state=body.state,updated=time.time());recordings.write(recordings.folder(rid)/'session.json',value)
+                lifecycle.record('capture.started' if first and body.state=='recording' else {'recording':'capture.resumed','paused':'capture.paused','stopped':'capture.stop_requested','interrupted':'capture.interrupted'}[body.state],rid)
+            return {'ok':True}
+        except FileNotFoundError:raise HTTPException(404,'录音会话不存在')
+        except ValueError as error:raise HTTPException(409,str(error))
     @app.get('/api/recordings/{rid}/diagnostics')
     def recording_diagnostics(rid:str):
         report=recording_inventory(rid)
@@ -845,10 +886,14 @@ def create_app(data_dir=None, start_worker=True):
             return recordings.chunk(rid,index,payload)
         except FileNotFoundError as error:raise HTTPException(404,str(error))
         except ValueError as error:raise HTTPException(409,str(error))
+        except OSError:
+            lifecycle.record('storage.failed',rid)
+            raise HTTPException(503,'音频分段写盘失败，已有分段保留，请重试同步')
         finally:file.file.close()
     @app.post('/api/recordings/{rid}/finish')
     async def finish_recording(rid:str,body:RecordingFinish):
         try:
+            lifecycle.record('capture.stop_requested',rid)
             await live_sessions.finish(rid)
             mid=await run_in_threadpool(recordings.finish,rid,body.chunk_count);keep_awake.release(rid)
             try:await run_in_threadpool(live_sessions.published,rid)
@@ -856,6 +901,9 @@ def create_app(data_dir=None, start_worker=True):
             return decorated(meeting(mid))
         except FileNotFoundError as error:raise HTTPException(404,str(error))
         except ValueError as error:raise HTTPException(409,str(error))
+        except OSError:
+            lifecycle.record('storage.failed',rid)
+            raise HTTPException(503,'会议文件写盘未完成，已有音频保留，可重试保存')
     @app.post('/api/meetings',status_code=201)
     async def upload(file:UploadFile=File(...)):
         filename=Path(file.filename or '录音.wav').name

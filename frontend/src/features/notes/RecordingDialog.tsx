@@ -171,6 +171,20 @@ export default function RecordingDialog({
   );
   const [nativeUnavailable, setNativeUnavailable] = useState(false);
   const nativeHealthyRef = useRef(false);
+  const browserStateQueue = useRef<Promise<unknown>>(Promise.resolve());
+  const reportBrowserState = (
+    state: "recording" | "paused" | "stopped" | "interrupted",
+  ) => {
+    const session = sessionRef.current;
+    if (!session || session.source === "macos") return Promise.resolve();
+    browserStateQueue.current = browserStateQueue.current
+      .catch(() => {})
+      .then(() => api.captureState(session.id, state))
+      .catch(() => {
+        setSaveStatus("采集状态尚未同步，已有录音保留，正在等待连接恢复");
+      });
+    return browserStateQueue.current;
+  };
   const [historyOpen, setHistoryOpen] = useState(false);
   const [inspectorOpen, setInspectorOpen] = useState(false),
     [noteOptionsOpen, setNoteOptionsOpen] = useState(false);
@@ -855,6 +869,7 @@ export default function RecordingDialog({
         if (recorderRef.current?.state === "recording") {
           accruedRef.current = currentSeconds();
           recorderRef.current.pause();
+          void reportBrowserState("paused");
           stateRef.current = "paused";
           setState("paused");
         }
@@ -1220,6 +1235,7 @@ export default function RecordingDialog({
         }
       });
       recorder.onerror = () => {
+        void reportBrowserState("interrupted");
         accruedRef.current = currentSeconds();
         stateRef.current = "failed";
         setState("failed");
@@ -1257,6 +1273,7 @@ export default function RecordingDialog({
         await closeDraftCapture();
       }
       recorder.start(5000);
+      void reportBrowserState("recording");
       setState("recording");
     } catch (error) {
       stateRef.current = "idle";
@@ -1288,6 +1305,7 @@ export default function RecordingDialog({
     setMicrophoneLevels([]);
     accruedRef.current = currentSeconds();
     recorder.pause();
+    void reportBrowserState("paused");
     setElapsed(accruedRef.current);
     stateRef.current = "paused";
     setState("paused");
@@ -1321,6 +1339,7 @@ export default function RecordingDialog({
       return toast("请先重试保存，再继续录音");
     activeSinceRef.current = performance.now();
     recorder.resume();
+    void reportBrowserState("recording");
     if (managedMode && sessionRef.current)
       void api.liveSessionState(sessionRef.current.id, false).catch(() => {});
     stateRef.current = "recording";
@@ -1443,6 +1462,7 @@ export default function RecordingDialog({
     setNotes(savedNotes);
     setNoteText("");
     await stopRecorder(recorder);
+    await reportBrowserState("stopped");
     if (managedMode) {
       // Wait only for bounded local audio transport, never an unbounded inference queue.
       await Promise.race([
@@ -1519,7 +1539,9 @@ export default function RecordingDialog({
             {sessionRef.current ? "会议术语" : "个人术语库"}
           </button>
         </div>
-        <div className={`recording-clock${recording ? " active" : ""}`}>
+        <div
+          className={`recording-clock${recording && (captureSource === "browser" || (!captureHealth?.stalled && !nativeUnavailable)) ? " active" : ""}`}
+        >
           <span /> {clock(elapsed)}
         </div>
         <div className="recording-controls">

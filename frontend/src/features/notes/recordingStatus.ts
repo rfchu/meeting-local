@@ -1,0 +1,115 @@
+import type { RecordingRuntime } from "../../types";
+import { clock } from "../../utils";
+export function lifecycleLabel(code: string) {
+  const events: Record<string, string> = {
+    "service.started": "服务已启动",
+    "service.shutdown_requested": "服务开始关闭",
+    "service.clean_shutdown": "服务已正常关闭",
+    "service.previous_unclosed": "上次运行未留下正常关闭记录，原因待核查",
+    "service.shutdown_failed": "服务关闭未完整完成",
+    "recording.created": "录音会话已创建",
+    "capture.started": "采集已启动",
+    "capture.resumed": "采集已继续",
+    "capture.stop_requested": "已请求停止采集",
+    "capture.exited": "观察到采集进程退出",
+    "capture.reconciled": "遗留会话已标记中断",
+    "storage.completed": "会议文件已保存",
+  };
+  if (events[code]) return events[code];
+  const [part, state] = code.split(".");
+  const parts: Record<string, string> = {
+    capture: "采集",
+    storage: "文件",
+    asr: "实时识别",
+  };
+  const states: Record<string, string> = {
+    recording: "正在运行",
+    starting: "准备中",
+    paused: "已暂停",
+    unknown: "状态未知",
+    interrupted: "已中断",
+    stopped: "已结束",
+    waiting: "等待中",
+    running: "正在识别",
+    behind: "存在积压",
+    failed: "发生失败",
+    disabled: "未开启",
+    writing: "持续落盘中",
+    available: "已有内容已落盘",
+    partial: "存在缺段",
+    saved: "已保存",
+    missing: "保存文件待检查",
+  };
+  return `${parts[part] || "运行"}：${states[state] || "状态已变化"}`;
+}
+
+const phases: Record<string, string> = {
+  starting: "正在准备",
+  recording: "录音中",
+  paused: "已暂停",
+  unknown: "状态未知",
+  interrupted: "录音已中断",
+  saving: "正在保存会议",
+  saved: "会议已保存",
+};
+const inputs: Record<string, string> = {
+  starting: "等待采集启动",
+  recording: "正在采集",
+  paused: "采集已暂停",
+  unknown: "心跳或连接异常，不能确认继续采集",
+  interrupted: "采集已中断，已有音轨保留",
+  stopping: "正在停止采集",
+  stopped: "采集已结束",
+};
+export function recordingStatus(
+  runtime: RecordingRuntime | undefined,
+  local: string,
+  unavailable: boolean,
+) {
+  const unresolvedFailure =
+    local === "failed" &&
+    ["recording", "paused", "starting"].includes(runtime?.phase || "");
+  const phase =
+    local === "finished"
+      ? "saved"
+      : unavailable || unresolvedFailure
+        ? "unknown"
+        : runtime?.phase ||
+          (local === "failed"
+            ? "interrupted"
+            : local === "saving"
+              ? "saving"
+              : local);
+  const state =
+    local === "finished"
+      ? "stopped"
+      : unavailable || unresolvedFailure
+        ? "unknown"
+        : runtime?.capture.state;
+  return {
+    phase,
+    label:
+      local === "failed" && phase === "saving"
+        ? "保存待重试"
+        : phases[phase] || "正在核对状态",
+    input: state ? inputs[state] || "采集状态待核对" : null,
+    asr: unavailable
+      ? "识别状态暂不可用，已确认结果保留"
+      : runtime
+        ? {
+            disabled: "本次未开启实时识别",
+            running: "正在识别，原音独立保存",
+            waiting: "等待后续音频",
+            behind: "识别有积压，音频仍按采集状态保存",
+            failed: "识别失败，已有原音与确认结果保留",
+            stopped: "实时识别已结束，缺段可会后补识别",
+          }[runtime.asr.state] || "识别状态待核对"
+        : null,
+    savedPosition:
+      runtime?.storage.last_saved_seconds != null
+        ? `音轨已落盘末端 ${clock(runtime.storage.last_saved_seconds)}`
+        : runtime
+          ? `已落盘 ${runtime.storage.saved_chunks} 段，时间位置待合并核对`
+          : "",
+  };
+}

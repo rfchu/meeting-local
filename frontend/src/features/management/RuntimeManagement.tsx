@@ -1,4 +1,5 @@
 import TasksPanel from "./TasksPanel";
+import ServiceLifecyclePanel from "./ServiceLifecyclePanel";
 import IndexManagement from "./IndexManagement";
 import ModelDefaults from "./ModelDefaults";
 import { useEffect, useState } from "react";
@@ -352,6 +353,7 @@ export default function RuntimeManagement({
           </div>
           {page === "environment" && data && (
             <>
+              <ServiceLifecyclePanel />
               <section className="management-section">
                 <h3>采集与权限</h3>
                 <div className="management-row">

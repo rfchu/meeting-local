@@ -402,5 +402,5 @@
   padding: 3px 0;
 }
 .recording-workbench.focus-mode .recording-health-panel strong {
-  display: none;
+  display: block;
 }

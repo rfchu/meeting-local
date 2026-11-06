@@ -31,6 +31,7 @@ def test_generation_failure_stays_visible_after_reload(setup,monkeypatch):
     assert client.post(f'/api/meetings/{mid}/minutes/ai',json={}).status_code==409
     status=client.get(f'/api/meetings/{mid}').json()['minutes_generation']
     assert status['state']=='failed' and '截断' in status['error']
+    client.__exit__(None,None,None)  # Release the previous service before a real restart.
     with TestClient(create_app(store.root,start_worker=False)) as restarted:
         assert restarted.get(f'/api/meetings/{mid}').json()['minutes_generation']['id']==status['id']
 

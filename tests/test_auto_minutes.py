@@ -65,6 +65,7 @@ def test_transcript_and_child_queue_commit_together_and_survive_restart(setup):
     assert job and s.one('SELECT state FROM jobs WHERE id=?',(jid,))['state']=='completed'
     assert json.loads(job['config'])['revision']==1
     assert 'secret-not-in-job' not in job['config']
+    c.__exit__(None,None,None)  # Release the previous service before a real restart.
     with TestClient(create_app(s.root,start_worker=False)) as restarted:detail=generate(setup,job,restarted)
     artifact=next(a for a in detail['artifacts'] if a['kind']=='meeting_minutes')
     assert artifact['revision']==1 and artifact['provenance']['automatic']

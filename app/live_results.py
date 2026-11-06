@@ -44,7 +44,10 @@ class LiveResults:
     def preview(self,aid):
         self.store.execute("UPDATE live_asr_ranges SET state='preview',error='',updated=CURRENT_TIMESTAMP WHERE id=?",(aid,))
     def fail(self,aid,error):
-        self.store.execute("UPDATE live_asr_ranges SET state='failed',error=?,updated=CURRENT_TIMESTAMP WHERE id=? AND state='running'",(str(error)[:1000],aid))
+        with self.store.connect() as db:
+            changed=db.execute("UPDATE live_asr_ranges SET state='failed',error=?,updated=CURRENT_TIMESTAMP WHERE id=? AND state='running'",(str(error)[:1000],aid)).rowcount
+            row=db.execute('SELECT recording_id FROM live_asr_ranges WHERE id=?',(aid,)).fetchone() if changed else None
+        if row:self.recordings.event('asr.failed',row['recording_id'])
     def snapshot(self,rid,engine):
         rows=self.store.all("SELECT * FROM live_asr_ranges WHERE recording_id=? AND engine=? AND state='completed' ORDER BY rowid DESC",(rid,engine))
         accepted={}

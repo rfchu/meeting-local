@@ -6,7 +6,10 @@ from .db import uid, encode
 class RecordingStore:
     def __init__(self,store):
         self.store=store;self.root=store.root/'recordings';self.root.mkdir(exist_ok=True)
-        self.lock=threading.RLock()
+        self.lock=threading.RLock();self.lifecycle=None
+
+    def event(self,code,rid,**metrics):
+        if self.lifecycle:self.lifecycle.record(code,rid,**metrics)
 
     def folder(self,rid):
         self.store.directory(rid) # Validate before resolving any recording path.
@@ -35,7 +38,7 @@ class RecordingStore:
             rid=uid();folder=self.root/rid;folder.mkdir()
             session={'id':rid,'mime_type':mime_type,'created':time.time(),'updated':time.time(),
                      'duration':0,'notes':[],'chunk_count':0,'state':'recording'}
-            self.write(folder/'session.json',session);return session
+            self.write(folder/'session.json',session);self.event('recording.created',rid);return session
 
     def list(self):
         with self.lock:
@@ -76,6 +79,7 @@ class RecordingStore:
                 file.write(payload);file.flush();os.fsync(file.fileno())
             temporary.replace(target)
             self.sync_directory(folder)
+            self.event('storage.available',rid,saved_bytes=len(payload))
             return {'ok':True,'index':index}
 
     def finish(self,rid,chunk_count):
@@ -109,5 +113,6 @@ class RecordingStore:
                         from .notes import insert_note
                         insert_note(db,rid,note)
             session.update(state='completed',updated=time.time());self.write(folder/'session.json',session)
+            self.event('storage.completed',rid,saved_bytes=size,duration_seconds=session['duration'])
             for part in actual:part.unlink(missing_ok=True)
             return rid

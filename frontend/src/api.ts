@@ -69,6 +69,12 @@ export const api = {
   runtimeTasks: (state: string) =>
     request<RuntimeTasks>(`/runtime/tasks?state=${state}`),
   runtimeOverview: () => request<RuntimeOverview>("/runtime/overview"),
+  serviceLifecycle: () =>
+    request<{
+      available: boolean;
+      mode: string;
+      events: import("./types").LifecycleEvent[];
+    }>("/runtime/lifecycle", { signal: AbortSignal.timeout(10000) }),
   liveOverview: (id: string, version?: number) =>
     request<OverviewStatus>(
       `/recordings/${id}/overview${version ? `?version=${version}` : ""}`,
@@ -211,6 +217,14 @@ export const api = {
   recordingHealth: (id: string) =>
     request<RecordingHealth>(`/recordings/${id}/health`, {
       signal: AbortSignal.timeout(10000),
+    }),
+  captureState: (
+    id: string,
+    state: "recording" | "paused" | "stopped" | "interrupted",
+  ) =>
+    request(`/recordings/${id}/capture-state`, {
+      ...json("POST", { state }),
+      signal: AbortSignal.timeout(5000),
     }),
   recordingCompletion: (id: string, engine: "whisper" | "qwen") =>
     request<{

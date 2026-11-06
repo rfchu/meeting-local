@@ -48,6 +48,7 @@ class NativeCapture:
                         session.update(state='interrupted',interrupted_at=time.time())
                         session.setdefault('stop_reason','服务恢复时无法接管原采集进程，录音未重新开始；已保存音轨可恢复')
                         RecordingStore.write(path,session)
+                        self.recordings.event('capture.reconciled',rid,duration_seconds=session.get('duration',0))
                 except (OSError,ValueError,KeyError):continue
 
     def stop_abandoned(self):
@@ -80,6 +81,7 @@ class NativeCapture:
             if not path.exists():
                 try:RecordingStore.write(path,{'exit_code':code,'observed_at':time.time()})
                 except OSError:pass # A full disk must not hide the known process exit.
+                self.recordings.event('capture.exited',rid,exit_code=code)
             return code
 
     def start(self,microphone=True):
@@ -93,7 +95,9 @@ class NativeCapture:
             if microphone:args.append('--microphone')
             with (folder/'capture.log').open('ab') as log:
                 process=subprocess.Popen(args,stdin=subprocess.PIPE,stdout=log,stderr=log)
-            self.processes[rid]=process;self.last_seen[rid]=time.monotonic();return session
+            self.processes[rid]=process;self.last_seen[rid]=time.monotonic()
+            self.recordings.event('capture.started',rid,pid=getattr(process,'pid',None))
+            return session
 
     def status(self,rid,touch=True):
         session=self.recordings.read(rid)
@@ -184,6 +188,7 @@ class NativeCapture:
 
     def command(self,rid,command):
         with self.lock:
+            if command=='stop':self.recordings.event('capture.stop_requested',rid)
             self.status(rid);process=self.processes.get(rid)
             if not process or process.poll() is not None:
                 if command=='stop':return self.status(rid)
@@ -206,7 +211,9 @@ class NativeCapture:
                 deadline=time.monotonic()+2
                 while time.monotonic()<deadline:
                     state=self.status(rid)
-                    if state['state']==wanted:return state
+                    if state['state']==wanted:
+                        self.recordings.event('capture.paused' if command=='pause' else 'capture.resumed',rid,duration_seconds=state['duration'])
+                        return state
                     if state['state'] in ('failed','interrupted','stopped'):raise ValueError(state.get('error') or '采集已中断')
                     time.sleep(.05)
                 raise ValueError('采集控制尚未确认，请检查状态后重试')
@@ -260,6 +267,7 @@ class NativeCapture:
                         from .notes import insert_note
                         insert_note(db,rid,note)
             session.update(state='completed',duration=duration);RecordingStore.write(folder/'session.json',session)
+            self.recordings.event('storage.completed',rid,duration_seconds=duration,saved_bytes=(target/'original').stat().st_size)
             for source in sources:source.unlink(missing_ok=True)
             return rid
 

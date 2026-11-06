@@ -62,6 +62,7 @@ def test_persistence_retry_silence_and_coverage_survive_restart(setup):
     assert coverage['attempts']=={'completed':1,'failed':1}
     assert coverage['recent_failures'][0]['error']=='测试识别失败'
     root=client.app.state.store.root
+    client.__exit__(None,None,None)  # Release the previous service before a real restart.
     with TestClient(create_app(root,start_worker=False)) as restarted:
         assert restarted.get(f'/api/recordings/{rid}/live-results').json()['covered_seconds']==15
         result=live(restarted,rid,15,3,silent=True)
@@ -146,6 +147,7 @@ def test_pending_attempt_is_failed_after_service_restart(setup):
     client,rid,provider=setup;store=client.app.state.store
     from app.live_results import LiveResults
     aid,_=LiveResults(store,RecordingStore(store)).begin(rid,'browser','whisper',0,15,audio(),[])
+    client.__exit__(None,None,None)  # Release the previous service before a real restart.
     with TestClient(create_app(store.root,start_worker=False)) as restarted:
         overview=restarted.get(f'/api/recordings/{rid}/live-results').json()
         assert overview['attempts']['failed']==1 and overview['covered_seconds']==0

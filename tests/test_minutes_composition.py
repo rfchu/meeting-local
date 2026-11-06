@@ -110,6 +110,7 @@ def test_analysis_followup_survives_restart_and_does_not_truncate(setup):
     jid=plan['job_id'];config=json.loads(s.one('SELECT config FROM jobs WHERE id=?',(jid,))['config'])
     assert config['minutes_followup']['settings']['detail_level']=='brief'
     assert config['minutes_followup']['template']['id']=='project-weekly'
+    c.__exit__(None,None,None)  # Release the previous service before a real restart.
     with TestClient(create_app(s.root,start_worker=False)) as restarted:
         s.execute("UPDATE jobs SET state='running' WHERE id=?",(jid,))
         restarted.app.state.worker.process(s.one('SELECT * FROM jobs WHERE id=?',(jid,)))
@@ -213,6 +214,7 @@ def test_optional_analysis_is_enqueued_by_server_and_never_overwrites_minutes(se
     response=compose(c,m,also_analyze=True)
     jid=response['analysis_job_id'];aid=response['artifact']['id']
     assert s.one('SELECT state FROM jobs WHERE id=?',(jid,))['state']=='queued'
+    c.__exit__(None,None,None)  # Release the previous service before a real restart.
     with TestClient(create_app(s.root,start_worker=False)) as restarted:
         s.execute("UPDATE jobs SET state='running' WHERE id=?",(jid,))
         restarted.app.state.worker.process(s.one('SELECT * FROM jobs WHERE id=?',(jid,)))
