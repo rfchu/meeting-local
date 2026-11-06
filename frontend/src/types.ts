@@ -451,7 +451,7 @@ export interface MeetingSummary {
 
 export interface MinutesGenerationStatus {
   id: string;
-  state: "running" | "completed" | "failed" | "cancelled";
+  state: "running" | "waiting" | "completed" | "failed" | "cancelled";
   revision: number;
   elapsed_seconds: number;
   error: string;

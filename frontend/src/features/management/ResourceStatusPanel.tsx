@@ -5,6 +5,7 @@ export interface ResourceStatus {
   checked_at: number;
   process_local: boolean;
   closed: boolean;
+  live_session_count?: number;
   deferred_truncated?: boolean;
   resources: { id: string; label: string; capacity: number; used: number }[];
   requests: {
@@ -17,6 +18,7 @@ export interface ResourceStatus {
 }
 const labels: Record<string, string> = {
   live_asr: "实时转写",
+  speaker_review: "发言人辅助",
   transcription: "音频转写",
   analysis: "会议分析",
   minutes: "AI 纪要",
@@ -55,6 +57,12 @@ export default function ResourceStatusPanel() {
           ? "资源协调器已关闭"
           : `${active.length} 项处理中 · ${data.deferred_truncated ? "至少 " : ""}${waiting.length} 项等待或让行`}
       </p>
+      {!!data.live_session_count && (
+        <p role="status">
+          会中识别优先 · {data.live_session_count}{" "}
+          场进行中；已执行的调用完成后在安全边界让行。
+        </p>
+      )}
       <p className="muted">
         录音独立保存；这里显示已接入任务的并发额度，不代表内存用量或外部模型状态。
       </p>

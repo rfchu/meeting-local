@@ -77,7 +77,7 @@ export default function TasksPanel({
     setBusy(task.id);
     setError("");
     try {
-      await api.jobAction(task.id, kind);
+      await api.jobAction(task.id, kind, task.recorded_retries);
       await client.invalidateQueries({ queryKey: ["runtime-tasks"] });
       void client.invalidateQueries({ queryKey: ["runtime-overview"] });
       void client.invalidateQueries({ queryKey: ["runtime-resources"] });

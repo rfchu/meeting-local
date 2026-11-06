@@ -140,6 +140,7 @@ export default function MinutesView(props: Props) {
   const generating =
     locallyGenerating ||
     generation?.state === "running" ||
+    generation?.state === "waiting" ||
     !!analysisFollowup ||
     !!automaticBusy;
   const versions = meeting.artifacts.filter(
@@ -244,6 +245,11 @@ export default function MinutesView(props: Props) {
           </button>
           <small>文字稿仍保留；来源已变化时请用当前文字稿重新生成。</small>
         </div>
+      )}
+      {generation?.state === "waiting" && (
+        <p role="status">
+          会中识别优先，纪要任务等待继续；已有纪要和检查点保留，可在运行管理中取消任务。
+        </p>
       )}
       {generation?.state === "running" && (
         <p role="status">

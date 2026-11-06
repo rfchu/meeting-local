@@ -783,8 +783,13 @@ export const api = {
       `/meetings/${id}/jobs`,
       json("POST", body),
     ),
-  jobAction: (id: string, action: "cancel" | "retry") =>
-    request(`/jobs/${id}/${action}`, { method: "POST" }),
+  jobAction: (id: string, action: "cancel" | "retry", attempt?: number) =>
+    request(`/jobs/${id}/${action}`, {
+      method: "POST",
+      ...(attempt !== undefined
+        ? { headers: { "X-Task-Attempt": String(attempt) } }
+        : {}),
+    }),
   saveTranscript: (id: string, revision: number, segments: unknown[]) =>
     request<{ revision: number }>(
       `/meetings/${id}/transcript`,

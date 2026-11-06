@@ -1,7 +1,8 @@
+from .resource_policy import sync_live_demand
 import fcntl, hashlib, json, math, os, subprocess, threading, time
 from pathlib import Path
 from .db import uid, encode
-from .resources import request_for
+from .resources import request_for,ResourceYielded as Yielded
 from .live_results import plan_ranges, RATE
 from .providers import WhisperCpp, get_asr_provider, LocalDiarization, LocalPunctuation, attach_speakers, merge_overlapping_chunks, checkpoint_identity_matches
 from .analysis import LMStudioProvider,OpenAICompatibleProvider,MeetingAnalysis,chunk_segments,save_meeting_analysis,validate_citations,TEMPLATE_VERSION
@@ -10,7 +11,7 @@ class Cancelled(Exception): pass
 
 class Worker:
     def __init__(self, store):
-        self.store=store; self.stop=threading.Event(); self.thread=None; self.busy_jid=None; self.lock_file=None;self.asr_lock=None;self.release_model=None;self.resources=None
+        self.store=store; self.stop=threading.Event(); self.thread=None; self.busy_jid=None; self.lock_file=None;self.asr_lock=None;self.release_model=None;self.resources=None;self.resource_claim=None
     def start(self):
         self.lock_file=(self.store.root/'worker.lock').open('a')
         try: fcntl.flock(self.lock_file,fcntl.LOCK_EX|fcntl.LOCK_NB)
@@ -28,7 +29,7 @@ class Worker:
         job=self.store.one('SELECT state FROM jobs WHERE id=?',(jid,))
         if self.stop.is_set() or not job or job['state']=='cancelled': raise Cancelled()
     def run(self,jid,args,log,extra_env=None,timeout=None):
-        self.check(jid)
+        self.boundary(jid)
         env=os.environ.copy(); env.update(HF_HUB_OFFLINE='1',HF_HUB_DISABLE_TELEMETRY='1',PYANNOTE_METRICS_ENABLED='0')
         if extra_env:env.update(extra_env)
         with open(log,'ab') as handle:
@@ -47,12 +48,19 @@ class Worker:
                     try: process.wait(timeout=3)
                     except subprocess.TimeoutExpired: process.kill(); process.wait()
                 raise
+    def boundary(self,jid):
+        self.check(jid)
+        claim=self.resource_claim
+        if self.resources and claim and self.resources.should_yield(claim.workload,claim.requirements):raise Yielded()
+    def cancel_waiting(self,jid):
+        if self.resources:self.resources.cancel_waiting(jid,{'transcription','analysis','minutes','note_expansion','terminology','index','qa','legacy'})
     def update(self,jid,stage,progress):
         self.check(jid)
         self.store.execute('UPDATE jobs SET stage=?,progress=? WHERE id=?',(stage,progress,jid))
     def next_job(self):
         live=bool(self.store.one("SELECT 1 FROM live_sessions WHERE status IN ('running','paused','draining') LIMIT 1"))
         if self.resources:
+            sync_live_demand(self.resources,self.store)
             owners=[r['id'] for r in self.store.all("SELECT id FROM jobs WHERE state='queued' AND kind='retrieval_index' ORDER BY created,rowid LIMIT 128")] if live else []
             total=self.store.one("SELECT count(*) AS n FROM jobs WHERE state='queued' AND kind='retrieval_index'")['n'] if live else 0
             self.resources.set_index_deferred(owners,total)
@@ -74,6 +82,8 @@ class Worker:
                 if job.get('kind')=='analysis' and json.loads(job['config']).get('minutes_followup'):stage='分析与纪要草稿完成'
                 self.store.execute("UPDATE jobs SET state='completed',stage=?,progress=1 WHERE id=? AND state='running'",(stage,job['id']))
             except Cancelled: pass
+            except Yielded:
+                self.store.execute("UPDATE jobs SET state='queued',stage='会中识别优先，等待继续' WHERE id=? AND state='running'",(job['id'],))
             except Exception as e:
                 self.store.execute("UPDATE jobs SET state='failed',error=?,stage='处理失败' WHERE id=? AND state='running'",(str(e),job['id']))
             finally: self.busy_jid=None
@@ -105,7 +115,8 @@ class Worker:
                     reason=self.resources.waiting_for(job['id']) if self.resources else None
                     message=reason['message'] if reason else '等待语音识别资源'
                     if not waiting or message!=last_wait:self.update(job['id'],message,job.get('progress',0));waiting=True;last_wait=message
-                self.check(job['id'])
+                self.resource_claim=claim
+                self.boundary(job['id'])
                 if waiting:self.update(job['id'],'准备处理',job.get('progress',0))
             from .local_embedding import local_embedding
             local_embedding().release()
@@ -125,7 +136,7 @@ class Worker:
                 from .auto_minutes import process
                 return process(self,job)
             return self.process_transcription(job)
-        except Cancelled:raise
+        except (Cancelled,Yielded):raise
         except Exception:
             if job.get('kind') in (None,'transcription'):
                 try:
@@ -135,6 +146,7 @@ class Worker:
             raise
         finally:
             if claim:claim.close()
+            self.resource_claim=None
 
     def process_note_expansion(self,job):
         from .note_expansion import generate_expansion,publish,Expansion
@@ -177,6 +189,7 @@ class Worker:
             checkpoint=work/f'map-{index:04d}.json'
             if checkpoint.exists():result=MeetingAnalysis.model_validate(json.loads(checkpoint.read_text()))
             else:
+                self.boundary(jid)
                 result=provider.analyze_chunk(model,chunk,work/f'map-{index:04d}',run)
                 validate_citations(result,{s['id'] for s in chunk})
                 temporary=checkpoint.with_suffix('.tmp');temporary.write_text(encode(result.model_dump()));temporary.replace(checkpoint)
@@ -189,6 +202,7 @@ class Worker:
                 checkpoint=work/f'reduce-{round_number:02d}-{index:04d}.json'
                 if checkpoint.exists():result=MeetingAnalysis.model_validate(json.loads(checkpoint.read_text()))
                 else:
+                    self.boundary(jid)
                     result=provider.reduce(model,group,work/f'reduce-{round_number:02d}-{index:04d}',run)
                     valid={sid for source in group for item in source.all_items() for sid in item.source_segment_ids}
                     validate_citations(result,valid)

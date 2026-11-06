@@ -1,4 +1,5 @@
 """Recording-bound ASR supervisor. Subscribers never own inference lifetime."""
+from .resource_policy import sync_live_demand
 import asyncio,hashlib,io,json,math,os,shutil,time,unicodedata,wave
 from contextlib import aclosing
 from .db import encode
@@ -50,8 +51,12 @@ class LiveSessions:
             db.execute('INSERT INTO live_session_events(recording_id,seq,payload) VALUES(?,?,?)',(rid,seq,encode(event)))
             db.execute('DELETE FROM live_session_events WHERE recording_id=? AND seq<=?',(rid,seq-MAX_EVENTS))
         if rid in self.wakes:self.wakes[rid].set()
+    def sync_resources(self):
+        scheduler=getattr(self.asr_lock,'scheduler',None)
+        if scheduler:sync_live_demand(scheduler,self.store)
     def checkpoint(self,rid,**values):
         if values:self.store.execute('UPDATE live_sessions SET '+','.join(k+'=?' for k in values)+' WHERE recording_id=?',(*[encode(v) if isinstance(v,(dict,list)) else v for v in values.values()],rid))
+        if 'status' in values:self.sync_resources()
     def snapshot(self,rid):
         row=self.row(rid);segments=[]
         session=self.recordings.read(rid)
@@ -85,6 +90,7 @@ class LiveSessions:
         self.ensure(rid)
         return self.snapshot(rid)
     def ensure(self,rid):
+        self.sync_resources()
         if rid not in self.tasks or self.tasks[rid].done():
             task=asyncio.create_task(self.run(rid));self.tasks[rid]=task
             def done(completed):
@@ -171,6 +177,7 @@ class LiveSessions:
                 if session['state']=='completed' or self.store.one('SELECT id FROM meetings WHERE id=?',(rid,)):break
                 break_at=max(break_at,json.loads(row['metrics']).get('continuation_break_at',-1))
                 draining=row['status']=='draining';config=json.loads(row['config']);cursor=row['cursor']
+                self.sync_resources()
                 if self.asr_lock.locked():
                     if hasattr(self.asr_lock,'observe_wait'):self.asr_lock.observe_wait(rid)
                     if time.monotonic()-resource_notice>5:

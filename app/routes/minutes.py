@@ -1,4 +1,5 @@
 """Minutes HTTP routes; shared services are supplied by the composition root."""
+from ..resources import optional_slot
 from ..model_preferences import resolve_profile
 from ..interview import InterviewPreparation
 import json, os, subprocess
@@ -176,8 +177,10 @@ def register_routes(app,services:ApplicationServices):
                     detail=(completed.stderr or completed.stdout).decode(errors='replace')[-1800:]
                     raise RuntimeError(f'AI 会议纪要进程失败（{completed.returncode}）：{detail}')
             speakers=list(dict.fromkeys(s['speaker'] for s in segments if s.get('speaker') and s['speaker']!='未分配'))
-            result=provider.generate_ai_minutes(model,segments,{'title':row['title'],'date':row['created'][:10],
-                'known_attendees':speakers,'minutes_template':template.model_dump(),**context},work/'result',run)
+            resource='cloud_llm' if provider_type=='cloud' else 'local_llm'
+            with optional_slot(services.resources,'minutes',resource,('inline_minutes',mid),legacy=resource=='local_llm'):
+                result=provider.generate_ai_minutes(model,segments,{'title':row['title'],'date':row['created'][:10],
+                    'known_attendees':speakers,'minutes_template':template.model_dump(),**context},work/'result',run)
             document=build_from_ai(row['created'],result,body.composition,source_document,template) if body.composition else build_ai_minutes(row['created'],result,template)
             if template.id=='online-interview':
                 document.interview.validate_sources(segments)
@@ -235,7 +238,9 @@ def register_routes(app,services:ApplicationServices):
                 if completed.returncode:
                     detail=(completed.stderr or completed.stdout).decode(errors='replace')[-1800:]
                     raise RuntimeError(f'纪要整理进程失败（{completed.returncode}）：{detail}')
-            result=provider.polish_minutes(model,document,work/'result',run)
+            resource='cloud_llm' if provider_type=='cloud' else 'local_llm'
+            with optional_slot(services.resources,'minutes',resource,('inline_minutes',mid),legacy=resource=='local_llm'):
+                result=provider.polish_minutes(model,document,work/'result',run)
             polished=apply_polished_minutes(document,result)
             validate_minutes_citations(polished,valid_ids)
         except (RuntimeError,ValueError,subprocess.TimeoutExpired) as error:raise HTTPException(409,str(error))

@@ -1,11 +1,12 @@
 """Meetings HTTP routes; shared services are supplied by the composition root."""
+from ..resources import optional_slot
 from ..task_management import retry_blocker, classify
 from ..model_preferences import resolve_profile
 import hashlib, json, shutil, subprocess
 from pathlib import Path
 from typing import Literal
 from urllib.parse import quote
-from fastapi import File, UploadFile, HTTPException
+from fastapi import File, UploadFile, HTTPException, Request
 from fastapi.responses import FileResponse, Response
 from ..db import uid, encode
 from ..providers import LocalDiarization
@@ -133,7 +134,9 @@ def register_routes(app,services:ApplicationServices):
             provider=OpenAICompatibleProvider(profile) if profile else LMStudioProvider()
             model=provider.resolve_model(body.model);aid=uid()
             max_chars=analysis_chunk_chars(profile['context_window'],profile['analysis_chunk_mode'],profile['analysis_chunk_chars']) if profile else 8000
-            payload=generate_review(provider,model,segments,store.directory(mid)/('speaker-review-'+aid),max_chars)
+            resource='cloud_llm' if profile and profile['provider_type']=='cloud' else 'local_llm'
+            with optional_slot(services.resources,'speaker_review',resource,('speaker_review',mid),legacy=resource=='local_llm'):
+                payload=generate_review(provider,model,segments,store.directory(mid)/('speaker-review-'+aid),max_chars)
         except (RuntimeError,ValueError,subprocess.TimeoutExpired) as error:raise HTTPException(409,str(error))
         provenance={'model':model,'provider':profile['name'] if profile else 'LM Studio','provider_type':profile['provider_type'] if profile else 'local','version':'speaker-review-v1'}
         store.execute('INSERT INTO artifacts(id,meeting_id,revision,kind,payload,provenance) VALUES(?,?,?,?,?,?)',
@@ -382,24 +385,34 @@ def register_routes(app,services:ApplicationServices):
     def enqueue_analysis(mid:str,body:AnalysisJobInput):return services.analysis_jobs.submit(mid,body)
 
 
+    def check_attempt(db,jid,request):
+        expected=request.headers.get('X-Task-Attempt')
+        if expected is None:return # Compatibility callers retain the original API.
+        if not expected.isascii() or not expected.isdigit() or len(expected)>10:raise HTTPException(422,'任务版本无效，请刷新后操作')
+        current=db.execute("SELECT count(*) FROM job_runtime_events WHERE job_id=? AND action='retry'",(jid,)).fetchone()[0]
+        if int(expected)!=current:raise HTTPException(409,'任务已重试，请刷新后再操作；未更改当前任务')
+
     @app.post('/api/jobs/{jid}/cancel')
-    def cancel(jid:str):
+    def cancel(jid:str,request:Request):
         if not store.one('SELECT id FROM jobs WHERE id=?',(jid,)): raise HTTPException(404,'任务不存在')
         with store.connect() as db:
             db.execute('BEGIN IMMEDIATE')
+            check_attempt(db,jid,request)
             old=db.execute('SELECT state FROM jobs WHERE id=?',(jid,)).fetchone()
             changed=db.execute("UPDATE jobs SET state='cancelled',stage='已取消' WHERE id=? AND state IN ('running','queued')",(jid,)).rowcount
             if changed:db.execute("INSERT INTO job_runtime_events(job_id,action,from_state) VALUES(?,'cancel',?)",(jid,old['state']))
+        if changed:worker.cancel_waiting(jid)
         return {'ok':True}
 
 
     @app.post('/api/jobs/{jid}/retry')
-    def retry(jid:str):
+    def retry(jid:str,request:Request):
         if worker.busy_jid==jid: raise HTTPException(409,'处理进程正在退出，请稍后重试')
         with store.connect() as db:
             db.execute('BEGIN IMMEDIATE')
             job=db.execute('SELECT * FROM jobs WHERE id=?',(jid,)).fetchone()
             if not job: raise HTTPException(404,'任务不存在')
+            check_attempt(db,jid,request)
             blocked=retry_blocker(store,dict(job),worker)
             if blocked:raise HTTPException(409,blocked)
             if db.execute("SELECT 1 FROM jobs WHERE meeting_id=? AND state IN ('running','queued')",(job['meeting_id'],)).fetchone(): raise HTTPException(409,'已有任务正在处理')

@@ -174,7 +174,7 @@ class Retrieval:
         self.sync();pending=self.store.all('SELECT * FROM retrieval_units WHERE embedding IS NULL OR identity!=?',(config['identity'],))
         import sqlite_vec
         for offset in range(0,len(pending),16):
-            worker.check(jid);worker.update(jid,f'建立本地索引 {min(offset+16,len(pending))}/{len(pending)}',offset/max(1,len(pending)))
+            getattr(worker,'boundary',worker.check)(jid);worker.update(jid,f'建立本地索引 {min(offset+16,len(pending))}/{len(pending)}',offset/max(1,len(pending)))
             batch=pending[offset:offset+16];vectors=self.vectorize(config,[row['content'] for row in batch])
             with self.store.connect() as db:
                 db.execute('BEGIN IMMEDIATE');worker.check(jid)

@@ -386,3 +386,18 @@ def test_native_live_qwen_respects_selected_engine(client,monkeypatch):
     assert response.json()['engine']=='qwen'
     assert response.json()['segments'][0]['start']==30
     assert client.post(f'/api/native-capture/{rid}/draft',json={'engine':'cloud'}).status_code==422
+
+
+def test_inline_speaker_review_obeys_live_priority_before_inference(client,monkeypatch):
+    mid=upload(client);store=client.app.state.store;store.save_revision(mid,sample()+[dict(sample()[0],id='seg2',speaker='发言人 2',start=.5,end=1)],'manual',expected=0)
+    scheduler=client.app.state.services.resources;calls=[]
+    monkeypatch.setattr('app.main.LMStudioProvider.resolve_model',lambda *_:'synthetic')
+    def review(*_):calls.append('model');return {'suggestions':[],'chunks':1}
+    monkeypatch.setattr('app.main.generate_review',review)
+    scheduler.set_realtime(['synthetic-session'])
+    response=client.post(f'/api/meetings/{mid}/speaker-reviews',json={})
+    assert response.status_code==409 and '会中识别优先' in response.json()['detail']
+    assert not calls and not store.all('SELECT * FROM artifacts')
+    scheduler.set_realtime([])
+    assert client.post(f'/api/meetings/{mid}/speaker-reviews',json={}).status_code==201
+    assert calls==['model'] and not scheduler.snapshot()['requests']

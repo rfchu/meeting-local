@@ -246,3 +246,19 @@ def test_legacy_review_fingerprint_survives_adoption_schema_upgrade(setup):
         old_fingerprint=hashlib.sha256(json.dumps(old_inputs,sort_keys=True,ensure_ascii=False,separators=(',',':')).encode()).hexdigest()
     actual=c.get(f'/api/meetings/{m}').json()['review']['steps']['minutes']['fingerprint']
     assert actual==old_fingerprint
+
+
+def test_compat_minutes_does_not_bypass_live_priority_or_send_to_model(setup,monkeypatch):
+    client,store,mid=setup;scheduler=client.app.state.services.resources;called=[]
+    import app.main as main
+    original=main.LMStudioProvider
+    class Guarded(original):
+        def generate_ai_minutes(self,*args):called.append('must not send');return result()
+    monkeypatch.setattr(main,'LMStudioProvider',Guarded)
+    scheduler.set_realtime(['private-session'])
+    response=client.post(f'/api/meetings/{mid}/minutes/compose',json={'model':'synthetic'})
+    assert response.status_code==409 and '会中识别优先' in response.json()['detail']
+    assert not called and not store.all('SELECT * FROM artifacts')
+    scheduler.set_realtime([])
+    assert client.post(f'/api/meetings/{mid}/minutes/compose',json={'model':'synthetic'}).status_code==201
+    assert called==['must not send'] and not scheduler.snapshot()['requests']
