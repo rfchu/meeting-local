@@ -3589,3 +3589,49 @@ button.note-options-trigger {
 .recording-health-panel > .recording-control-notice {
   grid-column: 1 / -1;
 }
+
+.handoff-stages {
+  display: grid;
+  gap: 0;
+  margin: 16px 0;
+  border-top: 1px solid var(--line, #e5e7eb);
+}
+.handoff-stage {
+  display: grid;
+  grid-template-columns: 100px 78px minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: baseline;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--line, #e5e7eb);
+}
+.handoff-stage > span {
+  color: #64748b;
+  font-size: 12px;
+}
+.handoff-stage.review > span,
+.handoff-stage.stale > span {
+  color: #a16207;
+}
+.handoff-stage.ready > span {
+  color: #047857;
+}
+.handoff-stage p {
+  margin: 0;
+  color: #64748b;
+  font-size: 13px;
+  line-height: 1.6;
+}
+.handoff-lineage {
+  font-size: 12px;
+  color: #64748b;
+  line-height: 1.7;
+}
+@media (max-width: 720px) {
+  .handoff-stage {
+    grid-template-columns: 1fr auto;
+    gap: 6px 12px;
+  }
+  .handoff-stage p {
+    grid-column: 1;
+  }
+}

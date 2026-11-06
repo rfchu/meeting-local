@@ -4,7 +4,7 @@ from fastapi import HTTPException
 from .minutes_templates import MinutesTemplate
 from .recording_completion import recording_quality_summary
 from . import minutes_versions
-from . import meeting_flow, minutes_delivery
+from . import meeting_flow, minutes_delivery, meeting_handoff
 
 class MeetingQueries:
     def __init__(self,store,recordings,meeting_review,minutes_generation):
@@ -69,6 +69,9 @@ class MeetingQueries:
         with self.store.connect() as db:
             selected = minutes_versions.selected(db, row['id'])
             row['active_minutes_id'] = selected['id'] if selected else None
+        with self.store.connect() as db:
+            db.execute('BEGIN')
+            row['handoff']=meeting_handoff.snapshot(db,row['id'],row['recording_quality'])
         return row
 
     def public_artifact(self, a):

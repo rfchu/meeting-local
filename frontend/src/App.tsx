@@ -57,6 +57,7 @@ import {
 import SearchDialog, { type SearchHit } from "./features/SearchDialog";
 import Sidebar from "./components/Sidebar";
 import Workflow from "./components/Workflow";
+import { handoffWorkspace } from "./components/handoff";
 import Player from "./components/Player";
 import { MinutesPreview, RenameDialog } from "./components/Dialogs";
 import TranscriptView from "./features/transcript/TranscriptView";
@@ -84,6 +85,8 @@ export default function App() {
   });
   const [meeting, setMeeting] = useState<Meeting | null>(null),
     [workspace, setWorkspace] = useState<Workspace>("transcript");
+  const [actionsFocus, setActionsFocus] = useState(false);
+  const [overviewFocus, setOverviewFocus] = useState(false);
   const [transcriptDirty, setTranscriptDirty] = useState(false),
     [savingTranscript, setSavingTranscript] = useState(false);
   const [minutesDraft, setMinutesDraft] = useState<MeetingMinutes | null>(null),
@@ -513,6 +516,7 @@ export default function App() {
             review: fresh.review,
             recording_quality: fresh.recording_quality,
             flow: fresh.flow,
+            handoff: fresh.handoff,
             active_minutes_id: fresh.active_minutes_id,
             minutes_generation: fresh.minutes_generation,
             notes: fresh.notes,
@@ -614,7 +618,11 @@ export default function App() {
       if (!opened)
         throw new Error("本机会议已保存，打开暂未成功，请重试进入会后整理");
       setRecordingOpen(false);
-      setWorkspace("notes");
+      setWorkspace(
+        options.mode === "none" || meetingRef.current?.id !== created.id
+          ? "notes"
+          : handoffWorkspace(meetingRef.current),
+      );
       toast(
         reusedHandoff
           ? "已打开会议，沿用首次交接的任务。处理状态可在运行管理查看，失败或取消的任务可在那里重试。"
@@ -954,6 +962,8 @@ export default function App() {
               </details>
               <button onClick={() => setRenameOpen(true)}>重命名</button>
               <OverviewArchiveButton
+                openRequested={overviewFocus}
+                onOpened={() => setOverviewFocus(false)}
                 key={meeting.id}
                 meeting={meeting}
                 onSeek={(time) => seekRef.current?.(time)}
@@ -1106,6 +1116,12 @@ export default function App() {
               onConfirm={(step, decision) => void confirmReview(step, decision)}
               onTranscribe={() => void startTranscription()}
               onSave={() => void saveTranscript()}
+              onTasks={() => setManagementPage("tasks")}
+              onActions={() => {
+                setActionsFocus(true);
+                navigateReview("minutes");
+              }}
+              onOverview={() => setOverviewFocus(true)}
               onAnalysis={() => setWorkspace("analysis")}
               onMinutes={() => navigateReview("minutes")}
               onPreview={() => void openMinutesPreview()}
@@ -1347,6 +1363,8 @@ export default function App() {
                         }}
                       />
                       <MeetingOutcomes
+                        focusRequested={actionsFocus}
+                        onFocused={() => setActionsFocus(false)}
                         onSeek={(time) => {
                           locateReview(time);
                           setReviewSourceOpen(true);

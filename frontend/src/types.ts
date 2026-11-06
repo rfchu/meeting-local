@@ -459,7 +459,54 @@ export interface MinutesGenerationStatus {
   error: string;
   artifact_id?: string;
 }
+export interface MeetingHandoff {
+  version: 1;
+  source_version: string;
+  revision: number;
+  title: string;
+  review_required: number;
+  stages: {
+    key: string;
+    label: string;
+    state: "ready" | "review" | "stale" | "processing" | "optional" | "missing";
+    summary: string;
+    counts: Record<string, number>;
+    source: {
+      artifact_id?: string | null;
+      revision?: number | null;
+      reason_codes?: string[];
+      [key: string]: unknown;
+    };
+  }[];
+  primary: {
+    code: string;
+    target:
+      | "transcribe"
+      | "transcript"
+      | "speakers"
+      | "notes"
+      | "overview"
+      | "minutes"
+      | "actions"
+      | "preview"
+      | "tasks"
+      | "recording";
+    label: string;
+    summary: string;
+  };
+  edges: {
+    from: string;
+    to: string;
+    relation:
+      | "reused_audio_ranges"
+      | "context"
+      | "explicit_adoption"
+      | "confirmed_tracking";
+    count: number;
+  }[];
+}
 export interface Meeting extends MeetingSummary {
+  handoff?: MeetingHandoff;
   live_overview_available?: boolean;
   active_minutes_id?: string | null;
   action_tasks?: Record<string, Record<string, string>>;

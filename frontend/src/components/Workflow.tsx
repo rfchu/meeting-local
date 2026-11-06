@@ -1,3 +1,9 @@
+import {
+  currentHandoff,
+  handoffAction,
+  handoffStates,
+  handoffRelations,
+} from "./handoff";
 import { recordingQualityAttention } from "../features/notes/recordingQuality";
 import { deliveryAttentionCount } from "./deliveryAttention";
 import { pendingMinutesDrafts } from "../features/minutes/presentation";
@@ -14,6 +20,9 @@ interface Props {
   onRecordingReview?: () => void;
   onSave: () => void;
   onAnalysis: () => void;
+  onTasks?: () => void;
+  onActions?: () => void;
+  onOverview?: () => void;
   onMinutes: () => void;
   onPreview: () => void;
   onReview: (step: ReviewStep) => void;
@@ -184,24 +193,97 @@ export default function Workflow(props: Props) {
     label = delivered ? "预览当前稿" : "确认交付版本";
     action = delivered ? onPreview : onMinutes;
   }
+  const handoff =
+    transcriptDirty || minutesDirty ? null : currentHandoff(meeting);
+  const guidance = handoffAction(meeting, transcriptDirty, minutesDirty);
+  const openTarget = (target: string) => {
+    switch (target) {
+      case "tasks":
+        return (props.onTasks || onAnalysis)();
+      case "recording":
+        return openRecordingReview();
+      case "transcribe":
+        return onTranscribe();
+      case "transcript":
+        return onReview("transcript");
+      case "speakers":
+        return onReview("speakers");
+      case "overview":
+        return meeting.live_overview_available && props.onOverview
+          ? props.onOverview()
+          : onReview("notes");
+      case "actions":
+        return (props.onActions || onMinutes)();
+      case "notes":
+        return onReview("notes");
+      case "preview":
+        return onPreview();
+      default:
+        return onMinutes();
+    }
+  };
+  if (guidance) {
+    hint = guidance.summary;
+    label = guidance.label;
+    action = () => openTarget(guidance.target);
+  }
   return (
     <section className="workflow" aria-label="会议处理进度">
       {label !== "核对录音" && qualityNotice}
       <div className="workflow-next">
         <span>{hint}</span>
-        <button className="primary" disabled={!!busy} onClick={action}>
+        <button
+          className="primary"
+          disabled={!!busy && !guidance}
+          onClick={action}
+        >
           {label}
         </button>
       </div>
       <details className="postmeeting-review">
         <summary>
-          会后核对清单 · {progress.complete}/4
+          会后交接与核对 · {progress.complete}/4
           {progress.stale ? ` · ${progress.stale} 项待复核` : ""}
         </summary>
         <p>
           人工核对记录只表示你的确认，不等同于 AI
           已验证；不限制独立生成分析或纪要。个人与暂缓记录不阻碍纪要交付。
         </p>
+        {handoff && (
+          <div className="handoff-stages" aria-label="会后交接状态">
+            {handoff.stages.map((stage) => (
+              <div className={`handoff-stage ${stage.state}`} key={stage.key}>
+                <strong>{stage.label}</strong>
+                <span>
+                  {stage.key === "overview" && stage.state === "review"
+                    ? "按需核对"
+                    : handoffStates[stage.state]}
+                </span>
+                <p>{stage.summary}</p>
+                <button
+                  className="text-btn"
+                  onClick={() =>
+                    openTarget(stage.key === "delivery" ? "minutes" : stage.key)
+                  }
+                >
+                  查看
+                </button>
+              </div>
+            ))}
+            {!!handoff.edges.length && (
+              <p className="handoff-lineage">
+                来源关系：
+                {handoff.edges
+                  .map(
+                    (edge) =>
+                      `${handoff.stages.find((stage) => stage.key === edge.from)?.label || "实时识别"} → ${handoff.stages.find((stage) => stage.key === edge.to)?.label || edge.to} · ${handoffRelations[edge.relation]} ${edge.count} 项`,
+                  )
+                  .join("；")}
+              </p>
+            )}
+          </div>
+        )}
+        {handoff && <h4>人工核对记录</h4>}
         <div className="review-grid">
           {progress.steps.map(({ key, state, item }) => (
             <article key={key} className={`review-card ${state}`}>

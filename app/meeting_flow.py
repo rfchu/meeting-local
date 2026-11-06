@@ -68,23 +68,35 @@ def ai_context(db,mid):
     if overview:payload['reviewed_live_overview']=overview
     return payload,hashlib.sha256(encode(payload).encode()).hexdigest()
 
-def artifact_current(db,mid,provenance,_seen=None):
+def artifact_reasons(db,mid,provenance,revision=None,_seen=None):
+    """Shared provenance validity, with stable reason codes instead of private details."""
     try:
-        seen=set(_seen or ())
+        row=db.execute('SELECT revision FROM meetings WHERE id=?',(mid,)).fetchone()
+        if not row:return ['meeting_missing']
+        current=row['revision'];reasons=[];seen=set(_seen or ())
+        if revision is not None and revision!=current:reasons.append('transcript_changed')
+        if not isinstance(provenance,dict):return ['invalid_provenance']
         for aid in provenance.get('source_minutes_dependencies',[]):
-            if aid in seen or len(seen)>100:return False
-            parent=db.execute("SELECT provenance FROM artifacts WHERE id=? AND meeting_id=? AND kind='meeting_minutes'",(aid,mid)).fetchone()
-            if not parent or not artifact_current(db,mid,json.loads(parent['provenance']),seen|{aid}):return False
-        if provenance.get('flow_context_hash') and ai_context(db,mid)[1]!=provenance['flow_context_hash']:return False
-        revision=db.execute('SELECT revision FROM meetings WHERE id=?',(mid,)).fetchone()[0]
-        reviews=dispositions(db,mid,revision)
+            if aid in seen:
+                reasons.append('dependency_cycle');continue
+            if len(seen)>=100:
+                reasons.append('dependency_limit');continue
+            parent=db.execute("SELECT revision,provenance FROM artifacts WHERE id=? AND meeting_id=? AND kind='meeting_minutes'",(aid,mid)).fetchone()
+            if not parent:reasons.append('dependency_missing')
+            elif artifact_reasons(db,mid,json.loads(parent['provenance']),parent['revision'],seen|{aid}):reasons.append('dependency_stale')
+        if provenance.get('flow_context_hash') and ai_context(db,mid)[1]!=provenance['flow_context_hash']:reasons.append('meeting_context_changed')
+        reviews=dispositions(db,mid,current)
         for item in provenance.get('adopted_notes',[]):
             note=db.execute('SELECT * FROM meeting_notes WHERE id=? AND meeting_id=?',(item.get('note_id'),mid)).fetchone()
-            if not note or (item.get('note_fingerprint') and fingerprint(note)!=item['note_fingerprint']):return False
-            key=item.get('attention_review_key')
-            if key and (item['note_id'] not in reviews or reviews[item['note_id']]['stale'] or reviews[item['note_id']]['review_key']!=key or reviews[item['note_id']]['decision']!='meeting'):return False
-        return True
-    except (ValueError,TypeError):return False
+            if not note or (item.get('note_fingerprint') and fingerprint(note)!=item['note_fingerprint']):reasons.append('note_changed')
+            key=item.get('attention_review_key');review=reviews.get(item.get('note_id'))
+            if key and (not review or review['stale'] or review['review_key']!=key or review['decision']!='meeting'):reasons.append('attention_changed')
+        return list(dict.fromkeys(reasons))
+    except (ValueError,TypeError,KeyError,AttributeError):return ['invalid_provenance']
+
+
+def artifact_current(db,mid,provenance,_seen=None):
+    return not artifact_reasons(db,mid,provenance,_seen=_seen)
 
 def todo_stale(db,todo):
     meeting=db.execute('SELECT revision FROM meetings WHERE id=?',(todo['meeting_id'],)).fetchone()

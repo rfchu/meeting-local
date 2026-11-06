@@ -1,5 +1,5 @@
 import { currentMinutes } from "../../utils";
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 import { api } from "../../api";
 import type { Meeting } from "../../types";
 import { TodoCard } from "../notes/NotesView";
@@ -10,8 +10,12 @@ export default function MeetingOutcomes({
   onSeek,
   toast,
   minutesDirty = false,
+  focusRequested = false,
+  onFocused,
 }: {
   meeting: Meeting;
+  focusRequested?: boolean;
+  onFocused?: () => void;
   minutesDirty?: boolean;
   onRefresh: () => Promise<void>;
   onNotes: () => void;
@@ -19,11 +23,19 @@ export default function MeetingOutcomes({
   toast: (text: string) => void;
 }) {
   const [busy, setBusy] = useState(false);
+  const details = useRef<HTMLDetailsElement>(null);
+  useEffect(() => {
+    if (focusRequested && details.current) {
+      details.current.open = true;
+      details.current.scrollIntoView({ block: "nearest" });
+      onFocused?.();
+    }
+  }, [focusRequested, onFocused]);
   const counts = meeting.flow?.counts;
   const minutes = currentMinutes(meeting);
   return (
     <section className="meeting-outcomes">
-      <details className="outcomes-panel">
+      <details ref={details} className="outcomes-panel">
         <summary>
           行动与跟进 ·{" "}
           {meeting.note_todos.filter((t) => t.status === "pending").length}{" "}

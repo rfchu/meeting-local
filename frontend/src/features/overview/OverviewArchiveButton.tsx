@@ -1,15 +1,25 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Modal from "../../components/Modal";
 import LiveOverviewPanel from "./LiveOverviewPanel";
 import type { Meeting } from "../../types";
 export default function OverviewArchiveButton({
   meeting,
   onSeek,
+  openRequested = false,
+  onOpened,
 }: {
   meeting: Meeting;
+  openRequested?: boolean;
+  onOpened?: () => void;
   onSeek: (time: number) => void;
 }) {
   const [open, setOpen] = useState(false);
+  useEffect(() => {
+    if (openRequested && meeting.live_overview_available) {
+      setOpen(true);
+      onOpened?.();
+    }
+  }, [openRequested, meeting.live_overview_available, onOpened]);
   if (!meeting.live_overview_available) return null;
   return (
     <>
