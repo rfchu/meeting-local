@@ -2,6 +2,7 @@
 import json
 import math
 import time
+from .native_capture import NativeCapture
 
 
 def number(value):
@@ -83,7 +84,7 @@ class RecordingHealth:
         return {'schema_version':1,'source':'native' if native else 'browser','state':state,
                 'duration_seconds':round(duration,2),'native_running':bool(running),
                 'metadata_age_seconds':round(max(0,time.time()-number(session.get('updated'))),1),
-                'capture':{'heartbeat_age_seconds':heartbeat_age,'heartbeat_stale':heartbeat_stale,'exit_code':exit_code},
+                'capture':{'heartbeat_age_seconds':heartbeat_age,'heartbeat_stale':heartbeat_stale,'exit_code':exit_code,'tracks':NativeCapture.health(session,capture,folder/'capture.json')['tracks'] if native and capture.get('state') in states else []},
                 'audio':{'saved_bytes':saved_bytes,'saved_chunks':sum(size>0 for size in parts.values()),
                          'expected_chunks':expected,'missing_chunk_count':len(missing) if not completed else 0,
                          'missing_chunk_indices':missing[:50] if not completed else [],

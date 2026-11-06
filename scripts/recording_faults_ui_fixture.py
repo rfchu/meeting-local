@@ -11,19 +11,19 @@ from app.recordings import RecordingStore
 
 
 class Capture(NativeCapture):
-    def __init__(self,*args):super().__init__(*args);self.states={};self.stale=True
+    def __init__(self,*args):super().__init__(*args);self.states={};self.stale=True;self.input_loss=False
     def capability(self):return {'available':True,'supported':True,'screen_permission':True,'microphone_permission':True}
     def start_monitor(self):pass
     def start(self,microphone=True):
         s=self.recordings.create('audio/wav');s.update(source='macos',include_microphone=False)
         folder=self.recordings.folder(s['id']);RecordingStore.write(folder/'session.json',s)
-        (folder/'system.pcm').write_bytes(b'\1\0'*480000);self.states[s['id']]='recording'
+        (folder/'system.pcm').write_bytes(b'\1\0'*480000);self.states[s['id']]='recording';self.processes[s['id']]=None
         self.status(s['id']);return s
     def is_running(self,rid):return self.states.get(rid) in ('recording','paused')
     def status(self,rid,touch=True):
         session=self.recordings.read(rid);folder=self.recordings.folder(rid);path=folder/'capture.json'
         state=self.states.get(rid,'interrupted')
-        value={'state':state,'duration':30,'error':'','system_frames':480000,'system_levels':[.02,.06,.01]*24}
+        value={'state':state,'duration':30,'error':'','system_frames':480000,'system_levels':[.02,.06,.01]*24,'buffer_age':{'system':20 if self.input_loss else 0}}
         RecordingStore.write(path,value)
         if self.stale:os.utime(path,(time.time()-30,time.time()-30))
         value['health']=self.health(session,value,path);return value
@@ -45,10 +45,16 @@ def main():
         app=create_app(root,start_worker=False);app.state.keep_awake.supported=False
         @app.post('/_fixture/recover')
         def recover():
-            capture.stale=False
+            capture.stale=False;capture.input_loss=False
             for rid in capture.states:capture.status(rid)
             return {'ok':True}
-        app.router.routes.insert(0,app.router.routes.pop()) # Keep the fixture control before the static catch-all.
+        app.router.routes.insert(0,app.router.routes.pop()) # Keep fixture controls before static catch-all.
+        @app.post('/_fixture/input-loss')
+        def input_loss():
+            capture.stale=False;capture.input_loss=True
+            for rid in capture.states:capture.status(rid)
+            return {'ok':True}
+        app.router.routes.insert(0,app.router.routes.pop())
         uvicorn.run(app,host='127.0.0.1',port=args.port,log_level='warning',timeout_graceful_shutdown=3)
 
 if __name__=='__main__':main()

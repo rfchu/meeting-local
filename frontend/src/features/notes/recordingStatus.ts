@@ -2,6 +2,8 @@ import type { RecordingRuntime } from "../../types";
 import { clock } from "../../utils";
 export function lifecycleLabel(code: string) {
   const events: Record<string, string> = {
+    "page.detached": "页面已失联，原生采集继续托管，请返回核对音轨",
+    "page.returned": "页面已恢复连接",
     "service.started": "服务已启动",
     "service.shutdown_requested": "服务开始关闭",
     "service.clean_shutdown": "服务已正常关闭",
@@ -18,11 +20,18 @@ export function lifecycleLabel(code: string) {
   if (events[code]) return events[code];
   const [part, state] = code.split(".");
   const parts: Record<string, string> = {
+    system_input: "系统音轨",
+    microphone_input: "麦克风音轨",
     capture: "采集",
     storage: "文件",
     asr: "实时识别",
   };
   const states: Record<string, string> = {
+    receiving: "正在接收音频",
+    quiet: "音频较安静",
+    no_data: "超过 10 秒未收到音频，请检查设备和音源",
+    stalled: "采集心跳未更新",
+    inactive: "未在采集",
     recording: "正在运行",
     starting: "准备中",
     paused: "已暂停",
@@ -91,8 +100,17 @@ export function recordingStatus(
     label:
       local === "failed" && phase === "saving"
         ? "保存待重试"
-        : phases[phase] || "正在核对状态",
-    input: state ? inputs[state] || "采集状态待核对" : null,
+        : phase === "recording" &&
+            runtime?.capture.tracks?.some((t) => t.state === "no_data")
+          ? "录音输入待检查"
+          : phases[phase] || "正在核对状态",
+    input:
+      state === "recording" &&
+      runtime?.capture.tracks?.some((t) => t.state === "no_data")
+        ? "部分音轨超过 10 秒未收到音频，请检查设备和音源"
+        : state
+          ? inputs[state] || "采集状态待核对"
+          : null,
     asr: unavailable
       ? "识别状态暂不可用，已确认结果保留"
       : runtime

@@ -11,7 +11,7 @@ HELPER=Path(os.getenv('TINGJI_CAPTURE_APP',str(Path.home()/'Library/Caches/cn.se
 class NativeCapture:
     def __init__(self,store,recordings):
         self.store=store;self.recordings=recordings;self.processes={};self.last_seen={}
-        self.stop_reasons={};self.lock=threading.RLock();self.closed=threading.Event();self.monitor=None
+        self.stop_reasons={};self.detached=set();self.lock=threading.RLock();self.closed=threading.Event();self.monitor=None
 
     def is_running(self,rid):
         with self.lock:
@@ -52,17 +52,16 @@ class NativeCapture:
                 except (OSError,ValueError,KeyError):continue
 
     def stop_abandoned(self):
-        # Background browser tabs may throttle their heartbeat to a minute.
+        # Native capture belongs to the service, not a browser polling lease.
+        # Background throttling or a closed tab must never silently end audio.
         with self.lock:
             for rid in list(self.processes):
                 if self.processes[rid].poll() is not None:
                     self.observe_exit(rid)
                     continue
-                if time.monotonic()-self.last_seen.get(rid,0)>300:
-                    try:
-                        self.record_stop_reason(rid,'页面失联超过 5 分钟，已自动停止采集；可以恢复已保存的录音')
-                        self.command(rid,'stop')
-                    except (ValueError,RuntimeError):pass
+                if time.monotonic()-self.last_seen.get(rid,0)>300 and rid not in self.detached:
+                    self.detached.add(rid)
+                    self.recordings.event('page.detached',rid)
 
     def record_stop_reason(self,rid,reason):
         self.stop_reasons[rid]=reason
@@ -102,7 +101,12 @@ class NativeCapture:
     def status(self,rid,touch=True):
         session=self.recordings.read(rid)
         if session.get('source')!='macos':raise ValueError('不是原生录音会话')
-        if touch:self.last_seen[rid]=time.monotonic()
+        if touch:
+            with self.lock:
+                self.last_seen[rid]=time.monotonic()
+                if rid in self.detached:
+                    self.detached.discard(rid)
+                    self.recordings.event('page.returned',rid)
         path=self.recordings.folder(rid)/'capture.json'
         try:status=json.loads(path.read_text())
         except (FileNotFoundError,ValueError):status={'state':'starting','duration':0,'error':''}

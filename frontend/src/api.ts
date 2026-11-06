@@ -274,6 +274,11 @@ export const api = {
     request<NativeCaptureStatus>(`/native-capture/${id}`, {
       signal: AbortSignal.timeout(10000),
     }),
+  nativeRecordings: () =>
+    request<{ recording: RecordingSession; config: SessionConfig | null }[]>(
+      "/native-recordings",
+      { signal: AbortSignal.timeout(10000) },
+    ),
   liveSessions: () =>
     request<{ recording: RecordingSession; config: SessionConfig }[]>(
       "/live-sessions",

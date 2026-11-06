@@ -1,9 +1,9 @@
 """Bounded operational journal. No audio, text, paths, prompts or raw errors."""
 import fcntl,json,math,os,sqlite3,threading,time,uuid
 
-COMPONENTS={'capture','storage','asr'}
-STATES={'starting','recording','paused','unknown','interrupted','stopping','stopped','waiting','writing','available','partial','saved','missing','failed','running','behind','disabled'}
-CODES={'service.started','service.shutdown_requested','service.clean_shutdown','service.shutdown_failed','service.previous_unclosed',
+COMPONENTS={'capture','storage','asr','system_input','microphone_input'}
+STATES={'starting','recording','paused','unknown','interrupted','stopping','stopped','waiting','writing','available','partial','saved','missing','failed','running','behind','disabled','receiving','quiet','no_data','inactive','stalled'}
+CODES={'page.detached','page.returned','service.started','service.shutdown_requested','service.clean_shutdown','service.shutdown_failed','service.previous_unclosed',
        'recording.created','capture.started','capture.paused','capture.resumed','capture.stop_requested','capture.exited','capture.reconciled','storage.completed','storage.failed'}
 METRICS={'pid','exit_code','saved_bytes','saved_seconds','duration_seconds','saved_chunks','missing_chunks','covered_seconds','heartbeat_age_seconds','previous_last_seen'}
 

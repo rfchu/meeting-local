@@ -58,3 +58,11 @@ test('Native status timeout rejects a hung poll and permits the next poll',async
     assert.equal((await api.nativeStatus('status-fixture')).state,'recording');assert.equal(calls,2);
   } finally {globalThis.fetch=originalFetch;AbortSignal.timeout=originalTimeout;}
 });
+
+ test('Frozen-page resume and window focus recover only visible pages and detach on cleanup',()=>{
+ const page=new Page(),target=new EventTarget();let calls=0;
+ const unwatch=watchRecordingRecovery(()=>calls++,page,target);
+ page.visibilityState='hidden';page.dispatchEvent(new Event('resume'));target.dispatchEvent(new Event('focus'));assert.equal(calls,0);
+ page.visibilityState='visible';page.dispatchEvent(new Event('resume'));target.dispatchEvent(new Event('focus'));assert.equal(calls,2);
+ unwatch();page.dispatchEvent(new Event('resume'));target.dispatchEvent(new Event('focus'));assert.equal(calls,2);
+ });

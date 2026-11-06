@@ -257,7 +257,11 @@ export interface LifecycleEvent {
 export interface RecordingRuntime {
   phase: string;
   observed_at: number;
-  capture: { state: string; heartbeat_age_seconds: number | null };
+  capture: {
+    state: string;
+    heartbeat_age_seconds: number | null;
+    tracks?: { name: string; state: string; saved_seconds: number }[];
+  };
   storage: {
     state: string;
     saved_bytes: number;

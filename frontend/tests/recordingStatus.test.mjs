@@ -33,3 +33,10 @@ test('Lifecycle UI explains unknown exits without guessing an OOM or sleep cause
  assert.equal(lifecycleLabel('asr.failed'),'实时识别：发生失败');
  assert.equal(lifecycleLabel('unknown.secret-content'),'运行：状态已变化');
 });
+
+test('An alive capture heartbeat cannot hide missing microphone audio',()=>{
+ const view=recordingStatus({...runtime,capture:{...runtime.capture,tracks:[{name:'system',state:'receiving'},{name:'microphone',state:'no_data'}]}},'recording',false);
+ assert.equal(view.phase,'recording');assert.equal(view.label,'录音输入待检查');assert.match(view.input,/未收到音频/);
+ assert.match(lifecycleLabel('microphone_input.no_data'),/麦克风音轨/);
+ assert.match(lifecycleLabel('page.detached'),/继续托管/);
+});

@@ -766,6 +766,18 @@ def create_app(data_dir=None, start_worker=True):
             lifecycle.record('storage.failed',rid)
             raise HTTPException(503,'会议文件写盘未完成，原始音轨保留，可重试保存')
         except (ValueError,RuntimeError,subprocess.SubprocessError) as error:raise HTTPException(409,str(error))
+    @app.get('/api/native-recordings')
+    def active_native_recordings():
+        result=[]
+        for rid in list(native_capture.processes):
+            try:
+                if not native_capture.is_running(rid):continue
+                session=recordings.read(rid)
+                session['duration']=native_capture.status(rid,touch=False).get('duration',session['duration'])
+                row=store.one("SELECT config FROM live_sessions WHERE recording_id=? AND status!='stopped'",(rid,))
+                result.append({'recording':session,'config':json.loads(row['config']) if row else None})
+            except (OSError,ValueError):continue
+        return result
     @app.get('/api/live-sessions')
     def active_live_sessions():
         result=[]

@@ -97,7 +97,7 @@ class Process:
         self.stopped=True
         RecordingStore.write(self.folder/'capture.json',{'state':'stopped','duration':12,'error':''})
 
-def test_abandoned_capture_stops_only_after_grace_and_keeps_audio(capture):
+def test_background_capture_continues_after_page_grace_and_keeps_audio(capture):
     value,folder=session(capture)
     rid=value['id'];process=Process(folder)
     capture.processes[rid]=process;capture.last_seen[rid]=time.monotonic()-120
@@ -106,10 +106,12 @@ def test_abandoned_capture_stops_only_after_grace_and_keeps_audio(capture):
     assert process.commands==[]
     capture.last_seen[rid]=time.monotonic()-301
     capture.stop_abandoned()
-    assert process.commands==['stop'] and rid not in capture.processes
-    assert '5 分钟' in capture.status(rid)['error']
-    restarted=NativeCapture(capture.store,capture.recordings)
-    assert '5 分钟' in restarted.status(rid)['error']
+    assert process.commands==[] and rid in capture.processes
+    assert rid in capture.detached
+    capture.status(rid,touch=False)
+    assert rid in capture.detached  # ASR does not pretend the page returned.
+    capture.status(rid)
+    assert rid not in capture.detached
     assert (folder/'system.pcm').is_file()
 
 def test_completed_deleted_native_recording_cannot_republish(capture):

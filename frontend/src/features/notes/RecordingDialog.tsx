@@ -482,23 +482,35 @@ export default function RecordingDialog({
     };
   });
   const [runningSessions, setRunningSessions] = useState<
-    Awaited<ReturnType<typeof api.liveSessions>>
+    Awaited<ReturnType<typeof api.nativeRecordings>>
   >([]);
   useEffect(() => {
     if (state !== "idle") return;
     let valid = true;
-    api
-      .liveSessions()
-      .then((rows) => {
+    let polling = false;
+    const poll = async () => {
+      if (!valid || polling) return;
+      polling = true;
+      try {
+        const rows = await api.nativeRecordings();
         if (valid) setRunningSessions(rows);
-      })
-      .catch(() => {});
+      } catch {
+        /* Preserve the last known entry until connectivity returns. */
+      } finally {
+        polling = false;
+      }
+    };
+    void poll();
+    const timer = window.setInterval(() => void poll(), 5000);
+    const unwatch = watchRecordingRecovery(() => void poll());
     return () => {
       valid = false;
+      window.clearInterval(timer);
+      unwatch();
     };
   }, [state]);
   const attachRunning = (
-    entry: Awaited<ReturnType<typeof api.liveSessions>>[number],
+    entry: Awaited<ReturnType<typeof api.nativeRecordings>>[number],
   ) => {
     const session = entry.recording;
     sessionRef.current = session;
@@ -508,15 +520,17 @@ export default function RecordingDialog({
     setCaptureSource(
       session.include_microphone ? "macos-both" : "macos-system",
     );
-    setDraftEngine(entry.config.engine || "qwen");
+    setRecordOnly(!entry.config);
+    recordOnlyRef.current = !entry.config;
+    setDraftEngine(entry.config?.engine || "qwen");
     setStreamEnabled(true);
-    setResponsiveMode(entry.config.responsive);
-    setContextEnabled(entry.config.context_enabled);
-    setPrefixEnabled(entry.config.prefix_enabled !== false);
-    setRecognitionTerms(entry.config.terms);
+    setResponsiveMode(entry.config?.responsive ?? false);
+    setContextEnabled(entry.config?.context_enabled ?? false);
+    setPrefixEnabled(entry.config?.prefix_enabled !== false);
+    setRecognitionTerms(entry.config?.terms || "");
     accruedRef.current = session.duration;
     activeSinceRef.current = performance.now();
-    draftEnabledRef.current = true;
+    draftEnabledRef.current = !!entry.config;
     stateRef.current = "requesting";
     setState("requesting");
     setNativeSessionId(session.id);
@@ -1629,7 +1643,9 @@ export default function RecordingDialog({
       <RecordingEndGuide guide={endGuide} />
       {recording &&
         captureSource !== "browser" &&
-        (captureHealth?.stalled || nativeUnavailable) && (
+        (captureHealth?.stalled ||
+          nativeUnavailable ||
+          captureHealth?.tracks.some((t) => t.state === "no_data")) && (
           <section
             className="recording-end-guide"
             role="alert"
@@ -1639,11 +1655,13 @@ export default function RecordingDialog({
               <strong>
                 {nativeUnavailable
                   ? "暂时无法连接录音服务"
-                  : "采集心跳停止更新"}
+                  : captureHealth?.stalled
+                    ? "采集心跳停止更新"
+                    : "部分音轨未收到音频"}
               </strong>
               <span>
                 最后确认位置 {clock(accruedRef.current)}
-                。已落盘的音轨保留，当前不能确认录音仍在继续；状态恢复后会自动更新。
+                。已落盘的音轨保留；请检查麦克风、系统音源及其他软件的设备使用，状态恢复后会自动更新。
               </span>
             </div>
             <button onClick={() => setInspectorOpen(true)}>检查运行详情</button>
@@ -1737,7 +1755,7 @@ export default function RecordingDialog({
       )}
       {state === "idle" && runningSessions.length > 0 && (
         <div className="live-session-resume" role="status">
-          <span>有正在运行的原生录音，后端识别仍在继续。</span>
+          <span>本机有正在运行的原生录音，请继续查看并核对音轨状态。</span>
           {runningSessions.map((entry) => (
             <button
               key={entry.recording.id}
@@ -2082,6 +2100,11 @@ export default function RecordingDialog({
             </label>
             <span role="status">{awakeStatus}</span>
           </div>
+          {captureSource !== "browser" && (
+            <p className="muted">
+              原生录音由本机服务持续采集，页面进入后台或关闭后仍会继续；请返回此处主动结束。系统睡眠、设备断开或服务退出仍可能中断录音。
+            </p>
+          )}
           <RecordingWaveform
             tracks={
               captureSource === "browser"
