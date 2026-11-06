@@ -1,11 +1,8 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Modal from "../../components/Modal";
 import { api } from "../../api";
 import type { RecordingSession } from "../../types";
-import {
-  recoverableRecordings,
-  recoveryInventorySnapshot,
-} from "./recordingBuffer";
+import { recoveryInventorySnapshot } from "./recordingBuffer";
 import { recoverSavedRecording } from "./recoverSavedRecording";
 import RecordingReceipt from "./RecordingReceipt";
 import { watchRecordingRecovery } from "./recordingRecovery";
@@ -32,69 +29,77 @@ export default function RecordingRecoveryCenter({
   const [inventoryError, setInventoryError] = useState("");
   const [review, setReview] = useState<RecordingSession | null>(null),
     [confirmed, setConfirmed] = useState(false),
-    [serverAvailable, setServerAvailable] = useState(true);
-  const applyInventory = (
-    result: Awaited<ReturnType<typeof recoveryInventorySnapshot>>,
-  ) => {
-    setSessions(result.sessions);
-    setServerAvailable(result.serverAvailable);
-    setInventoryError(
-      !result.serverAvailable
-        ? "暂时无法检查本机保存状态，请重新检查。已有内容仍保留。"
-        : !result.localAvailable
-          ? "浏览器暂存暂不可读，以下仍展示本机保存的记录。"
-          : "",
-    );
-  };
+    [serverAvailable, setServerAvailable] = useState(false);
+  const [localAvailable, setLocalAvailable] = useState(false);
+  const [unverified, setUnverified] = useState(0);
+  const applyInventory = useCallback(
+    (result: Awaited<ReturnType<typeof recoveryInventorySnapshot>>) => {
+      setSessions(result.sessions);
+      setServerAvailable(result.serverAvailable);
+      setLocalAvailable(result.localAvailable);
+      setUnverified(result.unverifiedCount);
+      setInventoryError(
+        !result.serverAvailable
+          ? "暂时无法检查本机保存状态，请重新检查。已有内容仍保留。"
+          : !result.localAvailable
+            ? "浏览器暂存暂不可读，以下仍展示本机保存的记录。"
+            : result.unverifiedCount
+              ? `${result.unverifiedCount} 条浏览器记录的本机状态尚未确认，恢复前会重新核对。`
+              : "",
+      );
+    },
+    [],
+  );
   const [saved, setSaved] = useState<{
     id: string;
     notes: number;
     engine: "whisper" | "qwen";
   } | null>(null);
-  const refresh = async () => {
-    setLoading(true);
-    try {
-      applyInventory(await recoveryInventorySnapshot());
-    } catch (e) {
-      setInventoryError((e as Error).message);
-    } finally {
-      setLoading(false);
-    }
-  };
-  useEffect(() => {
-    let active = true,
-      pending = false;
-    const poll = async () => {
-      if (pending) return;
-      pending = true;
+  const requestVersion = useRef(0);
+  const refresh = useCallback(
+    async (showLoading = true) => {
+      const version = ++requestVersion.current;
+      if (showLoading) setLoading(true);
       try {
         const result = await recoveryInventorySnapshot();
-        if (active) {
-          applyInventory(result);
-        }
+        if (version === requestVersion.current) applyInventory(result);
       } catch (e) {
-        if (active) setInventoryError((e as Error).message);
+        if (version === requestVersion.current) {
+          setServerAvailable(false);
+          setInventoryError((e as Error).message);
+        }
       } finally {
-        pending = false;
-        if (active) setLoading(false);
+        if (version === requestVersion.current) setLoading(false);
       }
-    };
-    void poll();
-    const timer = window.setInterval(() => void poll(), 15000);
-    const unwatch = watchRecordingRecovery(() => void poll());
+    },
+    [applyInventory],
+  );
+  useEffect(() => {
+    void refresh(false);
+    const timer = window.setInterval(() => void refresh(false), 15000);
+    const unwatch = watchRecordingRecovery(() => void refresh());
     return () => {
-      active = false;
+      ++requestVersion.current;
       window.clearInterval(timer);
       unwatch();
     };
-  }, []);
+  }, [refresh]);
   const recover = async (session: RecordingSession) => {
+    if (!serverAvailable || loading) return;
     setBusy(true);
     setError("");
     try {
-      const latest =
-        (await recoverableRecordings()).find((s) => s.id === session.id) ||
-        session;
+      const snapshot = await recoveryInventorySnapshot();
+      applyInventory(snapshot);
+      if (!snapshot.serverAvailable)
+        throw new Error(
+          "本机状态尚未确认，未执行恢复；已有内容保留，请重新检查。",
+        );
+      const latest = snapshot.sessions.find((s) => s.id === session.id);
+      if (!latest)
+        throw new Error(
+          "此会话状态已变化，请重新检查录音列表或会议资料库；未执行恢复。",
+        );
       const result = await recoverSavedRecording(latest);
       setReview(null);
       setConfirmed(false);
@@ -172,7 +177,7 @@ export default function RecordingRecoveryCenter({
           <div>
             <button
               className="primary"
-              disabled={!confirmed || busy}
+              disabled={!confirmed || busy || loading || !serverAvailable}
               onClick={() => void recover(review)}
             >
               {busy ? "正在保存…" : "确认保存"}
@@ -212,7 +217,7 @@ export default function RecordingRecoveryCenter({
             ? "正在保存，请稍候…"
             : loading
               ? "正在检查本机与浏览器暂存…"
-              : "已检查本机与浏览器暂存"}
+              : `本机录音${serverAvailable ? "已检查" : "未确认"} · 浏览器暂存${localAvailable ? "已检查" : "未确认"}`}
         </span>
         <button disabled={busy || loading} onClick={() => void refresh()}>
           重新检查
@@ -222,7 +227,10 @@ export default function RecordingRecoveryCenter({
         <fieldset disabled={busy} className="recovery-center-body">
           <RecordingRecoveryList
             sessions={sessions}
-            inventoryConfirmed={serverAvailable}
+            inventoryConfirmed={
+              serverAvailable && localAvailable && unverified === 0
+            }
+            recoveryAvailable={serverAvailable}
             showEmptyState={!saved}
             onRecover={(s) => {
               setReview(s);

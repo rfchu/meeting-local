@@ -1,6 +1,6 @@
 import { api } from "../../api";
 import type { RecordingSession } from "../../types";
-import { mergeRecordingInventory } from "./recordingInventory";
+import { readRecoveryInventory } from "./recoveryInventory";
 
 interface BufferedChunk {
   key: string;
@@ -99,40 +99,24 @@ export function syncRecording(id: string): Promise<void> {
   syncing.set(id, task);
   return task;
 }
-export async function recoveryInventorySnapshot() {
-  // A disabled/full browser store must not hide audio already saved on the server.
-  let localAvailable = true;
-  const local = await all<RecordingSession>("sessions").catch(() => {
-    localAvailable = false;
-    return [];
-  });
-  try {
-    const remote = await api.recordings();
-    const known = new Set(remote.map((s) => s.id));
-    const checked = await Promise.all(
-      local.map(async (session) =>
-        known.has(session.id)
-          ? session
-          : {
-              ...session,
-              health: await api
-                .recordingHealth(session.id)
-                .catch(() => undefined),
-            },
-      ),
-    );
-    return {
-      sessions: mergeRecordingInventory(checked, remote),
-      serverAvailable: true,
-      localAvailable,
+let localInventoryRead: Promise<RecordingSession[]> | undefined;
+function readLocalInventory() {
+  if (!localInventoryRead) {
+    const task = all<RecordingSession>("sessions");
+    localInventoryRead = task;
+    const clear = () => {
+      if (localInventoryRead === task) localInventoryRead = undefined;
     };
-  } catch {
-    return {
-      sessions: mergeRecordingInventory(local, []),
-      serverAvailable: false,
-      localAvailable,
-    };
+    void task.then(clear, clear);
   }
+  return localInventoryRead;
+}
+export function recoveryInventorySnapshot() {
+  return readRecoveryInventory({
+    local: readLocalInventory,
+    remote: api.recordings,
+    health: api.recordingHealth,
+  });
 }
 
 export async function recoverableRecordings() {

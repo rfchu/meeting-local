@@ -244,9 +244,11 @@ export const api = {
       `/recordings/${id}/keep-awake`,
       { ...json("POST", { enabled }), signal: AbortSignal.timeout(10000) },
     ),
-  recordings: () =>
+  recordings: (signal?: AbortSignal) =>
     request<RecordingSession[]>("/recordings", {
-      signal: AbortSignal.timeout(10000),
+      signal: signal
+        ? AbortSignal.any([signal, AbortSignal.timeout(10000)])
+        : AbortSignal.timeout(10000),
     }),
   archiveEmptyRecording: (id: string, archived: boolean) =>
     request(`/recordings/${id}/recovery-archive?archived=${archived}`, {

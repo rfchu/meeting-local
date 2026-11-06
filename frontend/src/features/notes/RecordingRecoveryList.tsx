@@ -24,10 +24,12 @@ export default function RecordingRecoveryList({
   onDiagnostics,
   onArchive,
   inventoryConfirmed = true,
+  recoveryAvailable = true,
   showEmptyState = true,
 }: {
   sessions: RecordingSession[];
   inventoryConfirmed?: boolean;
+  recoveryAvailable?: boolean;
   showEmptyState?: boolean;
   onRecover: (s: RecordingSession) => void;
   onDiagnostics: (id: string) => void;
@@ -41,12 +43,12 @@ export default function RecordingRecoveryList({
           <span aria-hidden="true">{inventoryConfirmed ? "✓" : "…"}</span>
           <div>
             <strong>
-              {inventoryConfirmed ? "没有待恢复的录音" : "本机保存状态尚未确认"}
+              {inventoryConfirmed ? "没有待恢复的录音" : "恢复检查尚未完成"}
             </strong>
             <p>
               {inventoryConfirmed
                 ? "已保存的会议可在会议资料库中查看。"
-                : "请重新检查连接，已有录音和暂存仍保留。"}
+                : "部分来源或记录状态尚未确认，不能排除仍有待恢复内容。已有录音和暂存仍保留。"}
             </p>
           </div>
         </div>
@@ -77,11 +79,13 @@ export default function RecordingRecoveryList({
                 </small>
               </div>
               <span className="recovery-state-tag">
-                {h?.audio.missing_chunk_count
-                  ? "分段待补齐"
-                  : audio
-                    ? "待保存"
-                    : "仅保存了信息"}
+                {!h
+                  ? "状态待确认"
+                  : h.audio.missing_chunk_count
+                    ? "分段待补齐"
+                    : audio
+                      ? "待保存"
+                      : "仅保存了信息"}
               </span>
             </header>
             <p>
@@ -98,13 +102,15 @@ export default function RecordingRecoveryList({
             )}
             {!audio && (
               <p className="health-warning">
-                没有已知音频可恢复；已保存的简记和准备信息仍保留。
+                {h
+                  ? "没有已知音频可恢复；已保存的简记和准备信息仍保留。"
+                  : "本机音频尚未核对，暂不能判断是否有可恢复音频。已有简记和准备信息仍保留。"}
               </p>
             )}
             <div className="recovery-session-actions">
               <button
                 className="primary"
-                disabled={!audio}
+                disabled={!audio || !recoveryAvailable}
                 onClick={() => onRecover(session)}
               >
                 核对并保存为会议
