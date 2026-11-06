@@ -1,6 +1,6 @@
 """Offline, manifest-bound data backups. Never imports the app or starts workers/models."""
 import fcntl,hashlib,json,os,re,shutil,sqlite3,stat,tempfile,time,sys
-from contextlib import ExitStack,contextmanager,closing
+from contextlib import ExitStack,contextmanager,closing,nullcontext
 from pathlib import Path,PurePosixPath
 from .maintenance import DataLease
 
@@ -169,7 +169,7 @@ def logical_inventory(root,entries):
 @contextmanager
 def offline(root):
     if (root/'.restore-in-progress').exists() or (root/'.backup-payload').exists():raise BackupError('源目录尚未就绪或属于备份载荷')
-    with DataLease(root,exclusive=True),ExitStack() as locks:
+    with DataLease(root,exclusive=True) as lease,ExitStack() as locks:
         for name in ('service.lock','worker.lock'):
             handle=locks.enter_context((root/name).open('a'))
             try:fcntl.flock(handle,fcntl.LOCK_EX|fcntl.LOCK_NB)
@@ -185,17 +185,18 @@ def offline(root):
             except (OSError,ValueError):continue
             if isinstance(value,dict) and value.get('source')!='macos' and value.get('state') in ('starting','recording','paused') and time.time()-path.stat().st_mtime<90:
                 raise BackupError('浏览器采集最近仍在报告，请先确认录音已结束')
-        yield
+        yield lease
 
 
-def create_backup(source,output,code_version=None):
+def create_backup(source,output,code_version=None,maintenance=None):
     root=Path(source).resolve();output=Path(output).resolve()
     if not root.is_dir() or not (root/'meetings.sqlite3').is_file():raise BackupError('源数据目录无效')
     if output==root or output.is_relative_to(root) or root.is_relative_to(output):raise BackupError('备份目录必须位于源数据目录之外')
     if output.exists():raise BackupError('目标已存在，未覆盖任何内容')
+    if maintenance is not None and (not isinstance(maintenance,DataLease) or not maintenance.exclusive or maintenance.root!=root or maintenance.handle is None or maintenance.handle.closed):raise BackupError('未持有当前数据目录的排他维护锁')
     owned=False
     try:
-        with offline(root),ExitStack() as stack:
+        with (offline(root) if maintenance is None else nullcontext(maintenance)),ExitStack() as stack:
             initial,_=scan(root);databases=sqlite_files(root,initial)
             sidecars={rel+suffix for rel in databases for suffix in ('-wal','-shm','-journal')}
             before,dirs=scan(root,sidecars)

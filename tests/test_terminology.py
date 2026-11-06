@@ -44,7 +44,8 @@ def test_crud_scope_validation_normalization_and_optimistic_lock(setup):
     assert client.delete(url+'?version=1').status_code==409
     assert client.delete(url+'?version=2').status_code==200
     assert not client.get(f'/api/terminology/{mid}').json()['terms']
-    assert store.one('PRAGMA user_version')['user_version']==21
+    from app.migrations import LATEST_VERSION
+    assert store.one('PRAGMA user_version')['user_version']==LATEST_VERSION
 
 def test_candidate_never_primes_asr_or_search_until_confirmed(setup):
     client,store,mid=setup;tid=seed_candidate(store,mid)

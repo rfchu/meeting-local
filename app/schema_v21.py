@@ -1,0 +1,171 @@
+"""Frozen legacy schema baseline. Later schema changes belong in new migrations."""
+import json,sqlite3
+from .minutes_templates import BUILTIN_TEMPLATES
+
+def encode(value):return json.dumps(value,ensure_ascii=False)
+
+def execute_script(db,script):
+    # sqlite3.executescript commits an existing transaction. Execute complete statements instead.
+    statement=''
+    for character in script:
+        statement+=character
+        if character==';' and sqlite3.complete_statement(statement):
+            db.execute(statement);statement=''
+    if statement.strip():db.execute(statement)
+
+def seed_templates(db):
+    for template in BUILTIN_TEMPLATES:
+        definition=encode(template.model_dump())
+        db.execute('''INSERT INTO minutes_templates(id,name,description,category,version,builtin,definition,status)
+            VALUES(?,?,?,?,?,?,?,'active') ON CONFLICT(id) DO UPDATE SET
+            name=excluded.name,description=excluded.description,category=excluded.category,
+            version=excluded.version,builtin=excluded.builtin,definition=excluded.definition,
+            updated=CURRENT_TIMESTAMP''',
+            (template.id,template.name,template.description,template.category,template.version,1,definition))
+
+
+def install_legacy_schema(db):
+    execute_script(db,'''
+    CREATE TABLE IF NOT EXISTS meetings (
+      id TEXT PRIMARY KEY, title TEXT NOT NULL, filename TEXT NOT NULL,
+      created TEXT DEFAULT CURRENT_TIMESTAMP, duration REAL DEFAULT 0,
+      revision INTEGER DEFAULT 0, segments TEXT DEFAULT '[]');
+    CREATE TABLE IF NOT EXISTS revisions (
+      meeting_id TEXT, revision INTEGER, segments TEXT, source TEXT,
+      created TEXT DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY(meeting_id, revision));
+    CREATE TABLE IF NOT EXISTS jobs (
+      id TEXT PRIMARY KEY, meeting_id TEXT, state TEXT, stage TEXT,
+      progress REAL DEFAULT 0, error TEXT DEFAULT '', config TEXT,
+      created TEXT DEFAULT CURRENT_TIMESTAMP, kind TEXT NOT NULL DEFAULT 'transcription');
+    CREATE TABLE IF NOT EXISTS artifacts (
+      id TEXT PRIMARY KEY, meeting_id TEXT, revision INTEGER,
+      kind TEXT, payload TEXT, provenance TEXT,
+      created TEXT DEFAULT CURRENT_TIMESTAMP);
+    CREATE TABLE IF NOT EXISTS meeting_reviews (
+      meeting_id TEXT NOT NULL, step TEXT NOT NULL, fingerprint TEXT NOT NULL,
+      decision TEXT NOT NULL, reviewed_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY(meeting_id,step));
+    CREATE TABLE IF NOT EXISTS qa_runs (
+      id TEXT PRIMARY KEY, config TEXT NOT NULL, job_id TEXT,
+      cloud_confirmed INTEGER NOT NULL DEFAULT 0, answer TEXT,
+      created TEXT DEFAULT CURRENT_TIMESTAMP);
+    CREATE TABLE IF NOT EXISTS llm_configs (
+      id TEXT PRIMARY KEY, name TEXT NOT NULL,
+      provider_type TEXT NOT NULL CHECK(provider_type IN ('local','cloud')),
+      base_url TEXT NOT NULL, model TEXT NOT NULL, api_key TEXT NOT NULL DEFAULT '',
+      is_default INTEGER NOT NULL DEFAULT 0,
+      context_window INTEGER NOT NULL DEFAULT 32768,
+      analysis_chunk_mode TEXT NOT NULL DEFAULT 'auto',
+      analysis_chunk_chars INTEGER NOT NULL DEFAULT 0,
+      created TEXT DEFAULT CURRENT_TIMESTAMP, updated TEXT DEFAULT CURRENT_TIMESTAMP);
+    CREATE TABLE IF NOT EXISTS minutes_templates (
+      id TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT NOT NULL DEFAULT '',
+      category TEXT NOT NULL DEFAULT '通用', version INTEGER NOT NULL DEFAULT 1,
+      builtin INTEGER NOT NULL DEFAULT 0, definition TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'active',
+      created TEXT DEFAULT CURRENT_TIMESTAMP, updated TEXT DEFAULT CURRENT_TIMESTAMP);
+    CREATE TABLE IF NOT EXISTS meeting_notes (
+      id TEXT PRIMARY KEY, meeting_id TEXT NOT NULL,
+      captured_at REAL NOT NULL DEFAULT 0,
+      note_type TEXT NOT NULL DEFAULT 'note',
+      raw_text TEXT NOT NULL, expanded_text TEXT NOT NULL DEFAULT '',
+      accepted_text TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'raw',
+      source_segment_ids TEXT NOT NULL DEFAULT '[]',
+      created TEXT DEFAULT CURRENT_TIMESTAMP, updated TEXT DEFAULT CURRENT_TIMESTAMP);
+    CREATE TABLE IF NOT EXISTS live_asr_ranges (
+      id TEXT PRIMARY KEY, recording_id TEXT NOT NULL, source TEXT NOT NULL,
+      engine TEXT NOT NULL, start_frame INTEGER NOT NULL, end_frame INTEGER NOT NULL,
+      audio_hash TEXT NOT NULL, identity TEXT NOT NULL, state TEXT NOT NULL,
+      segments TEXT NOT NULL DEFAULT '[]', error TEXT NOT NULL DEFAULT '',
+      created TEXT DEFAULT CURRENT_TIMESTAMP, updated TEXT DEFAULT CURRENT_TIMESTAMP);
+    CREATE TABLE IF NOT EXISTS live_sessions (
+      recording_id TEXT PRIMARY KEY,source TEXT NOT NULL,config TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'running',cursor INTEGER NOT NULL DEFAULT 0,
+      seq INTEGER NOT NULL DEFAULT 0,partial TEXT NOT NULL DEFAULT '{}',metrics TEXT NOT NULL DEFAULT '{}',
+      updated TEXT DEFAULT CURRENT_TIMESTAMP);
+    CREATE TABLE IF NOT EXISTS live_session_events (
+      recording_id TEXT NOT NULL,seq INTEGER NOT NULL,payload TEXT NOT NULL,
+      PRIMARY KEY(recording_id,seq));
+    CREATE TABLE IF NOT EXISTS live_pcm_inputs (
+      recording_id TEXT NOT NULL,start_frame INTEGER NOT NULL,end_frame INTEGER NOT NULL,digest TEXT NOT NULL,
+      PRIMARY KEY(recording_id,start_frame));
+    CREATE TABLE IF NOT EXISTS live_corrections (
+      id TEXT PRIMARY KEY,recording_id TEXT NOT NULL,range_id TEXT NOT NULL,segment_index INTEGER NOT NULL,
+      profile_id TEXT NOT NULL,model TEXT NOT NULL,original_text TEXT NOT NULL,edits TEXT NOT NULL,
+      state TEXT NOT NULL,created TEXT DEFAULT CURRENT_TIMESTAMP,updated TEXT DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(range_id,segment_index,profile_id));
+    CREATE INDEX IF NOT EXISTS live_corrections_recording ON live_corrections(recording_id);
+    CREATE INDEX IF NOT EXISTS live_asr_recording_range ON live_asr_ranges(recording_id,engine,start_frame);
+    CREATE INDEX IF NOT EXISTS meeting_notes_meeting_time
+      ON meeting_notes(meeting_id,captured_at,created);
+    ''')
+    columns={row['name'] for row in db.execute('PRAGMA table_info(jobs)')}
+    if 'kind' not in columns:
+        db.execute("ALTER TABLE jobs ADD COLUMN kind TEXT NOT NULL DEFAULT 'transcription'")
+    note_columns={row['name'] for row in db.execute('PRAGMA table_info(meeting_notes)')}
+    if 'client_id' not in note_columns:db.execute("ALTER TABLE meeting_notes ADD COLUMN client_id TEXT NOT NULL DEFAULT ''")
+    if 'overview_focus' not in note_columns:db.execute('ALTER TABLE meeting_notes ADD COLUMN overview_focus INTEGER NOT NULL DEFAULT 0')
+    if 'expansion_revision' not in note_columns:db.execute('ALTER TABLE meeting_notes ADD COLUMN expansion_revision INTEGER NOT NULL DEFAULT 0')
+    if 'note_scope' not in note_columns:db.execute("ALTER TABLE meeting_notes ADD COLUMN note_scope TEXT NOT NULL DEFAULT 'personal'")
+    if 'is_marker' not in note_columns:db.execute('ALTER TABLE meeting_notes ADD COLUMN is_marker INTEGER NOT NULL DEFAULT 0')
+    db.execute('''CREATE TABLE IF NOT EXISTS note_todos (
+        id TEXT PRIMARY KEY,meeting_id TEXT NOT NULL,note_id TEXT NOT NULL,content TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending',owner TEXT NOT NULL DEFAULT '',due_date TEXT NOT NULL DEFAULT '',
+        revision INTEGER NOT NULL,note_fingerprint TEXT NOT NULL,source_segment_ids TEXT NOT NULL DEFAULT '[]',
+        note_scope TEXT NOT NULL DEFAULT 'personal',created TEXT DEFAULT CURRENT_TIMESTAMP,updated TEXT DEFAULT CURRENT_TIMESTAMP)''')
+    todo_columns={row['name'] for row in db.execute('PRAGMA table_info(note_todos)')}
+    for name,definition in [('source_kind',"TEXT NOT NULL DEFAULT 'note'"),('source_artifact_id',"TEXT NOT NULL DEFAULT ''"),('source_index',"INTEGER NOT NULL DEFAULT -1"),('attention_review_key',"TEXT NOT NULL DEFAULT ''")]:
+        if name not in todo_columns:db.execute(f'ALTER TABLE note_todos ADD COLUMN {name} {definition}')
+    config_columns={row['name'] for row in db.execute('PRAGMA table_info(llm_configs)')}
+    if 'context_window' not in config_columns:
+        db.execute('ALTER TABLE llm_configs ADD COLUMN context_window INTEGER NOT NULL DEFAULT 32768')
+    if 'analysis_chunk_mode' not in config_columns:
+        db.execute("ALTER TABLE llm_configs ADD COLUMN analysis_chunk_mode TEXT NOT NULL DEFAULT 'auto'")
+    if 'analysis_chunk_chars' not in config_columns:
+        db.execute('ALTER TABLE llm_configs ADD COLUMN analysis_chunk_chars INTEGER NOT NULL DEFAULT 0')
+    execute_script(db,"""CREATE TABLE IF NOT EXISTS meeting_preparation (id INTEGER PRIMARY KEY CHECK(id=1),payload TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS meeting_briefs (
+        meeting_id TEXT PRIMARY KEY,payload TEXT NOT NULL,updated TEXT DEFAULT CURRENT_TIMESTAMP);
+        CREATE TABLE IF NOT EXISTS attention_reviews (
+        note_id TEXT PRIMARY KEY,meeting_id TEXT NOT NULL,decision TEXT NOT NULL,content TEXT NOT NULL,
+        source_segment_ids TEXT NOT NULL,revision INTEGER NOT NULL,note_fingerprint TEXT NOT NULL,review_key TEXT NOT NULL,
+        updated TEXT DEFAULT CURRENT_TIMESTAMP);
+        CREATE INDEX IF NOT EXISTS attention_reviews_meeting ON attention_reviews(meeting_id);
+        CREATE INDEX IF NOT EXISTS note_todos_meeting ON note_todos(meeting_id);""")
+    db.execute('CREATE TABLE IF NOT EXISTS minutes_selection (meeting_id TEXT PRIMARY KEY, artifact_id TEXT NOT NULL)')
+    execute_script(db,"""CREATE TABLE IF NOT EXISTS meeting_task_links (
+        meeting_id TEXT NOT NULL,task_id TEXT NOT NULL,created TEXT DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY(meeting_id,task_id));
+        CREATE TABLE IF NOT EXISTS minutes_task_bindings (
+        meeting_id TEXT NOT NULL,artifact_id TEXT NOT NULL,action_index INTEGER NOT NULL,task_id TEXT NOT NULL,
+        PRIMARY KEY(artifact_id,action_index));
+        CREATE TABLE IF NOT EXISTS minutes_deliveries (
+        id TEXT PRIMARY KEY,meeting_id TEXT NOT NULL,artifact_id TEXT NOT NULL,
+        payload TEXT NOT NULL,created TEXT DEFAULT CURRENT_TIMESTAMP);
+        CREATE INDEX IF NOT EXISTS minutes_deliveries_meeting ON minutes_deliveries(meeting_id);""")
+    execute_script(db,"""CREATE TABLE IF NOT EXISTS terminology (
+        id TEXT PRIMARY KEY,scope TEXT NOT NULL,name TEXT NOT NULL,category TEXT NOT NULL,
+        aliases TEXT NOT NULL DEFAULT '[]',status TEXT NOT NULL,source TEXT NOT NULL,
+        evidence TEXT NOT NULL DEFAULT '[]',revision INTEGER,reason TEXT NOT NULL DEFAULT '',
+        version INTEGER NOT NULL DEFAULT 1,created TEXT DEFAULT CURRENT_TIMESTAMP,
+        updated TEXT DEFAULT CURRENT_TIMESTAMP);
+        CREATE UNIQUE INDEX IF NOT EXISTS terminology_scope_name ON terminology(scope,name COLLATE NOCASE);
+        CREATE INDEX IF NOT EXISTS terminology_scope_status ON terminology(scope,status);""")
+    execute_script(db,"""CREATE TABLE IF NOT EXISTS live_overview_runs (
+        recording_id TEXT PRIMARY KEY,config TEXT NOT NULL,enabled INTEGER NOT NULL DEFAULT 1,
+        epoch INTEGER NOT NULL DEFAULT 1,state TEXT NOT NULL DEFAULT 'waiting',
+        last_attempt REAL NOT NULL DEFAULT 0,next_due REAL NOT NULL DEFAULT 0,
+        force INTEGER NOT NULL DEFAULT 0,failures INTEGER NOT NULL DEFAULT 0,
+        error TEXT NOT NULL DEFAULT '',updated TEXT DEFAULT CURRENT_TIMESTAMP);
+        CREATE TABLE IF NOT EXISTS live_overview_snapshots (
+        recording_id TEXT NOT NULL,version INTEGER NOT NULL,cursor INTEGER NOT NULL,
+        covered_hash TEXT NOT NULL,meta_hash TEXT NOT NULL,payload TEXT NOT NULL,
+        created TEXT DEFAULT CURRENT_TIMESTAMP,PRIMARY KEY(recording_id,version));
+        CREATE TABLE IF NOT EXISTS live_overview_reviews (
+        recording_id TEXT NOT NULL,item_id TEXT NOT NULL,state TEXT NOT NULL,
+        payload TEXT NOT NULL,version INTEGER NOT NULL DEFAULT 1,
+        updated TEXT DEFAULT CURRENT_TIMESTAMP,PRIMARY KEY(recording_id,item_id));""")
+    db.execute("CREATE TABLE IF NOT EXISTS model_preferences (role TEXT PRIMARY KEY,default_value TEXT NOT NULL DEFAULT '',last_value TEXT NOT NULL DEFAULT '',version INTEGER NOT NULL DEFAULT 1,updated TEXT DEFAULT CURRENT_TIMESTAMP)")
+    db.execute("CREATE TABLE IF NOT EXISTS job_runtime_events (id INTEGER PRIMARY KEY AUTOINCREMENT,job_id TEXT NOT NULL,action TEXT NOT NULL,from_state TEXT NOT NULL,error_code TEXT,created TEXT DEFAULT CURRENT_TIMESTAMP)")
+    db.execute('CREATE INDEX IF NOT EXISTS job_runtime_events_job ON job_runtime_events(job_id,id)')
+    db.execute('CREATE TRIGGER IF NOT EXISTS job_runtime_events_cleanup AFTER DELETE ON jobs BEGIN DELETE FROM job_runtime_events WHERE job_id=OLD.id; END')
