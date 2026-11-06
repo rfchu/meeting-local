@@ -163,7 +163,7 @@ def test_start_persists_identity_before_launch_and_keeps_owned_control(helper,en
         process=original([str(helper),str(folder),incarnation],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
         assert process.stdout.readline()==b'held\n';return process
     monkeypatch.setattr(module.subprocess,'Popen',launch)
-    session=native.start(False);process=native.processes[session['id']]
+    session=native._start_direct(False);process=native.processes[session['id']]
     try:
         assert native.ownership()['decision']=='controlled'
         assert native.status(session['id'])['ownership']['controlled_by_current_service'] is True

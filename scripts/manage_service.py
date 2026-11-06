@@ -108,7 +108,7 @@ class MacService:
     def stop(self,force=False):
         status=self.status()
         if not status['loaded']:return status
-        if not force and self.busy():raise ValueError('有录音或后台任务，请先完成；明确需要中止时使用 stop --force')
+        if not force and self.busy():raise ValueError('有录音或后台任务，请先完成；stop --force 仅强制退出 API，独立采集可能继续，请先在工作台结束录音')
         if status.get('backend')=='detached':
             # A recycled PID is never sufficient authorization to stop a process.
             if not status['ready']:raise ValueError('无法核对服务实例身份，未向记录的 PID 发送停止信号')

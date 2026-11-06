@@ -31,6 +31,9 @@ export default function RecordingView({
   briefReady,
   briefSaved,
   captureHealth,
+  nativeOwnership,
+  recoveringControl,
+  recoverActiveControl,
   captureSource,
   checkCapture,
   checkingCapture,
@@ -151,6 +154,9 @@ export default function RecordingView({
   termsOpen,
   toast,
 }: RecordingViewModel) {
+  const controlRequired =
+    sessionRef.current?.source === "macos" &&
+    !!nativeOwnership?.control_required;
   return (
     <Modal
       id="recordingWorkbench"
@@ -231,18 +237,40 @@ export default function RecordingView({
                 : "等待 macOS 采集权限…"}
             </button>
           )}
-          {state === "recording" && <button onClick={pause}>暂停</button>}
-          {state === "paused" && <button onClick={resume}>继续录音</button>}
+          {state === "recording" && (
+            <button disabled={controlRequired} onClick={pause}>
+              暂停
+            </button>
+          )}
+          {state === "paused" && (
+            <button disabled={controlRequired} onClick={resume}>
+              继续录音
+            </button>
+          )}
           {recording && (
             <button
               className="recording-stop"
-              disabled={endGuide.pending}
+              disabled={endGuide.pending || controlRequired}
               onClick={endGuide.request}
             >
               ■{" "}
               {autoProcess && !processingDeferredRef.current
                 ? "结束并整理"
                 : "结束录音"}
+            </button>
+          )}
+          {recording && controlRequired && (
+            <button
+              disabled={
+                recoveringControl || !nativeOwnership.can_recover_control
+              }
+              onClick={() => void recoverActiveControl()}
+            >
+              {recoveringControl
+                ? "正在恢复控制…"
+                : nativeOwnership.can_recover_control
+                  ? "恢复录音控制"
+                  : "等待控制租约释放"}
             </button>
           )}
           {state === "saving" && (
@@ -407,11 +435,13 @@ export default function RecordingView({
       )}
       {state === "idle" && runningSessions.length > 0 && (
         <div className="live-session-resume" role="status">
-          <span>本机有正在运行的原生录音，请继续查看并核对音轨状态。</span>
+          <span>
+            本机原生录音仍在运行；继续查看时会核对控制权，必要时请明确恢复控制。
+          </span>
           {runningSessions.map((entry) => (
             <button
               key={entry.recording.id}
-              onClick={() => attachRunning(entry)}
+              onClick={() => void attachRunning(entry)}
             >
               继续查看 {clock(entry.recording.duration)}
             </button>
@@ -754,7 +784,9 @@ export default function RecordingView({
           </div>
           {captureSource !== "browser" && (
             <p className="muted">
-              原生录音由本机服务持续采集，页面进入后台或关闭后仍会继续；请返回此处主动结束。系统睡眠、设备断开或服务退出仍可能中断录音。
+              {sessionRef.current?.capture_transport === "broker_v2"
+                ? "独立采集服务持续保存音轨，API 重启后可明确恢复控制；请返回此处主动结束。系统睡眠、设备断开或采集服务退出仍可能中断录音。"
+                : "原生录音由本机服务持续采集，页面进入后台或关闭后仍会继续；请返回此处主动结束。系统睡眠、设备断开或服务退出仍可能中断录音。"}
             </p>
           )}
           <RecordingWaveform

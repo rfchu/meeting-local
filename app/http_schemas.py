@@ -288,3 +288,7 @@ class SourceReviewInput(BaseModel):
 
 class DeliveryFinalizeInput(DeliveryInput):
     fingerprint: str=Field(pattern=r'^[a-f0-9]{64}$')
+
+
+class RecoverCaptureControl(BaseModel):
+    expected_generation:int=Field(ge=0,le=9007199254740991)

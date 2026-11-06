@@ -1,9 +1,10 @@
 """Control a local ScreenCaptureKit helper; preserve independent PCM tracks."""
-import io, json, math, os, platform, subprocess, threading, time, wave, uuid
+import io, json, math, os, platform, subprocess, threading, time, wave, uuid, sys, contextlib
 from array import array
 from pathlib import Path
 from .recordings import RecordingStore
 from .capture_ownership import inspect as inspect_ownership,blocks_publication
+from .capture_broker import Client as BrokerClient,BrokerProcess,read_private,endpoint,atomic as broker_atomic
 from .capture_diagnostics import sanitize
 from .live_segmentation import elastic_plan,HARD_SECONDS
 
@@ -24,7 +25,8 @@ class NativeCapture:
         """Read an owned process exit without persisting events or renewing the page lease."""
         with self.lock:
             process=self.processes.get(rid)
-            return process.poll() if process is not None else None
+            code=process.poll() if process is not None else None
+            return None if isinstance(process,BrokerProcess) and not process.exit_code_known else code
 
     def ownership(self):
         value=inspect_ownership(self.recordings.root)
@@ -34,7 +36,14 @@ class NativeCapture:
                 session=self.recordings.read(rid)
                 if not isinstance(session,dict) or session.get('capture_incarnation')!=value['incarnation']:
                     return value|{'recording_id':None,'decision':'blocked_identity_mismatch'}
-                if self.is_running(rid):value['decision']='controlled'
+                process=self.processes.get(rid)
+                if isinstance(process,BrokerProcess):
+                    try:
+                        remote=process.client.status()
+                        value.update(protocol_version=2,control_transport='socket_v2',reattach_supported=True,controller_generation=remote['generation'],can_recover_control=remote['alive'] and remote['can_claim'],control_required=not remote['control_valid'])
+                        value['decision']='controlled' if remote['control_valid'] else 'controller_unavailable'
+                    except (OSError,ValueError):value['decision']='blocked_unknown_owner'
+                elif self.is_running(rid):value['decision']='controlled'
             except (OSError,ValueError):return value|{'recording_id':None,'decision':'blocked_unknown_owner'}
         return value
 
@@ -42,7 +51,7 @@ class NativeCapture:
 
     def capability(self):
         result={'available':self.available(),'screen_permission':False,'microphone_permission':False,
-                'ownership':self.ownership(),'supported':platform.system()=='Darwin','build_command':'bash scripts/build_capture.sh'}
+                'capture_control_protocol_version':2,'explicit_control_recovery':True,'automatic_control_takeover':False,'ownership':self.ownership(),'supported':platform.system()=='Darwin','build_command':'bash scripts/build_capture.sh'}
         if self.available():
             try:
                 probe=subprocess.run([str(HELPER),'--probe'],capture_output=True,timeout=5,check=True)
@@ -56,9 +65,43 @@ class NativeCapture:
                 self.stop_abandoned()
         self.monitor=threading.Thread(target=loop,daemon=True);self.monitor.start()
 
+    def discover_broker(self):
+        """Read-only discovery never claims control or replays commands."""
+        try:
+            folder,_,fingerprint=endpoint(self.recordings.root);value=read_private(folder/'broker.json')
+            if value.get('version')!=2 or value.get('workspace')!=fingerprint:return
+            rid=value['recording_id'];session=self.recordings.read(rid)
+            if session.get('capture_transport')!='broker_v2' or session.get('capture_incarnation')!=value.get('incarnation'):return
+            raw=inspect_ownership(self.recordings.root)
+            if raw['lease']=='unknown':return
+            if raw['lease']=='held' and (raw['recording_id']!=rid or raw['incarnation']!=value['incarnation']):return
+            launch=read_private(self.recordings.folder(rid)/'capture-launch.json')
+            if launch.get('version')!=2 or launch.get('recording_id')!=rid or launch.get('incarnation')!=value['incarnation']:return
+            if rid in self.processes:return
+            client=BrokerClient(self.recordings.root,rid,value['incarnation']);remote=client.status()
+            if remote['alive']:
+                self.processes[rid]=BrokerProcess(client);self.last_seen[rid]=time.monotonic()
+        except (OSError,ValueError,KeyError,TypeError):return
+
+    def set_keep_awake(self,rid,enabled):
+        session=self.recordings.read(rid)
+        if session.get('capture_transport')=='broker_v2':
+            broker_atomic(self.recordings.folder(rid)/'capture-policy.json',{'version':2,'incarnation':session['capture_incarnation'],'keep_awake':bool(enabled)})
+
+    def recover_control(self,rid,generation):
+        with self.lock:
+            self.discover_broker();process=self.processes.get(rid)
+            if not isinstance(process,BrokerProcess):raise ValueError('此录音没有可核对的独立控制服务，未尝试接管')
+            if process.has_control:
+                remote=process.client.status()
+                if remote['control_valid']:return self.status(rid,touch=False)
+            process.client.claim(generation)
+            return self.status(rid,touch=False)
+
     def reconcile_interrupted(self):
         """A new backend never claims an old native stream is still being captured."""
         with self.lock,self.recordings.lock:
+            self.discover_broker()
             for path in self.recordings.root.glob('*/session.json'):
                 try:
                     session=json.loads(path.read_text());rid=session['id']
@@ -94,6 +137,7 @@ class NativeCapture:
         with self.lock:
             process=self.processes.get(rid)
             code=process.poll() if process else None
+            if isinstance(process,BrokerProcess) and not process.exit_code_known:return None
             if code is None:return None
             try:path=self.recordings.folder(rid)/'capture-exit.json'
             except OSError:return code
@@ -103,7 +147,11 @@ class NativeCapture:
                 self.recordings.event('capture.exited',rid,exit_code=code)
             return code
 
-    def start(self,microphone=True):
+    def start(self,microphone=True):return self._start(microphone,True)
+
+    def _start_direct(self,microphone=True):return self._start(microphone,False)
+
+    def _start(self,microphone,broker):
         with self.lock:
             if not self.available():raise ValueError('原生采集器未安装，请运行 bash scripts/build_capture.sh')
             if self.ownership()['lease']!='free':raise ValueError('采集所有权尚未释放或无法核对，未启动第二个采集器')
@@ -112,7 +160,33 @@ class NativeCapture:
             if any(p.poll() is None for p in self.processes.values()):raise ValueError('已有系统音频采集正在运行，请先停止')
             session=self.recordings.create('audio/wav');rid=session['id']
             session.update(source='macos',include_microphone=microphone,capture_incarnation=uuid.uuid4().hex)
+            if broker:session['capture_transport']='broker_v2'
             folder=self.recordings.folder(rid);RecordingStore.write(folder/'session.json',session)
+            if broker:
+                args=[sys.executable,'-m','app.capture_broker','--root',str(self.recordings.root),'--recording-id',rid,'--incarnation',session['capture_incarnation'],'--helper',str(HELPER)]
+                if microphone:args.append('--microphone')
+                with (folder/'broker.log').open('ab') as log:
+                    launcher=subprocess.Popen(args,stdin=subprocess.DEVNULL,stdout=log,stderr=log,start_new_session=True,close_fds=True,cwd=BASE)
+                client=BrokerClient(self.recordings.root,rid,session['capture_incarnation'])
+                deadline=time.monotonic()+8
+                while time.monotonic()<deadline:
+                    try:
+                        remote=client.status()
+                        if remote['alive']:
+                            client.claim(remote['generation']);proxy=BrokerProcess(client);proxy.launcher=launcher
+                            threading.Thread(target=launcher.wait,daemon=True).start()
+                            self.processes[rid]=proxy;self.last_seen[rid]=time.monotonic()
+                            self.recordings.event('capture.started',rid)
+                            return session
+                    except (OSError,ValueError):pass
+                    if launcher.poll() is not None:break
+                    time.sleep(.05)
+                if launcher.poll() is None:
+                    launcher.terminate()
+                    with contextlib.suppress(subprocess.TimeoutExpired):launcher.wait(timeout=3)
+                session.update(state='interrupted',stop_reason='独立采集服务启动未确认，已保存内容保留，未重复启动')
+                RecordingStore.write(folder/'session.json',session)
+                raise ValueError(session['stop_reason'])
             args=[str(HELPER),'--output',str(folder),'--incarnation',session['capture_incarnation']]
             if microphone:args.append('--microphone')
             with (folder/'capture.log').open('ab') as log:
@@ -135,7 +209,7 @@ class NativeCapture:
         except (FileNotFoundError,ValueError):status={'state':'starting','duration':0,'error':''}
         process=self.processes.get(rid)
         code=self.observe_exit(rid) if process else None
-        if (not process or code is not None) and status['state'] in ('starting','recording','paused'):
+        if (not process or code is not None or not self.is_running(rid)) and status['state'] in ('starting','recording','paused'):
             detail=f'（退出码 {code}）' if code is not None else ''
             status.update(state='interrupted',error='采集器可能仍在写入，但当前服务无控制权；未接管或重新开始采集' if blocks_publication(self.ownership(),rid) else f'采集进程已退出{detail}，已保存的音轨可恢复')
         reason=session.get('stop_reason') or self.stop_reasons.get(rid)
@@ -235,6 +309,19 @@ class NativeCapture:
         with self.lock:
             if command=='stop':self.recordings.event('capture.stop_requested',rid)
             self.status(rid);process=self.processes.get(rid)
+            if isinstance(process,BrokerProcess):
+                if process.poll() is not None:
+                    if command=='stop':return self.status(rid,touch=False)
+                    raise ValueError('独立采集器已退出')
+                if not process.has_control:raise ValueError('请先明确恢复控制，未发送录音命令')
+                pending=self.recordings.read(rid).get('control',{}).get('pending') or {}
+                request_id=pending.get('request_id') or uuid.uuid4().hex
+                process.command(command,request_id)
+                result=self.status(rid,touch=False)
+                if command=='stop':
+                    self.processes.pop(rid,None);self.last_seen.pop(rid,None)
+                else:self.recordings.event('capture.paused' if command=='pause' else 'capture.resumed',rid,duration_seconds=result.get('duration',0))
+                return result
             if not process or process.poll() is not None:
                 if blocks_publication(self.ownership(),rid):raise ValueError('当前服务无采集控制权，未发送停止或接管命令；请等待采集器退出后整理')
                 if command=='stop':return self.status(rid)
@@ -322,6 +409,12 @@ class NativeCapture:
     def close(self):
         self.closed.set()
         for rid in list(self.processes):
+            with self.lock:
+                process=self.processes.get(rid)
+                if isinstance(process,BrokerProcess):
+                    with contextlib.suppress(OSError,ValueError):process.client.release()
+                    self.processes.pop(rid,None);self.last_seen.pop(rid,None)
+                    continue
             try:
                 self.record_stop_reason(rid,'服务退出，已停止采集；可以恢复已保存的录音')
                 self.command(rid,'stop')

@@ -8,7 +8,7 @@ from starlette.concurrency import run_in_threadpool
 from ..db import uid, encode
 from ..live_stream import inspect_audio, qwen_events
 from ..recording_completion import completion_report, recording_quality
-from ..http_schemas import CaptureStateInput, KeepAwakeInput, LiveCorrectionDecision, LiveCorrectionInput, LiveSessionInput, LiveSessionState, NativeCommandInput, NativeDraftInput, NativeRecordingInput, RecordingFinish, RecordingInput, RecordingMetadata, RecordingQualityReviewInput
+from ..http_schemas import RecoverCaptureControl, CaptureStateInput, KeepAwakeInput, LiveCorrectionDecision, LiveCorrectionInput, LiveSessionInput, LiveSessionState, NativeCommandInput, NativeDraftInput, NativeRecordingInput, RecordingFinish, RecordingInput, RecordingMetadata, RecordingQualityReviewInput
 from ..application_services import ApplicationServices
 
 def register_routes(app,services:ApplicationServices):
@@ -146,6 +146,7 @@ def register_routes(app,services:ApplicationServices):
             with capture_probes.lock:
                 if capture_probes.active():raise ValueError('正在试录，请先完成或取消测试')
                 session=native_capture.start(body.microphone)
+            native_capture.set_keep_awake(session['id'],body.keep_awake)
             if body.keep_awake:keep_awake.acquire(session['id'])
             return session
         except (ValueError,OSError) as error:raise HTTPException(409,str(error))
@@ -185,6 +186,12 @@ def register_routes(app,services:ApplicationServices):
         payload=window.pop('payload');window.pop('silent')
         return stream_response(qwen_events(get_asr_provider('qwen'),live_results,live_asr_lock,payload,window['offset'],rid,'native',store.root,window,resident=resident,confirmed=window.get('confirmed',True),context_enabled=body.context_enabled,terms=body.terms))
 
+
+    @app.post('/api/native-capture/{rid}/recover-control')
+    def recover_capture_control(rid:str,body:RecoverCaptureControl):
+        try:return native_capture.recover_control(rid,body.expected_generation)
+        except FileNotFoundError as error:raise HTTPException(404,str(error))
+        except (OSError,ValueError) as error:raise HTTPException(409,str(error))
 
     @app.post('/api/native-capture/{rid}/command')
     def native_command(rid:str,body:NativeCommandInput):
@@ -365,8 +372,11 @@ def register_routes(app,services:ApplicationServices):
     def recording_keep_awake(rid:str,body:KeepAwakeInput):
         try:
             recordings.folder(rid)
-            if not body.enabled:return keep_awake.release(rid)
+            if not body.enabled:
+                native_capture.set_keep_awake(rid,False)
+                return keep_awake.release(rid)
             if not recording_open(rid):raise HTTPException(409,'录音已完成或不存在，不能保持亮屏')
+            native_capture.set_keep_awake(rid,True)
             return keep_awake.acquire(rid)
         except (FileNotFoundError,ValueError) as error:raise HTTPException(409,str(error))
 

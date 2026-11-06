@@ -199,6 +199,7 @@ export interface LiveDraftSegment {
   text: string;
 }
 export interface RecordingSession {
+  capture_transport?: string;
   include_microphone?: boolean;
   brief?: MeetingBrief;
   id: string;
@@ -310,6 +311,9 @@ export interface CaptureOwnership {
   lease: "free" | "held" | "unknown";
   decision: string;
   reattach_supported: boolean;
+  controller_generation?: number;
+  can_recover_control?: boolean;
+  control_required?: boolean;
 }
 export interface NativeCapability {
   ownership_protocol_version?: number;
@@ -324,6 +328,7 @@ export interface NativeCapability {
   error?: string;
 }
 export interface NativeCaptureStatus {
+  ownership?: CaptureOwnership;
   diagnostics?: NativeCaptureDiagnostics;
   state: string;
   duration: number;

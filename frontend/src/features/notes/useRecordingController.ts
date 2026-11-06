@@ -276,6 +276,9 @@ export function useRecordingController({
     [checkingCapture, setCheckingCapture] = useState(false),
     [captureHealth, setCaptureHealth] =
       useState<NativeCaptureStatus["health"]>(),
+    [nativeOwnership, setNativeOwnership] =
+      useState<NativeCaptureStatus["ownership"]>(),
+    [recoveringControl, setRecoveringControl] = useState(false),
     [nativeSessionId, setNativeSessionId] = useState(""),
     [microphoneLevels, setMicrophoneLevels] = useState<number[]>([]),
     [systemLevels, setSystemLevels] = useState<number[]>([]);
@@ -504,10 +507,33 @@ export function useRecordingController({
       unwatch();
     };
   }, [state]);
-  const attachRunning = (
+  const attachRunning = async (
     entry: Awaited<ReturnType<typeof api.nativeRecordings>>[number],
   ) => {
     const session = entry.recording;
+    try {
+      const status = await api.nativeStatus(session.id);
+      if (status.ownership?.control_required) {
+        if (!status.ownership.can_recover_control)
+          return toast(
+            "原控制租约尚未释放，请稍后重新检查；录音仍由独立服务保存。",
+          );
+        if (status.ownership.controller_generation == null)
+          return toast("采集控制身份尚未核对，请重新检查。");
+        if (
+          !window.confirm(
+            "恢复这场录音的控制权？这只重新连接控制服务，不会重新开始录音。原控制租约尚未到期时会拒绝接管。",
+          )
+        )
+          return;
+        await api.recoverNativeControl(
+          session.id,
+          status.ownership.controller_generation,
+        );
+      }
+    } catch (error) {
+      return toast((error as Error).message);
+    }
     sessionRef.current = session;
     notesRef.current = session.notes || [];
     setNotes(session.notes || []);
@@ -530,6 +556,39 @@ export function useRecordingController({
     setState("requesting");
     setNativeSessionId(session.id);
     setRunningSessions([]);
+  };
+  const recoverActiveControl = async () => {
+    if (!nativeSessionId || recoveringControl) return;
+    setRecoveringControl(true);
+    try {
+      const status = await api.nativeStatus(nativeSessionId);
+      if (!status.ownership?.control_required) {
+        setNativeOwnership(status.ownership);
+        return;
+      }
+      if (
+        !status.ownership.can_recover_control ||
+        status.ownership.controller_generation == null
+      )
+        return toast(
+          "原控制租约尚未释放，请等待重新检查；不会中断或重复采集。",
+        );
+      if (
+        !window.confirm(
+          "恢复这场录音的控制权？只连接已有采集器，不会重新开始录音。",
+        )
+      )
+        return;
+      const recovered = await api.recoverNativeControl(
+        nativeSessionId,
+        status.ownership.controller_generation,
+      );
+      setNativeOwnership(recovered.ownership);
+    } catch (error) {
+      toast((error as Error).message);
+    } finally {
+      setRecoveringControl(false);
+    }
   };
   const handingOff = useRef(false);
   const finishing = useRef(false);
@@ -716,6 +775,7 @@ export function useRecordingController({
         activeSinceRef.current = performance.now();
         setElapsed(status.duration);
         setCaptureHealth(status.health);
+        setNativeOwnership(status.ownership);
         const tracks = status.health?.tracks || [];
         endGuide.observe(
           tracks.length > 0 && tracks.every((track) => track.state === "quiet"),
@@ -1529,6 +1589,9 @@ export function useRecordingController({
     briefReady,
     briefSaved,
     captureHealth,
+    nativeOwnership,
+    recoveringControl,
+    recoverActiveControl,
     captureSource,
     checkCapture,
     checkingCapture,

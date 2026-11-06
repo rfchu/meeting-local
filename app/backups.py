@@ -170,6 +170,8 @@ def logical_inventory(root,entries):
 def offline(root):
     if (root/'.restore-in-progress').exists() or (root/'.backup-payload').exists():raise BackupError('源目录尚未就绪或属于备份载荷')
     with DataLease(root,exclusive=True) as lease,ExitStack() as locks:
+        from .capture_ownership import inspect as capture_owner
+        if capture_owner(root/'recordings')['lease']!='free':raise BackupError('采集写入租约仍在持有或无法核对，请先结束录音；未操作音轨')
         for name in ('service.lock','worker.lock'):
             handle=locks.enter_context((root/name).open('a'))
             try:fcntl.flock(handle,fcntl.LOCK_EX|fcntl.LOCK_NB)

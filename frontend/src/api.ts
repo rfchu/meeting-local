@@ -471,6 +471,11 @@ export const api = {
         ? AbortSignal.any([signal, AbortSignal.timeout(10000)])
         : AbortSignal.timeout(10000),
     }),
+  recoverNativeControl: (id: string, expectedGeneration: number) =>
+    request<NativeCaptureStatus>(
+      `/native-capture/${id}/recover-control`,
+      json("POST", { expected_generation: expectedGeneration }),
+    ),
   nativeRecordings: () =>
     request<{ recording: RecordingSession; config: SessionConfig | null }[]>(
       "/native-recordings",

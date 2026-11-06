@@ -4,6 +4,7 @@ from array import array
 from pathlib import Path
 from .db import uid
 from .native_capture import HELPER
+from .recordings import RecordingStore
 
 class CaptureProbe:
     def __init__(self,native):
@@ -14,14 +15,15 @@ class CaptureProbe:
     def start(self,source):
         with self.lock,self.native.lock:
             self.prune()
-            if self.active() or any(p.poll() is None for p in self.native.processes.values()):raise ValueError('正在采集声音，请先结束当前录音或测试')
+            if self.native.ownership()['lease']!='free' or self.active() or any(p.poll() is None for p in self.native.processes.values()):raise ValueError('正在采集声音，请先结束当前录音或测试')
             if not self.native.available():raise ValueError('原生采集器尚未就绪，请先完成采集配置')
-            temporary=tempfile.TemporaryDirectory(prefix='tingji-audio-check-');folder=Path(temporary.name)
-            log=(folder/'capture.log').open('ab');args=[str(HELPER),'--output',str(folder)]
+            temporary=tempfile.TemporaryDirectory(prefix='tingji-audio-check-');key=uid();incarnation=uid();folder=Path(temporary.name)/key;folder.mkdir()
+            RecordingStore.write(folder/'session.json',{'id':key,'capture_incarnation':incarnation,'source':'macos','state':'starting'})
+            log=(folder/'capture.log').open('ab');args=[str(HELPER),'--output',str(folder),'--incarnation',incarnation]
             if source=='macos-both':args.append('--microphone')
             try:process=(self.process_factory or subprocess.Popen)(args,stdin=subprocess.PIPE,stdout=log,stderr=log)
             except BaseException:log.close();temporary.cleanup();raise
-            key=uid();self.items[key]={'id':key,'state':'starting','source':source,'duration':0,'error':'',
+            self.items[key]={'id':key,'state':'starting','source':source,'duration':0,'error':'',
                 'created':time.monotonic(),'finished':None,'temporary':temporary,'folder':folder,'process':process,'log':log}
             return self.public(self.items[key])
 

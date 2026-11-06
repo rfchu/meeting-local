@@ -309,7 +309,10 @@ export default function RecordingSettingsDialog({
                     已有采集所有者或所有权尚未核对；不会重复启动或自动接管。请先检查正在进行的录音。
                   </small>
                 )}
-              <small>API 重启后仅恢复已保存内容；连续采集接管尚未启用。</small>
+              <small>
+                独立控制服务可在 API
+                重启后继续采集；使用“继续查看”明确恢复控制。旧版录音仍只恢复已保存内容。
+              </small>
             </div>
           )}
           {!nativeCapability?.available && (
