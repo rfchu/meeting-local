@@ -2,6 +2,7 @@ import json, os, sqlite3, uuid
 from contextlib import contextmanager
 from pathlib import Path
 from .minutes_templates import BUILTIN_TEMPLATES
+from .maintenance import DataLease
 
 
 def uid(): return uuid.uuid4().hex
@@ -12,6 +13,8 @@ class Store:
     def __init__(self, root):
         self.root = Path(root).resolve()
         self.root.mkdir(parents=True, exist_ok=True)
+        with DataLease(self.root):self._initialize()
+    def _initialize(self):
         self.path = self.root / 'meetings.sqlite3'
         with self.connect() as db:
             db.executescript('''

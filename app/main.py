@@ -31,6 +31,7 @@ from .keep_awake import KeepAwake
 from .recording_health import RecordingHealth
 from .lifecycle import Lifecycle
 from .recording_runtime import RecordingRuntime
+from .maintenance import DataLease
 from .recording_commands import RecordingCommands,CommandError,register_recording_commands
 from .recording_validation import RecordingValidation,register_recording_validation
 from .recording_completion import completion_report,recording_quality,recording_quality_summary
@@ -245,7 +246,7 @@ class AIMinutesGenerateInput(MinutesPolishInput):
     template_id: str=Field(default='general-meeting',max_length=100)
 
 
-def create_app(data_dir=None, start_worker=True):
+def _create_app(data_dir=None, start_worker=True):
     store=Store(data_dir or os.getenv('MEETING_DATA',str(BASE/'data')))
     lifecycle=Lifecycle(store.root)
     live_corrections=LiveCorrections(store)
@@ -1587,5 +1588,9 @@ def create_app(data_dir=None, start_worker=True):
             'Content-Disposition':f"{disposition}; filename*=UTF-8''{filename}",'Cache-Control':'no-store'})
     app.mount('/',StaticFiles(directory=BASE/'app/static',html=True),name='ui')
     return app
+
+def create_app(data_dir=None,start_worker=True):
+    root=Path(data_dir or os.getenv('MEETING_DATA',str(BASE/'data')))
+    with DataLease(root):return _create_app(root,start_worker)
 
 app=create_app()

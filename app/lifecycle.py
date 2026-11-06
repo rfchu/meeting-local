@@ -1,4 +1,5 @@
 """Bounded operational journal. No audio, text, paths, prompts or raw errors."""
+from .maintenance import DataLease
 import fcntl,json,math,os,sqlite3,threading,time,uuid
 
 COMPONENTS={'capture','storage','asr','system_input','microphone_input'}
@@ -18,7 +19,7 @@ def metrics_only(values):
 class Lifecycle:
     def __init__(self,root):
         self.root=root;self.path=root/'lifecycle.sqlite3';self.run_id=None;self.available=True
-        self.lock=threading.RLock();self.stop=threading.Event();self.thread=None;self.lease=None;self.observer=None;self.last_observed=None
+        self.lock=threading.RLock();self.stop=threading.Event();self.thread=None;self.lease=None;self.maintenance=None;self.observer=None;self.last_observed=None
         try:
             with self.connect() as db:
                 db.executescript('''PRAGMA journal_mode=WAL;
@@ -141,9 +142,14 @@ class Lifecycle:
         except (OSError,sqlite3.Error):return {}
 
     def start(self):
-        self.lease=(self.root/'service.lock').open('a')
-        try:fcntl.flock(self.lease,fcntl.LOCK_EX|fcntl.LOCK_NB)
-        except OSError:self.lease.close();self.lease=None;raise RuntimeError('已有服务持有此数据目录，未启动第二个工作进程')
+        self.maintenance=DataLease(self.root).acquire()
+        try:
+            self.lease=(self.root/'service.lock').open('a')
+            fcntl.flock(self.lease,fcntl.LOCK_EX|fcntl.LOCK_NB)
+        except OSError:
+            if self.lease:self.lease.close();self.lease=None
+            self.maintenance.close();self.maintenance=None
+            raise RuntimeError('已有服务持有此数据目录，未启动第二个工作进程') from None
         self.run_id=uuid.uuid4().hex
         if self.available:
             try:
@@ -181,3 +187,4 @@ class Lifecycle:
                 with self.connect() as db:db.execute("UPDATE runs SET ended=?,end_kind='clean' WHERE id=?",(time.time(),self.run_id))
             except (OSError,sqlite3.Error):pass
         if self.lease:self.lease.close();self.lease=None
+        if self.maintenance:self.maintenance.close();self.maintenance=None
