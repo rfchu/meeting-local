@@ -1,3 +1,4 @@
+import RecordingValidationPanel from "./RecordingValidationPanel";
 import TasksPanel from "./TasksPanel";
 import ServiceLifecyclePanel from "./ServiceLifecyclePanel";
 import IndexManagement from "./IndexManagement";
@@ -354,6 +355,7 @@ export default function RuntimeManagement({
           {page === "environment" && data && (
             <>
               <ServiceLifecyclePanel />
+              <RecordingValidationPanel />
               <section className="management-section">
                 <h3>采集与权限</h3>
                 <div className="management-row">

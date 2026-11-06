@@ -31,6 +31,7 @@ from .keep_awake import KeepAwake
 from .recording_health import RecordingHealth
 from .lifecycle import Lifecycle
 from .recording_runtime import RecordingRuntime
+from .recording_validation import RecordingValidation,register_recording_validation
 from .recording_completion import completion_report,recording_quality,recording_quality_summary
 from .meeting_review import MeetingReview
 from .qa import QA
@@ -266,11 +267,13 @@ def create_app(data_dir=None, start_worker=True):
             capture_probes.start_monitor()
             live_overview.start_monitor()
             keep_awake.start_monitor()
+            recording_validation.start_monitor()
             yield
         finally:
             lifecycle.record('service.shutdown_requested')
             clean=False
             try:
+                await run_in_threadpool(recording_validation.close)
                 await run_in_threadpool(live_overview.close)
                 await live_sessions.close()
                 await run_in_threadpool(capture_probes.close)
@@ -306,6 +309,9 @@ def create_app(data_dir=None, start_worker=True):
     recording_runtime=RecordingRuntime(store,recordings,native_capture,recording_health,lifecycle)
     lifecycle.observer=recording_runtime.observe
     app.state.recording_runtime=recording_runtime
+    recording_validation=RecordingValidation(store.root,recordings,native_capture,recording_runtime)
+    app.state.recording_validation=recording_validation
+    register_recording_validation(app,recording_validation)
     meeting_review=MeetingReview(store)
     qa=QA(store)
     live_results=LiveResults(store,recordings)

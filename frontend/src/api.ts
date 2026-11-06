@@ -1,3 +1,4 @@
+import type { RecordingObservation } from "./features/management/RecordingValidationPanel";
 import type { RecordingQuality, RecordingReviewStatus } from "./types";
 import type { RuntimeTasks } from "./features/management/TasksPanel";
 import type { RuntimeOverview } from "./features/management/RuntimeManagement";
@@ -202,6 +203,36 @@ export const api = {
     ),
   environment: () => request<Environment>("/status"),
   meetings: () => request<MeetingSummary[]>("/meetings"),
+  recordingChecks: () =>
+    request<RecordingObservation[]>("/runtime/recording-checks", {
+      signal: AbortSignal.timeout(10000),
+    }),
+  startRecordingCheck: (recordingId: string, targetSeconds: number) =>
+    request<RecordingObservation>("/runtime/recording-checks", {
+      ...json("POST", {
+        recording_id: recordingId,
+        target_seconds: targetSeconds,
+      }),
+      signal: AbortSignal.timeout(10000),
+    }),
+  stopRecordingCheck: (id: string) =>
+    request<RecordingObservation>(`/runtime/recording-checks/${id}/stop`, {
+      ...json("POST", {}),
+      signal: AbortSignal.timeout(10000),
+    }),
+  markRecordingCheck: (
+    id: string,
+    kind:
+      | "background_return"
+      | "device_changed"
+      | "other_app_changed"
+      | "pause_resume"
+      | "wake_return",
+  ) =>
+    request(`/runtime/recording-checks/${id}/markers`, {
+      ...json("POST", { kind }),
+      signal: AbortSignal.timeout(10000),
+    }),
   recordingKeepAwake: (id: string, enabled: boolean) =>
     request<{ active: boolean; supported: boolean; error: string }>(
       `/recordings/${id}/keep-awake`,
