@@ -45,7 +45,7 @@ def retry_blocker(store,job,worker):
     if store.one("SELECT 1 FROM jobs WHERE meeting_id=? AND state IN ('queued','running')",(job['meeting_id'],)):return '同一会议已有任务正在处理'
     return ''
 
-def register_task_management(app,store,worker):
+def register_task_management(app,store,worker,resources=None):
     def records(state,limit):
         if state not in ('active','failed','all'):raise HTTPException(400,'未知任务筛选')
         where="WHERE j.state IN ('queued','running')" if state=='active' else "WHERE j.state IN ('failed','cancelled')" if state=='failed' else ''
@@ -61,8 +61,10 @@ def register_task_management(app,store,worker):
             if not isinstance(config,dict):config={}
             blocked=retry_blocker(store,job,worker)
             wait='实时识别期间暂缓索引，录音结束后继续' if live and job['kind']=='retrieval_index' and job['state']=='queued' else ('等待处理资源' if job['state']=='running' and '等待' in (job['stage'] or '') else (('等待前序任务' if processing or positions.get(job['id'],1)>1 else '等待调度启动') if job['state']=='queued' else ''))
+            resource_wait=resources.waiting_for(job['id']) if resources else None
+            if resource_wait:wait=resource_wait['message']
             values.append({k:job[k] for k in ('id','meeting_id','meeting_title','kind','state','stage','progress','created')}|{
-                'kind_label':KINDS.get(job['kind'],'后台处理'),'queue_position':positions.get(job['id']), 'waiting_reason':wait,
+                'resource_wait':resource_wait,'kind_label':KINDS.get(job['kind'],'后台处理'),'queue_position':positions.get(job['id']), 'waiting_reason':wait,
                 'model':config.get('model') or config.get('engine') or '', 'revision':config.get('revision',config.get('base_revision')),
                 'failure':classify(job['error']) if job['state']=='failed' else None,
                 'can_cancel':job['state'] in ('queued','running'),'can_retry':not blocked,'retry_blocked':blocked,
@@ -84,4 +86,5 @@ def register_task_management(app,store,worker):
         data={'version':1,'created_at':time.time(),'counts':{r['state']:r['n'] for r in store.all('SELECT state,count(*) AS n FROM jobs GROUP BY state')},
             'tasks':[{k:job[k] for k in ('kind','state','progress','created')}|{'error_code':classify(job['error'])['code'] if job['state']=='failed' else None}
                 for job in store.all('SELECT kind,state,progress,created,error FROM jobs ORDER BY created DESC LIMIT 100')]}
+        if resources:data['resource_runtime']=resources.snapshot()
         return JSONResponse(data,headers={'Content-Disposition':'attachment; filename="tingji-runtime-diagnostics.json"','Cache-Control':'no-store'})

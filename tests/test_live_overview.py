@@ -358,3 +358,20 @@ def test_decision_replaces_resolved_question_with_same_identity(setup):
     service.publish(plan(setup),{'items':[{'id':old['id'],'kind':'decision','content':'大家明确同意下周三上线。','evidence':[{'segment_id':sid2,'quote':'大家明确同意下周三上线'}],'note_ids':[]}]})
     saved=service.read(rid)['items']
     assert len(saved)==1 and saved[0]['id']==old['id'] and saved[0]['kind']=='decision'
+
+
+def test_resource_busy_defers_without_model_call_or_losing_published_overview(setup,monkeypatch):
+    from app.resources import ResourceScheduler
+    client,store,service,recordings,rid,pid,sid,add=setup
+    existing=first(setup);add(30,45,'负责人还要核对下周一的排期。')
+    scheduler=ResourceScheduler();service.resources=scheduler
+    called=[];service.generator=lambda _:called.append('must not call')
+    with scheduler.request('minutes',{'local_llm':1}):
+        service.run_once(rid,force=True)
+        run=store.one('SELECT state,failures,enabled,error FROM live_overview_runs WHERE recording_id=?',(rid,))
+        assert run['state']=='waiting' and run['failures']==0 and run['enabled']
+        assert '资源' in run['error'] and not called
+        assert any(r['workload']=='live_overview' and r['state']=='deferred' for r in scheduler.snapshot()['requests'])
+        assert service.read(rid)['items'][0]['id']==existing['id']
+        assert recordings.read(rid)['state']=='recording'
+    assert not scheduler.snapshot()['requests']

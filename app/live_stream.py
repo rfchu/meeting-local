@@ -3,6 +3,7 @@ import asyncio,io,json,tempfile,time,wave
 from pathlib import Path
 import anyio
 from contextlib import aclosing
+from .resources import request_for
 from .db import uid
 from .live_context import recognition_context
 
@@ -51,7 +52,7 @@ async def disposable_events(provider,audio,output,context=""):
         with anyio.CancelScope(shield=True):await terminate(process)
 
 async def qwen_events(provider,cache,lock,payload,offset,rid,source,root,window=None,resident=None,confirmed=True,context_enabled=True,terms="",continuation=None):
-    duration,silent=inspect_audio(payload);started=time.monotonic();aid=None;locked=False
+    duration,silent=inspect_audio(payload);started=time.monotonic();aid=None;claim=request_for(lock,'live_asr',{'asr':1},rid)
     request_id=uid();sequence=0;last_text=None;first_text_ms=None
     def event(kind,**data):
         nonlocal sequence
@@ -68,8 +69,7 @@ async def qwen_events(provider,cache,lock,payload,offset,rid,source,root,window=
         if cached is not None:segments=cached;confirmed=True
         elif silent:segments=[]
         else:
-            if not lock.acquire(blocking=False):raise RuntimeError('识别资源正在使用，请稍后重试；完整原音已保留')
-            locked=True
+            if not claim.acquire(blocking=False):raise RuntimeError('识别资源正在使用，请稍后重试；完整原音已保留')
             if not provider.ready():raise RuntimeError('Qwen 实时模型尚未就绪')
             with tempfile.TemporaryDirectory(prefix='meeting-stream-',dir=root) as folder_name:
                 folder=Path(folder_name);audio=folder/'chunk.wav';output=folder/'result.qwen.json';audio.write_bytes(payload)
@@ -108,5 +108,5 @@ async def qwen_events(provider,cache,lock,payload,offset,rid,source,root,window=
         if aid:cache.fail(aid,message)
         yield event('error',message=message)
     finally:
-        if locked:lock.release()
+        claim.close()
         if aid:cache.fail(aid,'流式请求未完成')

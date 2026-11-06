@@ -50,6 +50,8 @@ def application_lifespan(services:ApplicationServices,start_worker:bool):
                 local_embedding().cancel.set()
                 local_embedding().release()
                 clean=True
-            finally:lifecycle.close(clean)
+            finally:
+                services.resources.close()
+                lifecycle.close(clean)
 
     return lifespan

@@ -109,3 +109,16 @@ def test_deletion_during_llm_call_cannot_resurrect_transcript_content(setup,monk
     monkeypatch.setattr('app.live_corrections.request_once',request)
     assert client.post(f'/api/recordings/{rid}/corrections',json={'range_id':aid,'segment_index':0,'profile_id':pid}).status_code==409
     assert not LiveCorrections(store).list(rid)
+
+
+def test_correction_defers_on_llm_contention_without_altering_confirmed_text(setup):
+    client,store,recordings,cache,rid,aid,pid,save,calls=setup
+    scheduler=client.app.state.services.resources
+    body={'range_id':aid,'segment_index':0,'profile_id':pid}
+    with scheduler.request('minutes',{'local_llm':1}):
+        response=client.post(f'/api/recordings/{rid}/corrections',json=body)
+        assert response.status_code==409 and '资源' in response.json()['detail']
+        assert not calls and not store.all('SELECT * FROM live_corrections')
+        assert cache.snapshot(rid,'qwen')[0]['segments'][0]['text']=='请打开听季查看会议记录。'
+    assert client.post(f'/api/recordings/{rid}/corrections',json=body).status_code==200
+    assert len(calls)==1 and not scheduler.snapshot()['requests']

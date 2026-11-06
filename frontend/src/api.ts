@@ -1,3 +1,4 @@
+import type { ResourceStatus } from "./features/management/ResourceStatusPanel";
 import { reportRecordingCommand } from "./features/notes/recordingCommandEvents";
 import { RecordingCommandClient } from "./features/notes/recordingCommands";
 import type { ObservationTimelineData } from "./features/management/ObservationTimeline";
@@ -167,6 +168,7 @@ export const api = {
     }),
   runtimeTasks: (state: string) =>
     request<RuntimeTasks>(`/runtime/tasks?state=${state}`),
+  runtimeResources: () => request<ResourceStatus>("/runtime/resources"),
   runtimeOverview: () => request<RuntimeOverview>("/runtime/overview"),
   serviceLifecycle: () =>
     request<{

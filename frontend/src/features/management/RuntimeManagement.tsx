@@ -115,6 +115,9 @@ export default function RuntimeManagement({
               onClick={() => {
                 void query.refetch();
                 void client.invalidateQueries({
+                  queryKey: ["runtime-resources"],
+                });
+                void client.invalidateQueries({
                   queryKey: ["runtime-recordings"],
                 });
                 void client.invalidateQueries({

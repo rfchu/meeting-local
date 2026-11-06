@@ -2,6 +2,7 @@
 import sqlite3
 from pathlib import Path
 from fastapi import File, UploadFile, HTTPException
+from ..resources import request_for
 from ..db import uid, encode
 from ..http_schemas import IndexBuildInput, QAGenerateInput, QAPrepareInput, RetrievalConfigInput, SearchInput, SearchResolveInput
 from ..application_services import ApplicationServices
@@ -22,15 +23,16 @@ def register_routes(app,services:ApplicationServices):
     def qa_prepare(body:QAPrepareInput):
         if not body.question.strip():raise HTTPException(422,'请输入问题')
         acquired=False
+        claim=request_for(live_asr_lock,'semantic_search',{'embedding':1})
         try:
             if body.mode!='keyword':
-                if worker.busy_jid or not live_asr_lock.acquire(blocking=False):raise HTTPException(409,'模型正在处理任务，请先使用关键词检索')
+                if worker.busy_jid or not claim.acquire(blocking=False):raise HTTPException(409,'模型正在处理任务，请先使用关键词检索')
                 acquired=True
                 if worker.release_model:worker.release_model()
             return qa.prepare(**body.model_dump())
         except (RuntimeError,ValueError,ImportError,sqlite3.Error) as error:raise HTTPException(409,str(error))
         finally:
-            if acquired:live_asr_lock.release()
+            claim.close()
 
 
     @app.get('/api/retrieval/qa')
@@ -88,12 +90,16 @@ def register_routes(app,services:ApplicationServices):
         if store.one("SELECT 1 FROM live_sessions WHERE status IN ('running','paused','draining') LIMIT 1"):raise HTTPException(409,'实时识别期间不切换向量模型，请在录音结束后测试并保存')
         profile=store.one('SELECT * FROM llm_configs WHERE id=?',(body.profile_id,))
         if body.provider=='external' and not profile:raise HTTPException(404,'本地模型配置不存在')
-        if worker.busy_jid or not live_asr_lock.acquire(blocking=False):raise HTTPException(409,'正在处理录音或正式任务，请稍后配置向量模型')
+        claim=request_for(live_asr_lock,'embedding_config',{'embedding':1})
+        if worker.busy_jid:
+            claim.close();raise HTTPException(409,'正在处理录音或正式任务，请稍后配置向量模型')
+        if not claim.acquire(blocking=False):
+            claim.close();raise HTTPException(409,'正在处理录音或正式任务，请稍后配置向量模型')
         try:
             if worker.release_model:worker.release_model()
             return retrieval.configure_builtin() if body.provider=='builtin' else retrieval.configure(profile,body.model.strip())
         except (RuntimeError,ValueError,ImportError) as error:raise HTTPException(409,str(error))
-        finally:live_asr_lock.release()
+        finally:claim.close()
 
 
     @app.post('/api/retrieval/build',status_code=201)
@@ -115,15 +121,16 @@ def register_routes(app,services:ApplicationServices):
     def retrieval_search(body:SearchInput):
         if not body.query.strip():raise HTTPException(422,'请输入搜索内容')
         acquired=False
+        claim=request_for(live_asr_lock,'semantic_search',{'embedding':1})
         try:
             if body.mode!='keyword':
-                if worker.busy_jid or not live_asr_lock.acquire(blocking=False):raise HTTPException(409,'正在处理录音或正式任务，请先使用关键词搜索')
+                if worker.busy_jid or not claim.acquire(blocking=False):raise HTTPException(409,'正在处理录音或正式任务，请先使用关键词搜索')
                 acquired=True
                 if worker.release_model:worker.release_model()
             return retrieval.search(body.query,body.mode,meeting_id=body.meeting_id,kind=body.kind)
         except (RuntimeError,ValueError,ImportError,sqlite3.Error) as error:raise HTTPException(409,str(error))
         finally:
-            if acquired:live_asr_lock.release()
+            claim.close()
 
 
     @app.post('/api/retrieval/resolve')

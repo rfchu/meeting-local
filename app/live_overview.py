@@ -1,4 +1,5 @@
 """Incremental, recording-bound meeting drafts. Inference never owns the ASR lock."""
+from .resources import optional_slot,ResourceBusy
 import hashlib,json,re,subprocess,sys,tempfile,threading,time
 from pathlib import Path
 from typing import Literal
@@ -181,6 +182,7 @@ def approved_context(db,mid,segments):
 
 class LiveOverview:
     def __init__(self,store,recordings,cache):
+        self.resources=None
         self.store=store;self.recordings=recordings;self.cache=cache
         self.lock=threading.Lock();self.closed=threading.Event();self.thread=None;self.generator=None
 
@@ -450,7 +452,15 @@ class LiveOverview:
                     self.store.execute("UPDATE live_overview_runs SET error='',next_due=? WHERE recording_id=? AND enabled=1 AND epoch=?",(time.time()+3,rid,run['epoch']))
                     return
                 self.store.execute("UPDATE live_overview_runs SET state='running',last_attempt=?,force=0,error='' WHERE recording_id=? AND epoch=?",(time.time(),rid,run['epoch']))
-                result=(self.generator or self.generate)(plan);self.publish(plan,result)
+                if self.resources:self.resources.clear_observed(('overview',rid))
+                resource='cloud_llm' if plan['profile']['provider_type']=='cloud' else 'local_llm'
+                try:
+                    with optional_slot(self.resources,'live_overview',resource,rid):
+                        result=(self.generator or self.generate)(plan)
+                except ResourceBusy as error:
+                    if self.resources:self.resources.observe_wait(('overview',rid),'live_overview',{resource:1},ttl=5)
+                    raise Deferred(str(error)) from None
+                self.publish(plan,result)
             except Deferred as error:
                 self.store.execute("UPDATE live_overview_runs SET state='waiting',error=?,next_due=? WHERE recording_id=? AND enabled=1 AND epoch=?",(str(error),time.time()+3,rid,run['epoch']))
             except Exception as error:

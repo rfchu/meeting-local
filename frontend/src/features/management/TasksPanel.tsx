@@ -1,3 +1,4 @@
+import ResourceStatusPanel from "./ResourceStatusPanel";
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../api";
@@ -13,6 +14,7 @@ export interface RuntimeTask {
   progress: number;
   created: string;
   waiting_reason: string;
+  resource_wait?: { code: string; message: string } | null;
   queue_position: number | null;
   model: string;
   revision: number | null;
@@ -78,6 +80,7 @@ export default function TasksPanel({
       await api.jobAction(task.id, kind);
       await client.invalidateQueries({ queryKey: ["runtime-tasks"] });
       void client.invalidateQueries({ queryKey: ["runtime-overview"] });
+      void client.invalidateQueries({ queryKey: ["runtime-resources"] });
     } catch (e) {
       setError((e as Error).message);
       void query.refetch();
@@ -87,6 +90,7 @@ export default function TasksPanel({
   }
   return (
     <section className="management-tasks">
+      <ResourceStatusPanel />
       <div className="management-task-toolbar">
         <div role="group" aria-label="任务筛选">
           {(

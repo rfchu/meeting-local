@@ -172,10 +172,12 @@ class LiveSessions:
                 break_at=max(break_at,json.loads(row['metrics']).get('continuation_break_at',-1))
                 draining=row['status']=='draining';config=json.loads(row['config']);cursor=row['cursor']
                 if self.asr_lock.locked():
+                    if hasattr(self.asr_lock,'observe_wait'):self.asr_lock.observe_wait(rid)
                     if time.monotonic()-resource_notice>5:
                         self.emit(rid,'status',message='等待识别资源；原音持续保存，已确认文字保留')
                         resource_notice=time.monotonic()
                     await asyncio.sleep(.3);continue
+                if hasattr(self.asr_lock,'clear_wait'):self.asr_lock.clear_wait(rid)
                 hint=sentence_hint(previous,(preview_end-cursor)/RATE) if previous and preview_start==cursor else None
                 if row['source']=='native':
                     capture=await asyncio.to_thread(self.native.status,rid,touch=False)
@@ -259,6 +261,7 @@ class LiveSessions:
         except Exception:
             self.emit(rid,'status',message='实时会话暂时中断，原音与已确认文字保留，可重新连接')
         finally:
+            if hasattr(self.asr_lock,'clear_wait'):self.asr_lock.clear_wait(rid)
             if not self.closed:
                 self.checkpoint(rid,status='stopped',partial={})
                 self.emit(rid,'status',message='实时会话已结束，未覆盖音频可在快速完成时补识别')

@@ -3,10 +3,11 @@ import asyncio,json,math,tempfile,time
 from pathlib import Path
 import anyio
 from .live_stream import inspect_audio,terminate
+from .resources import request_for
 from .db import uid
 
 async def whisper_events(provider,cache,lock,payload,offset,rid,source,root,window):
-    duration,silent=inspect_audio(payload);started=time.monotonic();aid=None;locked=False;process=None
+    duration,silent=inspect_audio(payload);started=time.monotonic();aid=None;process=None;claim=request_for(lock,'live_asr',{'asr':1},rid)
     request_id=uid();seq=0
     def event(kind,**data):
         nonlocal seq
@@ -19,8 +20,7 @@ async def whisper_events(provider,cache,lock,payload,offset,rid,source,root,wind
         if cached is not None:segments=cached
         elif silent:segments=[]
         else:
-            if not lock.acquire(blocking=False):raise RuntimeError('识别资源正在使用，原音已保留')
-            locked=True
+            if not claim.acquire(blocking=False):raise RuntimeError('识别资源正在使用，原音已保留')
             if not provider.ready():raise RuntimeError('Whisper 模型尚未就绪')
             with tempfile.TemporaryDirectory(prefix='meeting-batch-',dir=root) as work:
                 folder=Path(work);audio=folder/'chunk.wav';output=folder/'result';audio.write_bytes(payload)
@@ -54,5 +54,5 @@ async def whisper_events(provider,cache,lock,payload,offset,rid,source,root,wind
         message='Whisper 识别超时，原音保留' if isinstance(error,TimeoutError) else str(error)
         yield event('error',message=message)
     finally:
-        if locked:lock.release()
+        claim.close()
         if aid:cache.fail(aid,'实时请求未完成')

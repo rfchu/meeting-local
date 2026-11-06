@@ -2,7 +2,7 @@
 from .task_management import register_task_management
 from .model_preferences import register_model_preferences
 from .runtime_management import register_runtime_management
-import os, threading
+import os
 from pathlib import Path
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
@@ -35,6 +35,7 @@ from .onboarding import register_onboarding
 from .live_overview import LiveOverview, register_overview
 from .local_embedding import local_embedding
 from .paths import RuntimePaths
+from .resources import ResourceScheduler,ResourceGate
 from .application_services import ApplicationServices,ProviderBindings
 from .application_lifecycle import application_lifespan
 from .meeting_queries import MeetingQueries
@@ -68,11 +69,15 @@ def _create_app(data_dir=None,start_worker=True):
     recording_validation=RecordingValidation(store.root,recordings,native_capture,recording_runtime)
     live_results=LiveResults(store,recordings)
     live_corrections=LiveCorrections(store)
-    live_asr_lock=threading.Lock()
+    resources=ResourceScheduler()
+    live_asr_lock=ResourceGate(resources)
+    worker.resources=resources
+    live_corrections.resources=resources
     resident=QwenResident(store.root)
     live_sessions=LiveSessions(store,recordings,native_capture,live_results,live_asr_lock,resident,lambda:get_asr_provider('qwen'),lambda:get_asr_provider('whisper'))
     recording_commands=RecordingCommands(recordings,native_capture,live_sessions.pause_boundary)
     live_overview=LiveOverview(store,recordings,live_results)
+    live_overview.resources=resources
     # Late-bound factories keep model instances lazy and allow explicit replacement in tests.
     providers=ProviderBindings(
         asr=lambda *args,**kwargs:get_asr_provider(*args,**kwargs),
@@ -81,7 +86,7 @@ def _create_app(data_dir=None,start_worker=True):
         auto_minutes=lambda *args,**kwargs:prepare_auto_minutes(*args,**kwargs),
         embedding=lambda:local_embedding())
     services=ApplicationServices(
-        store=store,worker=worker,lifecycle=lifecycle,recordings=recordings,
+        store=store,worker=worker,lifecycle=lifecycle,recordings=recordings,resources=resources,
         native_capture=native_capture,capture_probes=capture_probes,keep_awake=keep_awake,
         recording_health=recording_health,recording_runtime=recording_runtime,
         recording_validation=recording_validation,recording_commands=recording_commands,
@@ -98,9 +103,9 @@ def _create_app(data_dir=None,start_worker=True):
         setattr(app.state,name,getattr(services,name))
     register_local_only(app)
     register_onboarding(app,store,native_capture,capture_probes)
-    register_runtime_management(app,store,native_capture,resident,capture_probes,recording_runtime)
+    register_runtime_management(app,store,native_capture,resident,capture_probes,recording_runtime,resources)
     register_model_preferences(app,store)
-    register_task_management(app,store,worker)
+    register_task_management(app,store,worker,resources)
     register_recording_validation(app,recording_validation)
     register_recording_commands(app,recording_commands)
     register_overview(app,live_overview)

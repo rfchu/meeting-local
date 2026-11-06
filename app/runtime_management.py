@@ -1,9 +1,15 @@
 """Passive runtime inventory. Opening management never starts inference or probes."""
 import json,os,shutil,time
 from fastapi import HTTPException,Query
+from fastapi.responses import JSONResponse
 from .providers import engine_catalog,LocalDiarization,LocalPunctuation
 
-def register_runtime_management(app,store,native,resident,probes,runtime=None):
+def register_runtime_management(app,store,native,resident,probes,runtime=None,resources=None):
+    @app.get('/api/runtime/resources')
+    def resource_status():
+        if resources is None:raise HTTPException(503,'资源状态暂不可用')
+        return JSONResponse(resources.snapshot(),headers={'Cache-Control':'no-store'})
+
     @app.get('/api/runtime/recordings')
     def recording_states(limit:int=Query(default=20,ge=1,le=50)):
         if runtime is None:raise HTTPException(503,'录音状态暂不可用')

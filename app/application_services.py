@@ -2,8 +2,8 @@
 from __future__ import annotations
 from dataclasses import dataclass
 from typing import Callable,TYPE_CHECKING
-from threading import Lock
 if TYPE_CHECKING:
+    from .resources import ResourceScheduler,ResourceGate
     from .db import Store
     from .worker import Worker
     from .lifecycle import Lifecycle
@@ -53,7 +53,8 @@ class ApplicationServices:
     live_results: LiveResults
     live_sessions: LiveSessions
     live_overview: LiveOverview
-    live_asr_lock: Lock
+    resources: ResourceScheduler
+    live_asr_lock: ResourceGate
     resident: QwenResident
     meeting_review: MeetingReview
     minutes_generation: MinutesGeneration
