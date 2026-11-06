@@ -83,6 +83,7 @@ def publish_analysis(store,mid,revision,analysis,analysis_id,settings,parent_id=
                 from .worker import Cancelled
                 raise Cancelled()
         document.title=row['title']+'会议纪要';document.meeting_date=row['created'][:10]
-        aid=minutes_versions.publish_draft(db,mid,revision,document,{'composition':settings.model_dump(),'source_analysis_id':analysis_id,'parent_minutes_id':parent_id,'edited':False,'followup_job':job_id})
+        existing=db.execute("SELECT id FROM artifacts WHERE meeting_id=? AND revision=? AND kind='meeting_minutes' AND json_extract(provenance,'$.followup_job')=? LIMIT 1",(mid,revision,job_id)).fetchone() if job_id else None
+        aid=existing['id'] if existing else minutes_versions.publish_draft(db,mid,revision,document,{'composition':settings.model_dump(),'source_analysis_id':analysis_id,'parent_minutes_id':parent_id,'edited':False,'followup_job':job_id})
         if job_id:db.execute("UPDATE jobs SET state='completed',stage='分析与纪要草稿完成',progress=1 WHERE id=?",(job_id,))
         return aid

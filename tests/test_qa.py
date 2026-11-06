@@ -180,3 +180,23 @@ def test_prompt_transport_keeps_secret_out_of_request_and_caps_retry_tokens(data
     monkeypatch.setattr('scripts.lmstudio_analyze.request_compatible',fake)
     assert complete_json('http://localhost',{},payload)['status']=='insufficient'
     with pytest.raises(RuntimeError,match='不允许重定向'):NoRedirect().redirect_request(None,None,None,None,None,None)
+
+
+def test_cancelled_qa_reuses_checkpoint_and_delete_removes_its_private_cache(data,monkeypatch):
+    client,store,qa,_,_=data;run=prepare(data);queued=qa.enqueue(run['id']);jid=queued['job']['id'];calls=[]
+    def fake(provider,model,question,sources,*args):
+        calls.append(1);store.execute("UPDATE jobs SET state='cancelled' WHERE id=?",(jid,))
+        return Answer(status='insufficient',claims=[])
+    monkeypatch.setattr('app.qa.generate_answer',fake)
+    store.execute("UPDATE jobs SET state='running' WHERE id=?",(jid,))
+    job=store.one('SELECT * FROM jobs WHERE id=?',(jid,))
+    with pytest.raises(Cancelled):client.app.state.worker.process(job)
+    assert not qa.row(run['id'])['answer']
+    assert client.post('/api/jobs/'+jid+'/retry').status_code==200
+    store.execute("UPDATE jobs SET state='running' WHERE id=?",(jid,))
+    client.app.state.worker.process(store.one('SELECT * FROM jobs WHERE id=?',(jid,)))
+    assert calls==[1] and qa.read(run['id'])['answer']['status']=='insufficient'
+    assert store.one('SELECT state FROM jobs WHERE id=?',(jid,))['state']=='completed'
+    folder=store.root/'job-work'/jid;assert (folder/'answer.c3.json').is_file()
+    assert client.delete('/api/retrieval/qa/'+run['id']).status_code==200
+    assert not folder.exists()

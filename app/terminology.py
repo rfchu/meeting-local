@@ -1,3 +1,4 @@
+from .job_checkpoints import JobCheckpoints
 from .model_preferences import resolve_profile
 """Confirmed terminology, evidence-backed candidates and scoped search aliases."""
 import json,sqlite3,sys
@@ -128,12 +129,15 @@ def process_candidates(worker,job):
     if any(len(s['text'])+200>budget for s in segments):raise ValueError('存在超过术语整理预算的单段文字，请拆分该段或选择更大上下文模型')
     chunks=chunk_segments(segments,budget)
     work=store.directory(mid)/jid;work.mkdir(exist_ok=True)
+    checkpoints=JobCheckpoints(store,job)
     output_terms=[]
     for index,chunk in enumerate(chunks):
         worker.update(jid,f'整理术语候选 {index+1}/{len(chunks)}',index/max(1,len(chunks)))
-        request=work/f'{index}.request.json';output=work/f'{index}.response.json';checkpoint=work/f'{index}.validated.json'
-        if checkpoint.exists():
-            output_terms.extend(validate_candidates(Candidates.model_validate(json.loads(checkpoint.read_text())),chunk).terms)
+        request=work/f'{index}.request.json';output=work/f'{index}.response.json'
+        validate=lambda value:validate_candidates(Candidates.model_validate(value),chunk)
+        saved=checkpoints.load(f'terms-{index}',chunk,validate)
+        if saved is not None:
+            output_terms.extend(saved.terms)
             continue
         schema=Candidates.model_json_schema()
         instruction='''/no_think
@@ -144,7 +148,7 @@ def process_candidates(worker,job):
         worker.run(jid,[sys.executable,str(BASE/'scripts/lmstudio_analyze.py'),'--base-url',provider.base_url,'--request',str(request),'--output',str(output)],
             {'MEETING_LLM_API_KEY':provider.token,**({'MEETING_LMSTUDIO_REASONING_OFF':'1'} if config['provider']['provider_type']=='local' and 'qwen' in config['model'].lower() else {})},timeout=660)
         validated=validate_candidates(Candidates.model_validate(json.loads(output.read_text())),chunk)
-        temporary=checkpoint.with_suffix('.tmp');temporary.write_text(encode(validated.model_dump()));temporary.replace(checkpoint)
+        checkpoints.save(f'terms-{index}',validated.model_dump(),chunk,validate)
         output_terms.extend(validated.terms)
     with store.connect() as db:
         db.execute('BEGIN IMMEDIATE')

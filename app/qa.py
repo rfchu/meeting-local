@@ -5,6 +5,7 @@ from typing import Literal
 from pydantic import BaseModel,ConfigDict,Field
 from .analysis import BASE,OpenAICompatibleProvider
 from .db import uid,encode
+from .job_checkpoints import JobCheckpoints
 from .retrieval import Retrieval
 
 class Citation(BaseModel):
@@ -168,8 +169,13 @@ class QA:
         work=self.store.root/'qa-work'/job['id'];work.mkdir(parents=True,exist_ok=True,mode=0o700)
         try:
             worker.update(job['id'],'根据预览依据生成回答',.2)
-            result=generate_answer(OpenAICompatibleProvider(profile),profile['model'],config['question'],config['sources'],work/'answer',
-                lambda args,extra=None:worker.run(job['id'],args,work/'worker.log',extra,timeout=600))
+            checkpoints=JobCheckpoints(self.store,job)
+            validate=lambda value:validate_answer(Answer.model_validate(value),config['sources'])
+            result=checkpoints.load('answer',config,validate)
+            if result is None:
+                result=generate_answer(OpenAICompatibleProvider(profile),profile['model'],config['question'],config['sources'],work/'answer',
+                    lambda args,extra=None:worker.run(job['id'],args,work/'worker.log',extra,timeout=600))
+                checkpoints.save('answer',result.model_dump(),config,validate)
             worker.check(job['id']);worker.update(job['id'],'核验引用与来源版本',.9)
             with self.store.connect() as db:
                 db.execute('BEGIN IMMEDIATE')
@@ -178,15 +184,22 @@ class QA:
                 if not self.current(config['sources'],db):raise ValueError('生成期间资料变化，本次回答未发布')
                 validate_answer(result,config['sources'])
                 db.execute('UPDATE qa_runs SET answer=? WHERE id=? AND job_id=?',(encode(result.model_dump()),qid,job['id']))
-        finally:shutil.rmtree(work,ignore_errors=True)
+                db.execute("UPDATE jobs SET state='completed',progress=1,stage='引用问答完成' WHERE id=? AND state='running'",(job['id'],))
+        finally:
+            shutil.rmtree(work,ignore_errors=True)
+            if not self.store.one('SELECT id FROM jobs WHERE id=?',(job['id'],)):shutil.rmtree(self.store.root/'job-work'/job['id'],ignore_errors=True)
 
     @staticmethod
     def forget_meeting(db,mid):
+        removed=[]
         for row in db.execute('SELECT id,config,job_id FROM qa_runs').fetchall():
             config=json.loads(row['config'])
             if config.get('meeting_id')==mid or any(source['meeting_id']==mid for source in config['sources']):
-                if row['job_id']:db.execute('DELETE FROM jobs WHERE id=?',(row['job_id'],))
+                if row['job_id']:
+                    db.execute('DELETE FROM jobs WHERE id=?',(row['job_id'],));removed.append(row['job_id'])
                 db.execute('DELETE FROM qa_runs WHERE id=?',(row['id'],))
+
+        return removed
 
     def delete(self,qid):
         with self.store.connect() as db:
@@ -195,3 +208,4 @@ class QA:
             if not row:raise KeyError(qid)
             if row['job_id']:db.execute('DELETE FROM jobs WHERE id=?',(row['job_id'],))
             db.execute('DELETE FROM qa_runs WHERE id=?',(qid,))
+        if row['job_id']:shutil.rmtree(self.store.root/'job-work'/row['job_id'],ignore_errors=True)

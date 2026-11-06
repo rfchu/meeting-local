@@ -15,6 +15,7 @@ export interface RuntimeTask {
   created: string;
   waiting_reason: string;
   resource_wait?: { code: string; message: string } | null;
+  recovery?: { protocol: number | null; checkpoints: number; message: string };
   queue_position: number | null;
   model: string;
   revision: number | null;
@@ -221,6 +222,12 @@ export default function TasksPanel({
             </p>
             {task.model && <p>绑定模型：{task.model}</p>}
             {task.revision != null && <p>绑定原文版本：{task.revision}</p>}
+            {task.recovery && (
+              <p>
+                恢复检查点：{task.recovery.checkpoints} 个 ·{" "}
+                {task.recovery.message}
+              </p>
+            )}
             <code>{task.id}</code>
           </details>
         </article>

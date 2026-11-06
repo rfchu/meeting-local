@@ -96,12 +96,13 @@ def test_builtin_config_and_index_flow(tmp_path,monkeypatch):
     cfg=client.put('/api/retrieval/config',json={'provider':'builtin'});assert cfg.status_code==200
     config=cfg.json();assert config['model']==MODEL_ID and config['dimension']==512
     r=Retrieval(store);assert r.profile(config)['provider_type']=='builtin'
-    from app.db import encode
-    store.execute("INSERT INTO jobs(id,meeting_id,state,stage,config,kind) VALUES(?,?,?,?,?,?)",('j','','running','test',encode(config),'retrieval_index'))
+    from app.db import encode,uid
+    jid=uid()
+    store.execute("INSERT INTO jobs(id,meeting_id,state,stage,config,kind) VALUES(?,?,?,?,?,?)",(jid,'','running','test',encode(config),'retrieval_index'))
     class Worker:
         def check(self,jid):pass
         def update(self,*args):pass
-    r.build(Worker(),store.one('SELECT * FROM jobs WHERE id=?',('j',)))
+    r.build(Worker(),store.one('SELECT * FROM jobs WHERE id=?',(jid,)))
     assert r.status()['indexed']==1
     assert r.search('交付','semantic')['results'][0]['meeting_id']=='m'
     changed={**config,'manifest':'wrong'}

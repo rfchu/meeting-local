@@ -129,7 +129,7 @@ def test_cooperative_yield_requeues_and_reuses_validated_analysis_checkpoint(tmp
         deadline=time.monotonic()+3
         while scheduler.waiting_for(jid) is None and time.monotonic()<deadline:time.sleep(.005)
         assert scheduler.waiting_for(jid)['code']=='realtime_priority'
-        assert (store.directory(mid)/jid/'map-0000.json').exists() and calls==['s0']
+        assert (store.directory(mid)/jid/'map-0000.c3.json').exists() and calls==['s0']
         assert store.one('SELECT state FROM jobs WHERE id=?',(jid,))['state']!='failed'
         store.execute("UPDATE live_sessions SET status='stopped' WHERE recording_id=?",(rid,));scheduler.set_realtime([])
         deadline=time.monotonic()+3

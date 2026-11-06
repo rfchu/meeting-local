@@ -139,7 +139,10 @@ def save_meeting_analysis(store,meeting_id,revision,result:MeetingAnalysis,prove
         if job_id:
             job=db.execute('SELECT state FROM jobs WHERE id=?',(job_id,)).fetchone()
             if not job or job['state']!='running':raise RuntimeError('分析任务已取消，结果未发布')
-        db.execute('INSERT INTO artifacts(id,meeting_id,revision,kind,payload,provenance) VALUES(?,?,?,?,?,?)',
+        existing=db.execute("SELECT id FROM artifacts WHERE meeting_id=? AND revision=? AND kind='meeting_analysis' AND json_extract(provenance,'$.job')=? LIMIT 1",(meeting_id,revision,job_id)).fetchone() if job_id else None
+        if existing:aid=existing['id']
+        else:
+            db.execute('INSERT INTO artifacts(id,meeting_id,revision,kind,payload,provenance) VALUES(?,?,?,?,?,?)',
             (aid,meeting_id,revision,'meeting_analysis',encode(result.model_dump()),encode(provenance)))
         if job_id and finalize_job:db.execute("UPDATE jobs SET state='completed',stage='分析完成',progress=1 WHERE id=?",(job_id,))
     return aid

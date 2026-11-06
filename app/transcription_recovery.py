@@ -2,6 +2,7 @@
 import hashlib,json,math,wave
 from pathlib import Path
 from .db import encode,uid
+from .job_checkpoints import JobCheckpoints,file_digest,validate_segments
 from .alignment import aligned_or_chunk
 from .live_results import RATE,plan_ranges
 from .providers import get_asr_provider,checkpoint_identity_matches,merge_overlapping_chunks
@@ -14,6 +15,10 @@ def collect_progress(store,job):
     try:
         with wave.open(str(folder/'audio.wav')) as wav:duration=wav.getnframes()/wav.getframerate()
     except (OSError,wave.Error):return None
+    c3=None;source_identity=None
+    if (folder/'recovery.json').exists():
+        c3=JobCheckpoints(store,job);source_identity={'sha256':file_digest(store.directory(job['meeting_id'])/'original')}
+        if not c3.file_valid('audio',folder/'audio.wav',source_identity):return None
     chunks=[];covered=[]
     if config.get('completion_mode')=='quick':
         reused,gaps=plan_ranges(config.get('live_snapshot',[]),duration)
@@ -30,7 +35,10 @@ def collect_progress(store,job):
         windows=[(max(0,i*seconds-2),min(duration,(i+1)*seconds+2)) for i in range(math.ceil(duration/seconds))];prefix='chunk'
     for index,(start,end) in enumerate(windows):
         checkpoint=folder/f'{prefix}-{index}.checkpoint.json'
-        if checkpoint.exists():
+        if c3:
+            part=c3.load(f'{prefix}-{index}',[source_identity,provider.identity(),start,end],lambda value:validate_segments(value,duration))
+            if part is None:continue
+        elif checkpoint.exists():
             part=json.loads(checkpoint.read_text())
         else:
             # The old Qwen process writes decoded text before alignment validation.

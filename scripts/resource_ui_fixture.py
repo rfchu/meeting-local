@@ -1,4 +1,4 @@
-"""C1/C2 synthetic resource UI: PYTHONPATH=. .venv/bin/python scripts/resource_ui_fixture.py.
+"""C1/C2/C3 synthetic resource UI: PYTHONPATH=. .venv/bin/python scripts/resource_ui_fixture.py.
 No models, microphone or user data. Scenario controls exist only in this fixture.
 """
 import argparse,os,tempfile
@@ -10,7 +10,7 @@ def main():
     parser.add_argument('--port',type=int,default=9876)
     parser.add_argument('--static-dir',type=Path)
     args=parser.parse_args()
-    with tempfile.TemporaryDirectory(prefix='tingji-c2-ui-') as directory:
+    with tempfile.TemporaryDirectory(prefix='tingji-c3-ui-') as directory:
         os.environ['MEETING_DATA']=directory
         from unittest.mock import patch
         from fastapi.staticfiles import StaticFiles
@@ -40,13 +40,18 @@ def main():
                     store.execute("INSERT INTO jobs(id,meeting_id,kind,state,stage,config) VALUES(?,'','analysis','running','会中识别优先，等待继续','{}')",(jid,))
                     services.live_sessions.sync_resources()
                     waiter=services.live_asr_lock.request('analysis',{'local_llm':1},jid);assert not waiter.acquire(False);claims.append(waiter)
+                elif scenario=='recovery':
+                    from app.job_checkpoints import JobCheckpoints
+                    store.execute("INSERT INTO jobs(id,meeting_id,kind,state,stage,config) VALUES(?,'','analysis','queued','等待恢复，检查点将重新校验','{}')",(jid,))
+                    checkpoint=JobCheckpoints(store,store.one('SELECT * FROM jobs WHERE id=?',(jid,)))
+                    checkpoint.save('map-0000',{'summary':[]},['synthetic input'])
                 elif scenario=='llm':
                     holder=services.resources.request('live_overview',{'local_llm':1});assert holder.acquire(False);claims.append(holder)
                     waiter=services.live_asr_lock.request('minutes',{'local_llm':1});assert not waiter.acquire(False);claims.append(waiter)
                 return {'synthetic':True,'scenario':scenario}
             mount=next(route for route in app.routes if getattr(route,'path',None)=='')
             app.router.routes.remove(mount);app.router.routes.append(mount)
-            print('SYNTHETIC C2 RESOURCE FIXTURE ONLY',flush=True)
+            print('SYNTHETIC RESOURCE/RECOVERY FIXTURE ONLY',flush=True)
             try:uvicorn.run(app,host='127.0.0.1',port=args.port,access_log=False)
             finally:
                 for claim in claims:claim.close()

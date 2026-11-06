@@ -4,6 +4,7 @@ from functools import wraps
 from fastapi import HTTPException
 from .db import encode,uid
 from .resources import ResourceYielded
+from .job_checkpoints import ResourceInterrupted
 
 class MinutesGeneration:
     def __init__(self,store):self.store=store
@@ -41,7 +42,11 @@ class MinutesGeneration:
                 else:
                     # A process exit releases the lock; never leave a permanent spinner.
                     completed=self.store.one("SELECT a.id FROM artifacts a JOIN jobs j ON j.id=json_extract(a.provenance,'$.job') WHERE a.meeting_id=? AND a.kind='meeting_minutes' AND j.id=? AND j.state='completed' LIMIT 1",(mid,value.get('job_id'))) if value.get('job_id') else None
-                    if completed:value.update(state='completed',artifact_id=completed['id'],error='',finished_at=time.time())
+                    pending=self.store.one('SELECT state FROM jobs WHERE id=?',(value.get('job_id'),)) if value.get('job_id') else None
+                    if pending and pending['state'] in ('queued','running'):
+                        value.update(state='waiting',error='',message='任务等待恢复；继续时重新校验检查点');value.pop('finished_at',None)
+                    elif pending and pending['state']=='cancelled':value.update(state='cancelled',error='纪要任务已取消',finished_at=time.time())
+                    elif completed:value.update(state='completed',artifact_id=completed['id'],error='',finished_at=time.time())
                     else:value.update(state='failed',error='纪要生成进程已中断，请重新生成；已有纪要仍保留。',finished_at=time.time())
                     self._write(folder,value)
         return {**value,'elapsed_seconds':round(max(0,(value.get('finished_at') or time.time())-value['started_at']))}
@@ -63,8 +68,8 @@ class MinutesGeneration:
                 status={'id':uid(),'job_id':getattr(body,'job_id',None),'state':'running','started_at':time.time(),'revision':row['revision'],'error':''}
                 self._write(folder,status)
                 try:result=operation(mid,body)
-                except ResourceYielded:
-                    status.update(state='waiting',error='',message='会中识别优先，等待继续')
+                except (ResourceYielded,ResourceInterrupted) as interrupted:
+                    status.update(state='waiting',error='',message='服务已停止，等待恢复' if isinstance(interrupted,ResourceInterrupted) else '会中识别优先，等待继续')
                     self._write(folder,status);raise
                 except BaseException as error:
                     message=getattr(error,'detail',str(error)) or '纪要生成中断，请重试'

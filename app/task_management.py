@@ -1,5 +1,6 @@
 """Safe operational views: never expose model logs, prompts, credentials or audio."""
 import json,re,time
+from .job_checkpoints import recovery_view,recovery_blocker
 from fastapi import HTTPException
 from fastapi.responses import JSONResponse
 
@@ -27,6 +28,8 @@ def retry_blocker(store,job,worker):
     try:config=json.loads(job['config'])
     except (ValueError,TypeError):return '任务配置不完整，请回到会议重新发起'
     if not isinstance(config,dict):return '任务配置不完整，请回到会议重新发起'
+    checkpoint_error=recovery_blocker(store,job)
+    if checkpoint_error:return checkpoint_error
     if job.get('kind')=='retrieval_answer':
         qa=store.one('SELECT config,cloud_confirmed FROM qa_runs WHERE id=?',(config.get('qa_id'),))
         if not qa:return '本次问答依据已清理，请重新检索后提问'
@@ -64,7 +67,7 @@ def register_task_management(app,store,worker,resources=None):
             resource_wait=resources.waiting_for(job['id']) if resources else None
             if resource_wait:wait=resource_wait['message']
             values.append({k:job[k] for k in ('id','meeting_id','meeting_title','kind','state','stage','progress','created')}|{
-                'resource_wait':resource_wait,'kind_label':KINDS.get(job['kind'],'后台处理'),'queue_position':positions.get(job['id']), 'waiting_reason':wait,
+                'recovery':recovery_view(store,job),'resource_wait':resource_wait,'kind_label':KINDS.get(job['kind'],'后台处理'),'queue_position':positions.get(job['id']), 'waiting_reason':wait,
                 'model':config.get('model') or config.get('engine') or '', 'revision':config.get('revision',config.get('base_revision')),
                 'failure':classify(job['error']) if job['state']=='failed' else None,
                 'can_cancel':job['state'] in ('queued','running'),'can_retry':not blocked,'retry_blocked':blocked,

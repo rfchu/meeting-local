@@ -62,7 +62,7 @@ def test_analysis_worker_checkpoints_citations_staleness_and_export(client,monke
     assert artifact['provenance']['model']=='local-model'
     markdown=client.get(f'/api/meetings/{mid}/analysis/export/md')
     assert markdown.status_code==200 and '确定周五交付' in markdown.text and '依据：00:00' in markdown.text
-    assert (store.directory(mid)/jid/'map-0000.json').is_file()
+    assert (store.directory(mid)/jid/'map-0000.c3.json').is_file()
     store.save_revision(mid,sample(),'manual',expected=1)
     assert client.get(f'/api/meetings/{mid}').json()['artifacts'][0]['stale']
     assert client.get(f'/api/meetings/{mid}/analysis/export/md').status_code==404

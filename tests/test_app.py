@@ -245,7 +245,14 @@ def test_checkpoint_reuse_preserves_manual_edit(client,monkeypatch):
     jid=uid();config={'base_revision':0,'diarization':False,'punctuation':False,'pipeline_version':2}
     store.execute('INSERT INTO jobs(id,meeting_id,state,stage,config) VALUES(?,?,?,?,?)',(jid,mid,'running','test',encode(config)))
     folder=store.directory(mid)/jid;folder.mkdir();(folder/'audio.wav').write_bytes(wav_bytes())
-    (folder/'chunk-0.checkpoint.json').write_text(encode(sample()))
+    from app.job_checkpoints import JobCheckpoints,file_digest
+    from app.providers import WhisperCpp
+    checkpoints=JobCheckpoints(store,store.one('SELECT * FROM jobs WHERE id=?',(jid,)))
+    source={'sha256':file_digest(store.directory(mid)/'original')}
+    checkpoints.save_file('audio',folder/'audio.wav',source)
+    import wave
+    with wave.open(str(folder/'audio.wav')) as audio:duration=audio.getnframes()/audio.getframerate()
+    checkpoints.save('chunk-0',sample(),[source,WhisperCpp().identity(),0,duration])
     monkeypatch.setattr('app.worker.WhisperCpp.ready',lambda _:True)
     monkeypatch.setattr('app.worker.WhisperCpp.transcribe',lambda *_:pytest.fail('should reuse checkpoint'))
     store.save_revision(mid,[dict(sample()[0],text='人工校对')],'manual',expected=0)

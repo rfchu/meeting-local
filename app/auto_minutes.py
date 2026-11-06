@@ -2,6 +2,7 @@
 import hashlib,json
 from types import SimpleNamespace
 from pydantic import BaseModel,Field
+from .job_checkpoints import JobCheckpoints
 from .db import encode
 from .analysis import LMStudioProvider,OpenAICompatibleProvider,AIMinutesResult
 from .minutes import validate_minutes_citations,MINUTES_VERSION
@@ -75,20 +76,22 @@ def process(worker,job):
         context['composition']=settings.model_dump()
         work=store.directory(mid)/jid;work.mkdir(exist_ok=True)
         worker.update(jid,'基于完整文字稿整理 AI 纪要',.1)
-        checkpoint=work/'validated-result.json'
-        identity=hashlib.sha256(encode([config,context_hash,segments]).encode()).hexdigest()
-        saved=json.loads(checkpoint.read_text()) if checkpoint.exists() else None
-        if saved and saved.get('identity')==identity:result=AIMinutesResult.model_validate(saved['result'])
-        else:
+        checkpoints=JobCheckpoints(store,job)
+        identity=[context_hash,segments,template.model_dump(),settings.model_dump()]
+        def validate_result(value):
+            result=AIMinutesResult.model_validate(value)
+            if not any(result.all_items()):raise ValueError('模型没有返回有效纪要内容，请检查模型后重试纪要步骤')
+            document=build_from_ai(row['created'],result,settings,template=template)
+            validate_minutes_citations(document,{s['id'] for s in segments})
+            if document.interview:document.interview.validate_sources(segments)
+            return result
+        result=checkpoints.load('minutes',identity,validate_result)
+        if result is None:
             speakers=list(dict.fromkeys(s['speaker'] for s in segments if s.get('speaker') and s['speaker']!='未分配'))
             result=provider.generate_ai_minutes(config['model'],segments,{'title':row['title'],'date':row['created'][:10],
                 'known_attendees':speakers,'minutes_template':template.model_dump(),**context},work/'result',
                 lambda args,extra=None:worker.run(jid,args,work/'worker.log',extra,timeout=660))
-            if not any(result.all_items()):raise ValueError('模型没有返回有效纪要内容，请检查模型后重试纪要步骤')
-            document=build_from_ai(row['created'],result,settings,template=template)
-            validate_minutes_citations(document,{s['id'] for s in segments})
-            temp=checkpoint.with_suffix('.tmp');temp.write_text(encode({'identity':identity,'result':result.model_dump()}));temp.replace(checkpoint)
-        if not any(result.all_items()):raise ValueError('模型没有返回有效纪要内容，请检查模型后重试纪要步骤')
+            checkpoints.save('minutes',result.model_dump(),identity,validate_result)
         document=build_from_ai(row['created'],result,settings,template=template)
         if document.interview:
             from .interview import InterviewPreparation,project

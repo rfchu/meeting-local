@@ -332,10 +332,11 @@ def register_routes(app,services:ApplicationServices):
             db.execute('DELETE FROM live_asr_ranges WHERE recording_id=?',(mid,))
             db.execute('DELETE FROM live_corrections WHERE recording_id=?',(mid,))
             for table in ('live_sessions','live_session_events','live_pcm_inputs'):db.execute(f'DELETE FROM {table} WHERE recording_id=?',(mid,))
-            QA.forget_meeting(db,mid)
+            qa_jobs=QA.forget_meeting(db,mid)
             for table in ['minutes_deliveries','minutes_task_bindings','meeting_task_links','minutes_selection','meeting_briefs','attention_reviews','meeting_reviews','note_todos','retrieval_units','meeting_notes','artifacts','revisions','jobs','meetings']:
                 key='id' if table=='meetings' else 'meeting_id'
                 db.execute(f'DELETE FROM {table} WHERE {key}=?',(mid,))
+        for qjid in qa_jobs:shutil.rmtree(store.root/'job-work'/qjid,ignore_errors=True)
         shutil.rmtree(store.directory(mid),ignore_errors=True)
         return {'ok':True}
 

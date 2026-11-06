@@ -170,6 +170,8 @@ class Retrieval:
         return {'config':config,'units':count,'indexed':embedded,'pending':count-embedded,'vec_ready':available,'error':error or profile_error,'job':job,'builtin':local_embedding().status()}
     def build(self,worker,job):
         config=json.loads(job['config']);jid=job['id'];profile=self.profile(config)
+        from .job_checkpoints import JobCheckpoints
+        checkpoints=JobCheckpoints(self.store,job)
         if self.config()!=config:raise ValueError('索引模型已变化，请新建任务')
         self.sync();pending=self.store.all('SELECT * FROM retrieval_units WHERE embedding IS NULL OR identity!=?',(config['identity'],))
         import sqlite_vec
@@ -182,6 +184,7 @@ class Retrieval:
                 for row,vector in zip(batch,vectors):
                     db.execute('UPDATE retrieval_units SET embedding=?,identity=? WHERE id=? AND fingerprint=?',(sqlite_vec.serialize_float32(vector),config['identity'],row['id'],row['fingerprint']))
                 worker.check(jid)
+            checkpoints.save('index-progress',{'committed_rows':min(offset+16,len(pending))},config)
         self.sync();worker.update(jid,'检索索引建立完成',1)
     def search(self,query,mode='keyword',limit=20,meeting_id=None,kind=None,include_personal=True):
         self.sync();config=self.config();query=query.strip()

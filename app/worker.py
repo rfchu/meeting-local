@@ -1,4 +1,5 @@
 from .resource_policy import sync_live_demand
+from .job_checkpoints import JobCheckpoints,file_digest,validate_segments,ResourceInterrupted,model_files
 import fcntl, hashlib, json, math, os, subprocess, threading, time
 from pathlib import Path
 from .db import uid, encode
@@ -18,7 +19,10 @@ class Worker:
         except BlockingIOError:
             self.lock_file.close(); self.lock_file=None
             raise RuntimeError('此数据目录已有应用运行，请使用已打开的窗口')
-        self.store.execute("UPDATE jobs SET state='queued',stage='等待恢复' WHERE state='running'")
+        with self.store.connect() as db:
+            db.execute('BEGIN IMMEDIATE')
+            db.execute("INSERT INTO job_runtime_events(job_id,action,from_state) SELECT id,'recover','running' FROM jobs WHERE state='running'")
+            db.execute("UPDATE jobs SET state='queued',stage='等待恢复，检查点将重新校验' WHERE state='running'")
         self.thread=threading.Thread(target=self.loop,daemon=True); self.thread.start()
     def close(self):
         self.stop.set()
@@ -27,7 +31,8 @@ class Worker:
             self.lock_file.close(); self.lock_file=None
     def check(self,jid):
         job=self.store.one('SELECT state FROM jobs WHERE id=?',(jid,))
-        if self.stop.is_set() or not job or job['state']=='cancelled': raise Cancelled()
+        if not job or job['state']=='cancelled':raise Cancelled()
+        if self.stop.is_set():raise ResourceInterrupted()
     def run(self,jid,args,log,extra_env=None,timeout=None):
         self.boundary(jid)
         env=os.environ.copy(); env.update(HF_HUB_OFFLINE='1',HF_HUB_DISABLE_TELEMETRY='1',PYANNOTE_METRICS_ENABLED='0')
@@ -81,6 +86,8 @@ class Worker:
                 stage={'analysis':'分析完成','note_expansion':'简记扩写完成','retrieval_index':'检索索引建立完成','retrieval_answer':'引用问答完成','minutes':'AI 纪要草稿已保存，待人工核对','terminology':'术语候选已整理，待确认'}.get(job.get('kind'),'转写完成')
                 if job.get('kind')=='analysis' and json.loads(job['config']).get('minutes_followup'):stage='分析与纪要草稿完成'
                 self.store.execute("UPDATE jobs SET state='completed',stage=?,progress=1 WHERE id=? AND state='running'",(stage,job['id']))
+            except ResourceInterrupted:
+                self.store.execute("UPDATE jobs SET state='queued',stage='服务已停止，等待恢复' WHERE id=? AND state='running'",(job['id'],))
             except Cancelled: pass
             except Yielded:
                 self.store.execute("UPDATE jobs SET state='queued',stage='会中识别优先，等待继续' WHERE id=? AND state='running'",(job['id'],))
@@ -104,6 +111,9 @@ class Worker:
         return workload,requirements
 
     def process(self,job):
+        current=self.store.one('SELECT state FROM jobs WHERE id=?',(job['id'],))
+        if not current or current['state']=='completed':return
+        self.check(job['id'])
         claim=None
         try:
             if self.asr_lock:
@@ -136,7 +146,7 @@ class Worker:
                 from .auto_minutes import process
                 return process(self,job)
             return self.process_transcription(job)
-        except (Cancelled,Yielded):raise
+        except (Cancelled,Yielded,ResourceInterrupted):raise
         except Exception:
             if job.get('kind') in (None,'transcription'):
                 try:
@@ -149,7 +159,7 @@ class Worker:
             self.resource_claim=None
 
     def process_note_expansion(self,job):
-        from .note_expansion import generate_expansion,publish,Expansion
+        from .note_expansion import generate_expansion,publish,Expansion,validate_expansion
         config=json.loads(job['config']);jid=job['id'];mid=job['meeting_id']
         profile=self.store.one('SELECT * FROM llm_configs WHERE id=?',(config.get('profile_id'),)) if config.get('profile_id') else None
         if config.get('profile_id') and not profile:raise RuntimeError('模型配置已删除')
@@ -159,8 +169,12 @@ class Worker:
         provider=OpenAICompatibleProvider(profile) if profile else LMStudioProvider()
         work=self.store.directory(mid)/jid;work.mkdir(exist_ok=True)
         segments=config['segments'];self.update(jid,'整理简记与原文依据',.1)
-        if not segments:result=Expansion(status='insufficient',text='',reason='简记附近没有可用文字稿，请完成转写或调整简记时间。',evidence=[])
-        else:result=generate_expansion(provider,config['model'],{key:config[key] for key in ('raw_text','note_type','captured_at')}|{'note_scope':config.get('note_scope','personal')},segments,work/'expansion',lambda args,extra=None:self.run(jid,args,work/'worker.log',extra))
+        checkpoints=JobCheckpoints(self.store,job)
+        result=checkpoints.load('expansion',config,lambda value:validate_expansion(Expansion.model_validate(value),segments))
+        if result is None:
+            if not segments:result=Expansion(status='insufficient',text='',reason='简记附近没有可用文字稿，请完成转写或调整简记时间。',evidence=[])
+            else:result=generate_expansion(provider,config['model'],{key:config[key] for key in ('raw_text','note_type','captured_at')}|{'note_scope':config.get('note_scope','personal')},segments,work/'expansion',lambda args,extra=None:self.run(jid,args,work/'worker.log',extra))
+        checkpoints.save('expansion',result.model_dump(),config,lambda value:validate_expansion(Expansion.model_validate(value),segments))
         self.check(jid);self.update(jid,'核验引用',.95);publish(self.store,job,result,segments)
 
     def process_analysis(self,job):
@@ -181,32 +195,36 @@ class Worker:
             provider=LMStudioProvider()
             if model not in provider.models():raise RuntimeError('所选 LM Studio 模型当前不可用')
         work=self.store.directory(mid)/jid;work.mkdir(exist_ok=True)
+        checkpoints=JobCheckpoints(self.store,job)
         log=work/'worker.log';run=lambda args,extra_env=None:self.run(jid,args,log,extra_env)
         chunks=chunk_segments(segments,int(config.get('max_chars',8000)))
         results=[]
         for index,chunk in enumerate(chunks):
             self.update(jid,f'分析文字稿 {index+1}/{len(chunks)}',.05+.7*index/max(1,len(chunks)))
-            checkpoint=work/f'map-{index:04d}.json'
-            if checkpoint.exists():result=MeetingAnalysis.model_validate(json.loads(checkpoint.read_text()))
-            else:
+            def validate_map(value):
+                result=MeetingAnalysis.model_validate(value);validate_citations(result,{s['id'] for s in chunk});return result
+            result=checkpoints.load(f'map-{index:04d}',chunk,validate_map)
+            if result is None:
                 self.boundary(jid)
                 result=provider.analyze_chunk(model,chunk,work/f'map-{index:04d}',run)
                 validate_citations(result,{s['id'] for s in chunk})
-                temporary=checkpoint.with_suffix('.tmp');temporary.write_text(encode(result.model_dump()));temporary.replace(checkpoint)
+                checkpoints.save(f'map-{index:04d}',result.model_dump(),chunk,validate_map)
             results.append(result)
         round_number=0
         while len(results)>1:
             groups=[results[i:i+6] for i in range(0,len(results),6)];merged=[]
             for index,group in enumerate(groups):
                 self.update(jid,f'合并分析结果 {round_number+1}.{index+1}',.76+.18*(index+1)/max(1,len(groups)))
-                checkpoint=work/f'reduce-{round_number:02d}-{index:04d}.json'
-                if checkpoint.exists():result=MeetingAnalysis.model_validate(json.loads(checkpoint.read_text()))
-                else:
+                inputs=[item.model_dump() for item in group]
+                def validate_reduce(value):
+                    result=MeetingAnalysis.model_validate(value);validate_citations(result,{sid for source in group for item in source.all_items() for sid in item.source_segment_ids});return result
+                result=checkpoints.load(f'reduce-{round_number:02d}-{index:04d}',inputs,validate_reduce)
+                if result is None:
                     self.boundary(jid)
                     result=provider.reduce(model,group,work/f'reduce-{round_number:02d}-{index:04d}',run)
                     valid={sid for source in group for item in source.all_items() for sid in item.source_segment_ids}
                     validate_citations(result,valid)
-                    temporary=checkpoint.with_suffix('.tmp');temporary.write_text(encode(result.model_dump()));temporary.replace(checkpoint)
+                    checkpoints.save(f'reduce-{round_number:02d}-{index:04d}',result.model_dump(),inputs,validate_reduce)
                 merged.append(result)
             results=merged;round_number+=1
         self.check(jid);self.update(jid,'校验原文引用',.96)
@@ -232,41 +250,43 @@ class Worker:
             raise RuntimeError('识别模型或引擎已变更，请新建转写任务，不能复用旧检查点')
         meeting=self.store.one('SELECT * FROM meetings WHERE id=?',(mid,))
         source=folder/'original'; audio=work/'audio.wav'
+        checkpoints=JobCheckpoints(self.store,job)
+        source_identity={'sha256':file_digest(source)}
         self.update(jid,'准备音频',.02)
-        if not audio.exists():
+        prepared=not checkpoints.file_valid('audio',audio,source_identity)
+        if prepared:
             temp=work/'audio.tmp.wav'
             run(['ffmpeg','-v','error','-y','-i',str(source),'-vn','-ar','16000','-ac','1','-c:a','pcm_s16le',str(temp)])
             temp.replace(audio)
         import wave
-        with wave.open(str(audio)) as wav: duration=wav.getnframes()/wav.getframerate()
+        with wave.open(str(audio)) as wav:
+            if (wav.getnchannels(),wav.getsampwidth(),wav.getframerate())!=(1,2,16000):raise ValueError('准备音频格式无效，未提交检查点')
+            duration=wav.getnframes()/wav.getframerate()
         if duration <= 0: raise RuntimeError('录音没有可用音频')
+        if prepared:checkpoints.save_file('audio',audio,source_identity)
         self.store.execute('UPDATE meetings SET duration=? WHERE id=?',(duration,mid))
         if config.get('completion_mode')!='quick' and not provider.ready(): raise RuntimeError(f'{provider.label} 尚未就绪，请检查运行环境')
         reuse_meta={}
         if config.get('completion_mode')=='quick':
-            segments,reuse_meta=self.fast_transcription(config,duration,audio,work,provider,run,jid)
+            segments,reuse_meta=self.fast_transcription(config,duration,audio,work,provider,run,jid,checkpoints,source_identity)
         else:
             # Fixed chunks with context overlap; merge using both timing and text.
             chunk_seconds=config.get('chunk_seconds',provider.chunk_seconds); count=math.ceil(duration/chunk_seconds); chunks=[]
             for i in range(count):
                 self.update(jid,f'识别与对齐片段 {i+1}/{count}' if provider.engine_id=='qwen' else f'转写片段 {i+1}/{count}',.08+.78*i/count)
-                checkpoint=work/f'chunk-{i}.checkpoint.json'
-                if checkpoint.exists(): part=json.loads(checkpoint.read_text())
-                else:
-                    start=max(0,i*chunk_seconds-2); end=min(duration,(i+1)*chunk_seconds+2)
+                start=max(0,i*chunk_seconds-2); end=min(duration,(i+1)*chunk_seconds+2)
+                inputs=[source_identity,provider.identity(),start,end]
+                part=checkpoints.load(f'chunk-{i}',inputs,lambda value:validate_segments(value,duration))
+                if part is None:
                     chunk=work/f'chunk-{i}.wav'
                     run(['ffmpeg','-v','error','-y','-ss',str(start),'-i',str(audio),'-t',str(end-start),'-c:a','pcm_s16le',str(chunk)])
-                    part=None
-                    if provider.engine_id=='qwen':
-                        from .transcription_recovery import recover_raw_alignment
-                        part=recover_raw_alignment(work/f'chunk-{i}.qwen.raw.json',provider.model,end-start)
-                    if part is None:part=provider.transcribe(chunk,work/f'chunk-{i}',run)
+                    part=provider.transcribe(chunk,work/f'chunk-{i}',run)
                     owned=[]
                     for s in part:
                         s['start']+=start; s['end']=min(duration,s['end']+start)
-                        s['id']=uid(); owned.append(s)
+                        s['id']=uid();s.setdefault('speaker','未分配');owned.append(s)
                     part=owned
-                    temp=checkpoint.with_suffix('.tmp'); temp.write_text(encode(part)); temp.replace(checkpoint)
+                    checkpoints.save(f'chunk-{i}',part,inputs,lambda value:validate_segments(value,duration))
                     chunk.unlink(missing_ok=True)
                 chunks.append(part)
             segments=merge_overlapping_chunks(chunks)
@@ -274,14 +294,23 @@ class Worker:
         punctuation=LocalPunctuation()
         if config.get('completion_mode')!='quick' and config.get('punctuation',provider.needs_punctuation) and punctuation.ready() and segments:
             self.update(jid,'恢复中文标点',.87)
-            cached=work/'punctuated.json'
-            segments=json.loads(cached.read_text()) if cached.exists() else punctuation.process(segments,work,run)
+            inputs=[segments,model_files([punctuation.model,Path(__file__).resolve().parents[1]/'scripts/punctuate.py'])]
+            saved=checkpoints.load('punctuated',inputs,lambda value:validate_segments(value,duration))
+            if saved is None:
+                segments=punctuation.process(segments,work,run)
+                checkpoints.save('punctuated',segments,inputs,lambda value:validate_segments(value,duration))
+            else:segments=saved
         if config.get('completion_mode')!='quick' and config.get('diarization'):
             self.update(jid,'分析发言人',.9)
             diar=work/'speakers.json'
-            if not diar.exists(): LocalDiarization().diarize(audio,diar,run,config.get('num_speakers',0))
+            diarizer=LocalDiarization()
+            inputs=[source_identity,config.get('num_speakers',0),model_files([diarizer.segmentation,diarizer.embedding,Path(__file__).resolve().parents[1]/'scripts/diarize.py'])]
+            if not checkpoints.file_valid('speakers',diar,inputs):
+                diarizer.diarize(audio,diar,run,config.get('num_speakers',0))
+                checkpoints.save_file('speakers',diar,inputs)
             segments=attach_speakers(segments,json.loads(diar.read_text()))
         self.check(jid)
+        if file_digest(source)!=source_identity['sha256']:raise ValueError('原音文件已变化，结果未发布；请核对音频后重试')
         # Save a candidate artifact if the user changed the transcript during inference.
         source_meta=encode({'engine':provider.engine_id,'engine_label':provider.label,'model':Path(provider.model).name,
                             'aligner':Path(provider.aligner).name if hasattr(provider,'aligner') else None,
@@ -306,7 +335,7 @@ class Worker:
                     enqueue_after_transcription(db,mid,jid,rev,config['minutes_followup'])
             db.execute("DELETE FROM artifacts WHERE id=? AND meeting_id=? AND kind='transcript_candidate'",(hashlib.sha256(('transcription-progress:'+jid).encode()).hexdigest()[:32],mid))
 
-    def fast_transcription(self,config,duration,audio,work,provider,run,jid):
+    def fast_transcription(self,config,duration,audio,work,provider,run,jid,checkpoints,source_identity):
         import wave
         reused,gaps=plan_ranges(config.get('live_snapshot',[]),duration)
         chunks=[]
@@ -321,16 +350,16 @@ class Worker:
         if missing and not provider.ready():raise RuntimeError(f'需要补识别缺段/尾段，但 {provider.label} 尚未就绪；请恢复模型后重试')
         for index,(start,end) in enumerate(missing):
             self.update(jid,f'复用 {len(reused)} 段草稿 · 补识别缺段/尾段 {index+1}/{len(missing)}',.08+.78*index/max(1,len(missing)))
-            checkpoint=work/f'fast-{index}.checkpoint.json'
-            if checkpoint.exists():part=json.loads(checkpoint.read_text())
-            else:
+            inputs=[source_identity,provider.identity(),start,end]
+            part=checkpoints.load(f'fast-{index}',inputs,lambda value:validate_segments(value,duration))
+            if part is None:
                 chunk=work/f'fast-{index}.wav'
                 run(['ffmpeg','-v','error','-y','-ss',str(start),'-i',str(audio),'-af','apad','-t',str(max(.5,end-start)),'-c:a','pcm_s16le',str(chunk)])
                 with wave.open(str(chunk),'rb') as wav:silent=not any(wav.readframes(wav.getnframes()))
                 raw=[] if silent else getattr(provider,'transcribe_live',provider.transcribe)(chunk,work/f'fast-{index}',run)
                 part=[dict(s,id=uid(),speaker='未分配',start=min(end,start+max(0,s['start'])),end=min(end,start+max(0,s['end'])))
                       for s in raw if s['text'].strip() and s['start']<end-start]
-                temporary=checkpoint.with_suffix('.tmp');temporary.write_text(encode(part));temporary.replace(checkpoint)
+                checkpoints.save(f'fast-{index}',part,inputs,lambda value:validate_segments(value,duration))
                 chunk.unlink(missing_ok=True)
             chunks.append(part)
         segments=sorted((s for chunk in chunks for s in chunk),key=lambda s:s['start'])
