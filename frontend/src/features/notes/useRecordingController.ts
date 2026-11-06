@@ -1,3 +1,4 @@
+import { browserCaptureAllowed } from "../../preferences/nativeHost";
 import { reconcileNativePhase } from "./recordingCoordinator";
 import { useNativeCaptureStatus } from "./useNativeCaptureStatus";
 import { useModelChoice } from "../../preferences/useModelChoice";
@@ -1119,6 +1120,10 @@ export function useRecordingController({
   };
 
   const start = async () => {
+    if (captureSource === "browser" && !browserCaptureAllowed())
+      return toast(
+        "内嵌工作区未启用浏览器采集。请改用原生音轨，或在浏览器工作台录音。",
+      );
     if (preflight && !preflight.storage.writable)
       return toast("数据目录无法写入，请修复后再录音");
     const plan = recordingPlan(

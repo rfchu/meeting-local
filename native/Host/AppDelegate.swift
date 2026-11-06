@@ -6,6 +6,9 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, 
     private let preferences: HostPreferences
     private var loaded: HostConfigurationLoad
     private var settings: HostSettingsController?
+    private var workspace: WorkspaceController?
+    private var menuBrowser: NSMenuItem?
+    private let browserButton = NSButton(title: "浏览器工作台", target: nil, action: nil)
     private var activationObserver: NSObjectProtocol?
     private var statusItem: NSStatusItem?
     private var menuStatus: NSMenuItem?
@@ -28,7 +31,7 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, 
     private let status = NSTextField(labelWithString: "正在核对本机服务")
     private let detail = NSTextField(wrappingLabelWithString: "")
     private let feedback = NSTextField(wrappingLabelWithString: "")
-    private let openButton = NSButton(title: "打开会议工作台", target: nil, action: nil)
+    private let openButton = NSButton(title: "打开内嵌工作区", target: nil, action: nil)
     private let startButton = NSButton(title: "启动本机服务", target: nil, action: nil)
     private let refreshButton = NSButton(title: "重新检查", target: nil, action: nil)
 
@@ -44,14 +47,14 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, 
     }
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        guard settings?.isPresented == true && settings?.hasUnsavedChanges == true else { return .terminateNow }
-        let alert = NSAlert(); alert.messageText = "连接设置尚未保存"
-        alert.informativeText = "继续编辑，或放弃本次修改并退出宿主。服务会继续运行。"
-        alert.addButton(withTitle: "继续编辑"); alert.addButton(withTitle: "放弃修改并退出")
+        guard workspace != nil || (settings?.isPresented == true && settings?.hasUnsavedChanges == true) else { return .terminateNow }
+        let alert = NSAlert(); alert.messageText = "退出听记宿主？"
+        alert.informativeText = "请先保存内嵌页面和连接设置，并完成上传、下载及会中操作。退出会关闭页面，但不会停止 API 服务或其原生采集。"
+        alert.addButton(withTitle: "返回宿主"); alert.addButton(withTitle: "放弃修改并退出")
         return alert.runModal() == .alertFirstButtonReturn ? .terminateCancel : .terminateNow
     }
     func applicationWillTerminate(_ notification: Notification) {
-        timer?.invalidate(); settings?.close(); client.close()
+        timer?.invalidate(); settings?.close(); workspace?.dispose(); client.close()
         if let activationObserver { DistributedNotificationCenter.default().removeObserver(activationObserver) }
         if let statusItem { NSStatusBar.system.removeStatusItem(statusItem) }
         // Closing this UI never sends a stop, restart or recording command to the service.
@@ -88,7 +91,8 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, 
         detail.font = .systemFont(ofSize: 13); detail.textColor = .secondaryLabelColor
         detail.setAccessibilityIdentifier("host-connection-detail"); root.addArrangedSubview(detail)
         for view in [title, status, detail] { view.widthAnchor.constraint(equalTo: root.widthAnchor).isActive = true }
-        let controls = NSStackView(views: [openButton, startButton, refreshButton]); controls.orientation = .horizontal; controls.spacing = 10
+        browserButton.target = self; browserButton.action = #selector(openBrowserWorkspace); browserButton.bezelStyle = .rounded
+        let controls = NSStackView(views: [openButton, browserButton, startButton, refreshButton]); controls.orientation = .horizontal; controls.spacing = 10
         openButton.target = self; openButton.action = #selector(openWorkspace); openButton.bezelStyle = .rounded; openButton.keyEquivalent = "\r"
         openButton.setAccessibilityIdentifier("host-open-workspace")
         startButton.target = self; startButton.action = #selector(startService); startButton.bezelStyle = .rounded
@@ -98,7 +102,7 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, 
         feedback.font = .systemFont(ofSize: 12); feedback.textColor = .secondaryLabelColor
         feedback.setAccessibilityIdentifier("host-open-feedback"); root.addArrangedSubview(feedback)
         feedback.widthAnchor.constraint(equalTo: root.widthAnchor).isActive = true
-        root.addArrangedSubview(label("会议编辑、录音和模型配置继续在浏览器工作台完成。", size: 13))
+        root.addArrangedSubview(label("内嵌页面支持会议整理与导出；浏览器工作台仍可独立使用。", size: 13))
         let note = label("关闭窗口后可从菜单栏重新打开。退出宿主不会停止本机服务；浏览器录音仍由页面持有，原生音轨仍由 API 管理。", size: 12)
         root.addArrangedSubview(note); note.widthAnchor.constraint(equalTo: root.widthAnchor).isActive = true
         let config = NSButton(title: "连接设置…", target: self, action: #selector(showConfiguration)); config.bezelStyle = .inline; configurationButton = config
@@ -116,6 +120,7 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, 
         menuRefresh?.isEnabled = refreshButton.isEnabled
         configurationButton?.isEnabled = !starting
         menuStatus?.title = loaded.problem ? "连接配置需要修复" : status.stringValue
+        browserButton.isEnabled = openButton.isEnabled; menuBrowser?.isEnabled = browserButton.isEnabled
         menuOpen?.isEnabled = openButton.isEnabled; menuStart?.isEnabled = startButton.isEnabled; menuSettings?.isEnabled = !starting
         statusItem?.button?.toolTip = "听记 · " + status.stringValue
         if loaded.problem { detail.stringValue = "已保存配置无法使用。请打开连接设置修复；当前没有连接或启动任何服务。"; return }
@@ -134,6 +139,7 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, 
             DispatchQueue.main.async {
                 guard let self, self.generation.accepts(token) else { return }
                 self.probing = false; self.state = result
+                self.workspace?.updateConnection(result.canOpen)
                 if result.canOpen || result == .differentWorkspace || result == .incompatible || (self.startupDeadline.map { Date() >= $0 } ?? false) {
                     self.starting = false; self.startupDeadline = nil
                 }
@@ -151,9 +157,26 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, 
                 guard let self, self.generation.accepts(token) else { return }
                 self.opening = false; self.probing = false; self.state = result; self.render()
                 if result.canOpen {
-                    let opened = NSWorkspace.shared.open(self.configuration.workspaceURL)
-                    self.feedback.stringValue = opened ? "已请求系统默认浏览器打开工作台。" : "未能打开默认浏览器。请在浏览器访问上方本机地址。"
+                    if let existing = self.workspace { existing.updateConnection(true); existing.show() }
+                    else {
+                        let controller = WorkspaceController(configuration: self.configuration)
+                        controller.openBrowser = { [weak self] in self?.openBrowserWorkspace() }
+                        controller.showHost = { [weak self] in self?.showWindow() }
+                        self.workspace = controller; controller.prepareAndLoad()
+                    }
+                    self.feedback.stringValue = "已打开内嵌工作区；关闭窗口会保留页面。"
                 } else { self.feedback.stringValue = "连接状态已变化，未打开工作台；请重新检查。" }
+            }
+        }
+    }
+    @objc private func openBrowserWorkspace() {
+        guard state.canOpen, !loaded.problem, !starting, !opening else { return }
+        opening = true; probing = true; let token = generation.next(); render()
+        client.probe(configuration) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self, self.generation.accepts(token) else { return }
+                self.opening = false; self.probing = false; self.state = result; self.render()
+                if result.canOpen { _ = NSWorkspace.shared.open(self.configuration.workspaceURL); self.feedback.stringValue = "已请求默认浏览器打开当前工作台。" }
             }
         }
     }
@@ -189,7 +212,8 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, 
             let value = menu.addItem(withTitle: title, action: selector, keyEquivalent: ""); value.target = self; return value
         }
         _ = action("显示主窗口", #selector(showWindow))
-        menuOpen = action("打开会议工作台", #selector(openWorkspace))
+        menuOpen = action("打开内嵌工作区", #selector(openWorkspace))
+        menuBrowser = action("浏览器工作台", #selector(openBrowserWorkspace))
         menuSettings = action("连接设置…", #selector(showConfiguration))
         menuRefresh = action("重新检查", #selector(refresh))
         menuStart = action("启动本机服务", #selector(startService))
@@ -209,8 +233,9 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, 
         // Re-read on opening so external edits become visible; active connection changes only on save.
         let latest = preferences.load(defaults: defaults)
         let initial = HostConfigurationLoad(configuration: latest.saved || latest.problem ? latest.configuration : configuration, token: latest.token, saved: latest.saved, problem: latest.problem)
-        let controller = HostSettingsController(defaults: defaults, load: initial, preferences: preferences, onCancel: { [weak self] in self?.settings = nil; self?.render() }) { [weak self] value in
+        let controller = HostSettingsController(defaults: defaults, load: initial, preferences: preferences, requiresWorkspaceConfirmation: { [weak self] value in self?.workspace != nil && value != self?.configuration }, canApply: { [weak self] value in value == self?.configuration || self?.workspace?.busy != true }, onCancel: { [weak self] in self?.settings = nil; self?.render() }) { [weak self] value in
             guard let self else { return }
+            if value.configuration != self.configuration { self.workspace?.dispose(); self.workspace = nil }
             self.configurationGeneration += 1; self.loaded = value; self.configuration = value.configuration
             _ = self.generation.next(); self.opening = false; self.probing = false; self.state = .checking; self.feedback.stringValue = "连接配置已保存；服务未被启停。"
             self.settings = nil; self.render(); self.probe()
@@ -218,7 +243,7 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, 
         settings = controller; controller.present(on: window); render()
     }
     @objc private func about() {
-        let alert = NSAlert(); alert.messageText = "听记宿主 · E2"
+        let alert = NSAlert(); alert.messageText = "听记宿主 · E3"
         alert.informativeText = "本机连接与启动底座。连接设置保存在本机，菜单栏可随时打开工作台。关闭窗口保留菜单栏，退出宿主不停止服务；采集仍由原页面／API 管理。"
         alert.beginSheetModal(for: window)
     }

@@ -14,3 +14,8 @@ def identity(paths):
             'service_mode':os.getenv('TINGJI_SERVICE_MODE','foreground'),
             'workspace_path':'/','capture_ownership':{'browser':'recording_page','native':'api_service','host':'none'},
             'restart_capture_reattach':False}
+
+
+def workspace_binding(paths):
+    value='v1:'+path_fingerprint(paths.repository)+':'+path_fingerprint(paths.data)
+    return hashlib.sha256(value.encode('utf-8')).hexdigest()

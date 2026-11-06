@@ -1,3 +1,7 @@
+import {
+  browserCaptureAllowed,
+  embeddedHost,
+} from "../../preferences/nativeHost";
 import RecordingSettingsDialog from "./RecordingSettingsDialog";
 import { toggleOverviewFocus } from "../overview/notes";
 import LiveOverviewPanel from "../overview/LiveOverviewPanel";
@@ -169,6 +173,11 @@ export default function RecordingView({
           onClose={() => setTermsOpen(false)}
         />
       )}
+      {embeddedHost() && (
+        <p className="muted">
+          内嵌工作区可使用已有原生音轨模式；浏览器麦克风录音请打开宿主的“浏览器工作台”。
+        </p>
+      )}
       <div className="workbench-topbar">
         <div>
           <div className="eyebrow">本机会议采集</div>
@@ -189,7 +198,8 @@ export default function RecordingView({
               disabled={
                 preflight?.storage.writable === false ||
                 (captureSource === "browser" &&
-                  (typeof MediaRecorder === "undefined" ||
+                  (!browserCaptureAllowed() ||
+                    typeof MediaRecorder === "undefined" ||
                     !navigator.mediaDevices?.getUserMedia)) ||
                 (captureSource !== "browser" && !nativeCapability?.available)
               }

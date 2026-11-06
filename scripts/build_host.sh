@@ -5,8 +5,9 @@ cd "$(dirname "$0")/.."
 APP="${TINGJI_HOST_APP:-$HOME/Library/Caches/cn.seeknow.tingji/Tingji.app}"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources" native/build/module-cache
 xcrun swiftc -swift-version 5 -O -target arm64-apple-macos15.0 -module-cache-path native/build/module-cache \
-  native/Host/HostCore.swift native/Host/HostPreferences.swift native/Host/ServiceClient.swift native/Host/HostSettingsController.swift native/Host/AppDelegate.swift native/Host/main.swift \
+  native/Host/HostCore.swift native/Host/HostPreferences.swift native/Host/ServiceClient.swift native/Host/HostSettingsController.swift native/Host/WorkspacePolicy.swift native/Host/WorkspaceDownloads.swift native/Host/WorkspaceController.swift native/Host/AppDelegate.swift native/Host/main.swift \
   -o "$APP/Contents/MacOS/TingjiHost"
+cp native/Host/workspace-permissions.js "$APP/Contents/Resources/workspace-permissions.js"
 python3 - "$APP" "$PWD" <<'PY'
 import json,os,plistlib,sys
 from pathlib import Path
@@ -16,7 +17,7 @@ if not 1024<=port<=65535:raise SystemExit('PORT 必须在 1024～65535 之间')
 config={'version':1,'projectRoot':str(root),'dataRoot':str(Path(os.getenv('MEETING_DATA',str(root/'data'))).expanduser().resolve()),'backupsRoot':str(Path(os.getenv('MEETING_BACKUPS',str(root/'backups'))).expanduser().resolve()),'port':port}
 (app/'Contents/Resources/host-config.json').write_text(json.dumps(config,ensure_ascii=False,indent=2))
 with (app/'Contents/Info.plist').open('wb') as f:
-    info={'CFBundleIdentifier':'cn.seeknow.tingji.host','CFBundleName':'听记','CFBundleDisplayName':'听记宿主','CFBundleExecutable':'TingjiHost','CFBundlePackageType':'APPL','CFBundleVersion':'2','CFBundleShortVersionString':'0.2.0','LSMinimumSystemVersion':'15.0','NSHighResolutionCapable':True}
+    info={'CFBundleIdentifier':'cn.seeknow.tingji.host','CFBundleName':'听记','CFBundleDisplayName':'听记宿主','CFBundleExecutable':'TingjiHost','CFBundlePackageType':'APPL','CFBundleVersion':'3','CFBundleShortVersionString':'0.3.0','LSMinimumSystemVersion':'15.0','NSHighResolutionCapable':True}
     if os.getenv('TINGJI_HOST_STATE_DIR'):
         value=Path(os.environ['TINGJI_HOST_STATE_DIR']).expanduser()
         if not value.is_absolute():raise SystemExit('宿主配置目录必须是绝对路径')

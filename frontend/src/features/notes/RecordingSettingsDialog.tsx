@@ -1,3 +1,4 @@
+import { browserCaptureAllowed } from "../../preferences/nativeHost";
 import MeetingBriefForm from "../meeting/MeetingBriefForm";
 import { type CompletionMode } from "./recordingPreferences";
 import Modal from "../../components/Modal";
@@ -260,7 +261,9 @@ export default function RecordingSettingsDialog({
                 setCaptureSource(e.target.value as typeof captureSource)
               }
             >
-              <option value="browser">浏览器麦克风（支持实时草稿）</option>
+              <option value="browser" disabled={!browserCaptureAllowed()}>
+                浏览器麦克风（支持实时草稿）
+              </option>
               <option
                 value="macos-both"
                 disabled={!nativeCapability?.available}
