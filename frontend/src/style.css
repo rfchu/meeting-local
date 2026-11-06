@@ -3562,3 +3562,30 @@ button.note-options-trigger {
 .workflow-quality button {
   flex-shrink: 0;
 }
+
+.recording-control-notice {
+  border-left: 3px solid #ba7b25;
+  background: #fff8ea;
+  border-radius: 6px;
+  padding: 10px 12px;
+  margin: 8px 0;
+  color: #785018;
+  line-height: 1.6;
+}
+.recording-control-notice p,
+.recording-state-summary p {
+  margin: 4px 0;
+}
+.recording-state-summary {
+  margin: 10px 0;
+  font-size: 12px;
+  line-height: 1.6;
+}
+.management-recording {
+  padding: 12px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.recording-health-panel > .recording-control-notice {
+  grid-column: 1 / -1;
+}

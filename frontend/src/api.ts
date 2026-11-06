@@ -1,3 +1,4 @@
+import { reportRecordingCommand } from "./features/notes/recordingCommandEvents";
 import { RecordingCommandClient } from "./features/notes/recordingCommands";
 import type { ObservationTimelineData } from "./features/management/ObservationTimeline";
 import type { RecordingObservation } from "./features/management/RecordingValidationPanel";
@@ -88,21 +89,56 @@ const json = (method: string, body?: unknown): RequestInit => ({
   body: body === undefined ? undefined : JSON.stringify(body),
 });
 
+function commandFailure(id: string, error: unknown) {
+  const code = error instanceof APIError ? error.code : undefined;
+  reportRecordingCommand(
+    id,
+    code === "command_unconfirmed"
+      ? "unconfirmed"
+      : [
+            "version_conflict",
+            "request_reused",
+            "command_superseded",
+            "terminal_state",
+            "invalid_state",
+          ].includes(code || "")
+        ? "conflict"
+        : "unavailable",
+  );
+}
 const recordingCommands = new RecordingCommandClient(
   async (id) => {
-    const health = await request<RecordingHealth>(`/recordings/${id}/health`, {
-      signal: AbortSignal.timeout(10000),
-    });
-    const version = health.runtime?.control?.version;
-    if (version == null)
-      throw new Error("本机服务尚未提供录音控制版本，请刷新或更新服务后重试");
-    return version;
+    try {
+      const health = await request<RecordingHealth>(
+        `/recordings/${id}/health`,
+        {
+          signal: AbortSignal.timeout(10000),
+        },
+      );
+      const version = health.runtime?.control?.version;
+      if (version == null)
+        throw new Error("本机服务尚未提供录音控制版本，请刷新或更新服务后重试");
+      return version;
+    } catch (error) {
+      commandFailure(id, error);
+      throw error;
+    }
   },
-  (id, body) =>
-    request(`/recordings/${id}/commands`, {
-      ...json("POST", body),
-      signal: AbortSignal.timeout(30000),
-    }),
+  async (id, body) => {
+    try {
+      const result = await request<
+        import("./features/notes/recordingCommands").CommandReply
+      >(`/recordings/${id}/commands`, {
+        ...json("POST", body),
+        signal: AbortSignal.timeout(30000),
+      });
+      reportRecordingCommand(id);
+      return result;
+    } catch (error) {
+      commandFailure(id, error);
+      throw error;
+    }
+  },
   (error) =>
     error instanceof APIError &&
     error.status >= 400 &&
@@ -112,6 +148,23 @@ const recordingCommands = new RecordingCommandClient(
 );
 
 export const api = {
+  runtimeRecordings: (signal?: AbortSignal) =>
+    request<{
+      items: {
+        recording_id: string;
+        source: "native" | "browser";
+        created: number;
+        available: boolean;
+        runtime: import("./types").RecordingRuntime | null;
+      }[];
+      total_count: number;
+      limit: number;
+      truncated: boolean;
+    }>("/runtime/recordings", {
+      signal: signal
+        ? AbortSignal.any([signal, AbortSignal.timeout(10000)])
+        : AbortSignal.timeout(10000),
+    }),
   runtimeTasks: (state: string) =>
     request<RuntimeTasks>(`/runtime/tasks?state=${state}`),
   runtimeOverview: () => request<RuntimeOverview>("/runtime/overview"),
@@ -465,6 +518,16 @@ export const api = {
       },
       onPartial,
     ),
+  pendingNativeCommand: (id: string) =>
+    recordingCommands.pendingNativeCommand(id),
+  retryNativeCommand: (id: string): Promise<NativeCaptureStatus> => {
+    const command = recordingCommands.pendingNativeCommand(id);
+    if (!command)
+      return Promise.reject(
+        new Error("本页未保留上次请求，请核对当前采集状态，必要时主动结束录音"),
+      );
+    return api.nativeCommand(id, command);
+  },
   nativeCommand: async (id: string, command: "pause" | "resume" | "stop") => {
     const result = await recordingCommands.execute(id, command);
     const status = result.native;
@@ -474,8 +537,10 @@ export const api = {
         : command === "resume"
           ? ["recording"]
           : ["stopped", "interrupted", "failed"];
-    if (!status || !expected.includes(status.state))
+    if (!status || !expected.includes(status.state)) {
+      reportRecordingCommand(id, "conflict");
       throw new Error("当前采集状态已变化，请重新核对；未重放旧操作");
+    }
     return status;
   },
   nativeFinish: (id: string) =>

@@ -1,3 +1,4 @@
+import { recordingActive } from "./recordingStatus";
 import { api } from "../../api";
 import type { Meeting, RecordingHealth, RecordingSession } from "../../types";
 import {
@@ -31,7 +32,7 @@ export async function recoverSavedRecording(
     throw new Error(
       "此录音已在其他页面保存，请先到会议资料库核对；浏览器暂存仍保留。",
     );
-  if (before.native_running)
+  if (recordingActive(before))
     throw new Error("此会话仍在录音，请先在原录音页面结束。");
   await io.buffer(session);
   await io.flush(session.id);
@@ -40,7 +41,17 @@ export async function recoverSavedRecording(
     throw new Error(
       "此录音已在其他页面保存，请到会议资料库核对；浏览器暂存仍保留。",
     );
-  if (current.native_running)
+  // Flushing browser metadata updates its age; this alone is not a new capture report.
+  // Keep the user's stopped confirmation when raw state and command version did not change.
+  const metadataRefreshOnly =
+    before.source === "browser" &&
+    current.source === "browser" &&
+    !current.native_running &&
+    !recordingActive(before) &&
+    before.state === current.state &&
+    before.runtime?.control?.version != null &&
+    before.runtime.control.version === current.runtime?.control?.version;
+  if (recordingActive(current) && !metadataRefreshOnly)
     throw new Error("检测到录音正在进行，已停止恢复操作。");
   if (session.source !== "macos" && current.audio.missing_chunk_count > 0)
     throw new Error(

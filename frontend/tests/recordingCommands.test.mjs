@@ -72,3 +72,10 @@ test('Replayed old pause cannot make the UI adopt paused after capture already r
  try{await assert.rejects(api.nativeCommand('old-pause-fixture','pause'),/状态已变化/);assert.equal(sends,1);}
  finally{globalThis.fetch=previous;}
 });
+test('An uncertain retained native request can be identified for explicit retry; conflicts and successful actions remove it',async()=>{
+ const client=new RecordingCommandClient(async()=>0,async()=>{throw Error('uncertain')},definitive,idFactory());
+ assert.equal(client.pendingNativeCommand('pending'),null);
+ await assert.rejects(client.execute('pending','pause'));assert.equal(client.pendingNativeCommand('pending'),'pause');
+ const browser=new RecordingCommandClient(async()=>0,async()=>{throw Error('offline')},definitive,idFactory());
+ await assert.rejects(browser.execute('browser','pause','paused'));assert.equal(browser.pendingNativeCommand('browser'),null);
+});

@@ -49,3 +49,18 @@ test('A concurrently published recording cannot clear browser notes during stale
   await assert.rejects(recoverSavedRecording(session,io),/其他页面保存/);assert.equal(calls.includes('forget'),false);assert.equal(calls.includes('native'),false);
  }
 });
+test('Fresh browser capture detected during either recovery preflight blocks publication and preserves buffers',async()=>{
+ for(const activeAt of [1,2]){
+  let n=0;const {io,calls}=ioFixture({health:async()=>({...health,runtime:{phase:'recording',capture:{state:++n===activeAt?'recording':'unknown'}}})});
+  await assert.rejects(recoverSavedRecording({...session,source:undefined},io),/录音/);
+  assert.equal(calls.includes('browser'),false);assert.equal(calls.includes('forget'),false);
+ }
+});
+test('The recovery metadata flush alone cannot falsely turn a stale browser session into a newly active recorder',async()=>{
+ for(const advanced of [false,true]){
+  let reads=0;const {io,calls}=ioFixture({health:async()=>({...health,source:'browser',state:'recording',runtime:{phase:'unknown',capture:{state:++reads===1?'unknown':'recording'},control:{version:reads===1?2:advanced?3:2,status:'idle'}}})});
+  const task=recoverSavedRecording({...session,source:undefined,chunk_count:1},io);
+  if(advanced){await assert.rejects(task,/录音/);assert.equal(calls.includes('browser'),false);}
+  else{await task;assert.equal(calls.includes('browser'),true);}
+ }
+});

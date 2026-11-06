@@ -31,3 +31,11 @@ export function coordinateRecording(
         : runtime?.capture.state;
   return { phase, capture, unavailable: unavailable || unsupported };
 }
+
+/** Adopt trusted native observations across tabs without reviving a closing workspace. */
+export function reconcileNativePhase(local: string, observed: string) {
+  return ["requesting", "recording", "paused"].includes(local) &&
+    ["recording", "paused"].includes(observed)
+    ? observed
+    : local;
+}

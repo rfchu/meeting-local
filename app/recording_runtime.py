@@ -61,6 +61,18 @@ class RecordingRuntime:
             health=self.health.snapshot(rid)
             return health|{'runtime':self._read(rid,health)}
 
+    def inventory(self,limit=20):
+        rows=self.recordings.list()
+        active={rid for rid in list(self.native.processes) if self.native.is_running(rid)}
+        rows.sort(key=lambda row:(row['id'] in active,bool(row.get('control',{}).get('pending')),row['created']),reverse=True)
+        items=[]
+        for row in rows[:limit]:
+            item={'recording_id':row['id'],'source':'native' if row.get('source')=='macos' else 'browser','created':row['created']}
+            try:item.update(runtime=self.read(row['id']),available=True)
+            except (OSError,ValueError,KeyError,TypeError):item.update(runtime=None,available=False)
+            items.append(item)
+        return {'items':items,'total_count':len(rows),'limit':limit,'truncated':len(rows)>limit}
+
     def observe(self):
         # Observe only active or recently synchronized sessions; historical views stay read-only.
         candidates=set(self.native.processes)

@@ -13,7 +13,7 @@ from app.recordings import RecordingStore
 
 
 class Capture(NativeCapture):
-    def __init__(self,*args):super().__init__(*args);self.states={};self.stale=True;self.input_loss=False;self.file_stall=False;self.diagnostics=None
+    def __init__(self,*args):super().__init__(*args);self.states={};self.stale=True;self.input_loss=False;self.file_stall=False;self.diagnostics=None;self.command_failure=False
     def capability(self):return {'available':True,'supported':True,'screen_permission':True,'microphone_permission':True}
     def start_monitor(self):pass
     def start(self,microphone=True):
@@ -32,6 +32,8 @@ class Capture(NativeCapture):
         if self.stale:os.utime(path,(time.time()-30,time.time()-30))
         value['health']=self.health(session,value,path);return value
     def command(self,rid,command):
+        if self.command_failure and command=='pause':raise RuntimeError('合成控制确认失败')
+        if command=='stop':self.recordings.event('capture.stop_requested',rid)
         self.states[rid]={'stop':'stopped','pause':'paused','resume':'recording'}[command]
         return self.status(rid)
     def close(self):pass
@@ -47,7 +49,7 @@ def main():
     module.LMStudioProvider.status=lambda self:{'ready':False,'models':[],'error':'合成环境不调用模型','profiles':[]}
     with tempfile.TemporaryDirectory(prefix='recording-faults-ui-') as root:
         app=create_app(root,start_worker=False);app.state.keep_awake.supported=False
-        health_mode={'value':'normal'};inventory_mode={'value':'normal'}
+        health_mode={'value':'normal'};inventory_mode={'value':'normal'};command_mode={'value':'normal'}
         @app.middleware('http')
         async def health_response_fault(request,call_next):
             if request.method=='GET' and request.url.path.startswith('/api/recordings/') and request.url.path.endswith('/health'):
@@ -56,7 +58,14 @@ def main():
             if request.method=='GET' and request.url.path=='/api/recordings':
                 if inventory_mode['value']=='unavailable':return JSONResponse({'detail':'合成录音列表连接失败'},status_code=503)
                 if inventory_mode['value']=='delay':await asyncio.sleep(3)
+            if request.method=='POST' and request.url.path.startswith('/api/recordings/') and request.url.path.endswith('/commands') and command_mode['value']=='conflict':
+                return JSONResponse({'detail':{'code':'version_conflict','message':'合成控制版本冲突：状态已变化'}},status_code=409)
             return await call_next(request)
+        @app.post('/_fixture/command-mode')
+        def set_command_mode(body:dict):
+            if body.get('mode') not in ('normal','unconfirmed','conflict'):raise HTTPException(400,'未知合成模式')
+            command_mode['value']=body['mode'];capture.command_failure=body['mode']=='unconfirmed';return {'ok':True}
+        app.router.routes.insert(0,app.router.routes.pop())
         @app.post('/_fixture/inventory-mode')
         def set_inventory_mode(body:dict):
             if body.get('mode') not in ('normal','unavailable','delay'):raise HTTPException(400,'未知合成模式')

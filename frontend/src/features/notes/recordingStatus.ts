@@ -1,4 +1,4 @@
-import type { RecordingRuntime } from "../../types";
+import type { RecordingRuntime, RecordingHealth } from "../../types";
 import { coordinateRecording } from "./recordingCoordinator";
 import { clock } from "../../utils";
 export function lifecycleLabel(code: string) {
@@ -61,7 +61,7 @@ const phases: Record<string, string> = {
   paused: "已暂停",
   unknown: "状态未知",
   interrupted: "录音已中断",
-  saving: "正在保存会议",
+  saving: "采集已结束，等待保存或收尾",
   saved: "会议已保存",
 };
 const inputs: Record<string, string> = {
@@ -73,6 +73,45 @@ const inputs: Record<string, string> = {
   stopping: "正在停止采集",
   stopped: "采集已结束",
 };
+export function recordingActive(health: RecordingHealth | undefined) {
+  if (health?.native_running) return true;
+  const runtime = health?.runtime;
+  if (runtime?.schema_version != null && runtime.schema_version !== 1)
+    return false;
+  return ["starting", "recording", "paused"].includes(
+    runtime?.capture.state || "",
+  );
+}
+
+export function controlPresentation(
+  runtime: RecordingRuntime | undefined,
+  unavailable: boolean,
+  feedback?: string,
+) {
+  if (runtime?.control?.status === "unconfirmed")
+    return {
+      label: unavailable ? "上次记录：控制结果待确认" : "控制结果待确认",
+      message:
+        "上一次录音操作尚未得到确认。请核对当前采集状态，可回原页面重查同一操作，必要时主动结束录音。刷新只更新状态，不会重新执行或清除待确认操作。",
+      persistent: true,
+    };
+  if (feedback === "conflict")
+    return {
+      label: "操作未执行：状态已变化",
+      message:
+        "本次操作遇到状态冲突或已不再适用。请核对最新状态后，再决定下一步；不会自动重试旧操作。",
+      persistent: false,
+    };
+  if (feedback === "unconfirmed" || feedback === "unavailable")
+    return {
+      label: "本次操作结果待核对",
+      message:
+        "暂时无法确认本次操作的结果，已有音频保留。请核对最新状态；同一操作可返回原页面重查，必要时主动结束录音。",
+      persistent: false,
+    };
+  return null;
+}
+
 export function recordingStatus(
   runtime: RecordingRuntime | undefined,
   local: string,
@@ -88,12 +127,16 @@ export function recordingStatus(
     label:
       local === "failed" && phase === "saving"
         ? "保存待重试"
-        : phase === "recording" && runtime?.storage.state === "unconfirmed"
-          ? "录音保存待核对"
-          : phase === "recording" &&
-              runtime?.capture.tracks?.some((t) => t.state === "no_data")
-            ? "录音输入待检查"
-            : phases[phase] || "正在核对状态",
+        : local === "saving" && phase === "saving"
+          ? "正在保存会议"
+          : phase === "recording" && runtime?.storage.state === "unconfirmed"
+            ? "录音保存待核对"
+            : phase === "recording" &&
+                runtime?.capture.tracks?.some((t) => t.state === "no_data")
+              ? "录音输入待检查"
+              : !unavailable && runtime?.control?.status === "unconfirmed"
+                ? "控制结果待确认"
+                : phases[phase] || "正在核对状态",
     input:
       state === "recording" &&
       runtime?.capture.tracks?.some((t) => t.state === "no_data")
@@ -113,6 +156,22 @@ export function recordingStatus(
             stopped: "实时识别已结束，缺段可会后补识别",
           }[runtime.asr.state] || "识别状态待核对"
         : null,
+    storage: unavailable
+      ? "文件状态暂不可用，已有内容保留"
+      : runtime
+        ? (
+            {
+              saved: "会议文件已保存",
+              missing: "保存文件待检查",
+              partial: "文件分段待补齐",
+              writing: "音频持续落盘中",
+              available: "已有音频已落盘",
+              waiting: "等待音频落盘",
+              failed: "文件写盘失败，已有内容保留",
+              unconfirmed: "文件保存待核对",
+            } as Record<string, string>
+          )[runtime.storage.state] || "文件状态待核对"
+        : "文件状态待核对",
     savedPosition:
       runtime?.storage.last_saved_seconds != null
         ? `音轨已落盘末端 ${clock(runtime.storage.last_saved_seconds)}`

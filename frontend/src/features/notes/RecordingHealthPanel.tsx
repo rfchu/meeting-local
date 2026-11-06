@@ -1,3 +1,4 @@
+import RecordingControlNotice from "./RecordingControlNotice";
 import type { NativeCaptureStatus } from "../../types";
 import { useRecordingHealth } from "./useRecordingHealth";
 import { recordingStatus, lifecycleLabel } from "./recordingStatus";
@@ -106,6 +107,11 @@ export default function RecordingHealthPanel({
           {unified.savedPosition} · 识别状态与采集状态分别核对
         </span>
       </div>
+      <RecordingControlNotice
+        id={id}
+        runtime={inventory?.runtime}
+        unavailable={unavailable}
+      />
       <div>
         <strong>音频采集</strong>
         <span>{input}</span>

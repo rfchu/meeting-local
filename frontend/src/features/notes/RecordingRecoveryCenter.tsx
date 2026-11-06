@@ -1,3 +1,5 @@
+import { watchRecordingCommands } from "./recordingCommandEvents";
+import { healthFreshness } from "./healthFreshness";
 import { useCallback, useEffect, useRef, useState } from "react";
 import Modal from "../../components/Modal";
 import { api } from "../../api";
@@ -27,6 +29,8 @@ export default function RecordingRecoveryCenter({
     [busy, setBusy] = useState(false),
     [error, setError] = useState("");
   const [inventoryError, setInventoryError] = useState("");
+  const [checkedAt, setCheckedAt] = useState(0);
+  const [now, setNow] = useState(Date.now());
   const [review, setReview] = useState<RecordingSession | null>(null),
     [confirmed, setConfirmed] = useState(false),
     [serverAvailable, setServerAvailable] = useState(false);
@@ -35,6 +39,8 @@ export default function RecordingRecoveryCenter({
   const applyInventory = useCallback(
     (result: Awaited<ReturnType<typeof recoveryInventorySnapshot>>) => {
       setSessions(result.sessions);
+      setCheckedAt(Date.now());
+      setNow(Date.now());
       setServerAvailable(result.serverAvailable);
       setLocalAvailable(result.localAvailable);
       setUnverified(result.unverifiedCount);
@@ -78,14 +84,25 @@ export default function RecordingRecoveryCenter({
     void refresh(false);
     const timer = window.setInterval(() => void refresh(false), 15000);
     const unwatch = watchRecordingRecovery(() => void refresh());
+    const unwatchCommands = watchRecordingCommands(() => void refresh());
+    const clock = window.setInterval(() => setNow(Date.now()), 1000);
     return () => {
       ++requestVersion.current;
       window.clearInterval(timer);
       unwatch();
+      unwatchCommands();
+      window.clearInterval(clock);
     };
   }, [refresh]);
+  const stateUnavailable =
+    healthFreshness(
+      checkedAt,
+      Math.max(now, Date.now()),
+      !serverAvailable,
+      loading,
+    ) !== "current";
   const recover = async (session: RecordingSession) => {
-    if (!serverAvailable || loading) return;
+    if (stateUnavailable) return;
     setBusy(true);
     setError("");
     try {
@@ -177,7 +194,7 @@ export default function RecordingRecoveryCenter({
           <div>
             <button
               className="primary"
-              disabled={!confirmed || busy || loading || !serverAvailable}
+              disabled={!confirmed || busy || stateUnavailable}
               onClick={() => void recover(review)}
             >
               {busy ? "正在保存…" : "确认保存"}
@@ -230,7 +247,8 @@ export default function RecordingRecoveryCenter({
             inventoryConfirmed={
               serverAvailable && localAvailable && unverified === 0
             }
-            recoveryAvailable={serverAvailable}
+            recoveryAvailable={!stateUnavailable}
+            stateUnavailable={stateUnavailable}
             showEmptyState={!saved}
             onRecover={(s) => {
               setReview(s);

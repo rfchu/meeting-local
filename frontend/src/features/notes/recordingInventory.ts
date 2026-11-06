@@ -1,3 +1,4 @@
+import { recordingActive } from "./recordingStatus";
 import type { RecordingSession } from "../../types";
 
 export function mergeRecordingInventory(
@@ -75,7 +76,8 @@ export function emptyRecording(session: RecordingSession): boolean {
   if (
     !h ||
     session.source !== "macos" ||
-    h.native_running ||
+    recordingActive(h) ||
+    h.runtime?.control?.status === "unconfirmed" ||
     !["failed", "interrupted", "stopped"].includes(h.state)
   )
     return false;
@@ -95,7 +97,7 @@ export function emptyRecording(session: RecordingSession): boolean {
 export function recordingRecoveryCount(sessions: RecordingSession[]) {
   return sessions.filter(
     (s) =>
-      !s.health?.native_running &&
+      !recordingActive(s.health) &&
       !s.health?.recovery_archived &&
       !emptyRecording(s),
   ).length;

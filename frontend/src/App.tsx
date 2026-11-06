@@ -1442,6 +1442,10 @@ export default function App() {
       )}
       {managementPage && (
         <RuntimeManagement
+          onRecovery={() => {
+            setManagementPage(null);
+            setRecoveryOpen(true);
+          }}
           onRecording={() => {
             setManagementPage(null);
             setRecordingOpen(true);

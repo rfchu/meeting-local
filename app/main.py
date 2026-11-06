@@ -319,7 +319,7 @@ def create_app(data_dir=None, start_worker=True):
     live_asr_lock=threading.Lock()
     resident=QwenResident(store.root)
     live_sessions=LiveSessions(store,recordings,native_capture,live_results,live_asr_lock,resident,lambda:get_asr_provider("qwen"),lambda:get_asr_provider("whisper"))
-    register_runtime_management(app,store,native_capture,resident,capture_probes)
+    register_runtime_management(app,store,native_capture,resident,capture_probes,recording_runtime)
     register_model_preferences(app,store)
     register_task_management(app,store,worker)
     app.state.live_sessions=live_sessions
@@ -697,7 +697,7 @@ def create_app(data_dir=None, start_worker=True):
         for row in rows: row['job']=store.one('SELECT * FROM jobs WHERE meeting_id=? ORDER BY created DESC,rowid DESC LIMIT 1',(row['id'],))
         return rows
     @app.get('/api/recordings')
-    def list_recordings():return [row|{'health':recording_health.snapshot(row['id'])} for row in recordings.list()]
+    def list_recordings():return [row|{'health':recording_runtime.inspect(row['id'])} for row in recordings.list()]
     @app.post('/api/recordings/{rid}/recovery-archive')
     def archive_empty_recording(rid:str,archived:bool=True):
         try:

@@ -1,3 +1,4 @@
+import { reconcileNativePhase } from "./recordingCoordinator";
 import { useNativeCaptureStatus } from "./useNativeCaptureStatus";
 import { useModelChoice } from "../../preferences/useModelChoice";
 import { ensureNoteIds, toggleOverviewFocus } from "../overview/notes";
@@ -733,12 +734,10 @@ export default function RecordingDialog({
         );
         setSystemLevels(status.system_levels || []);
         setMicrophoneLevels(status.microphone_levels || []);
-        if (
-          ["recording", "paused"].includes(status.state) &&
-          stateRef.current === "requesting"
-        ) {
-          stateRef.current = status.state as "recording" | "paused";
-          setState(status.state as "recording" | "paused");
+        const nextPhase = reconcileNativePhase(stateRef.current, status.state);
+        if (nextPhase !== stateRef.current) {
+          stateRef.current = nextPhase as "recording" | "paused";
+          setState(nextPhase as "recording" | "paused");
         }
         setSaveStatus(
           status.health?.stalled

@@ -1,3 +1,4 @@
+import { watchRecordingCommands } from "./recordingCommandEvents";
 import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef } from "react";
 import { api } from "../../api";
@@ -30,10 +31,14 @@ export function useNativeCaptureStatus(
     void polling.poll();
     const timer = window.setInterval(() => void polling.poll(), 1000);
     const unwatch = watchRecordingRecovery(() => void polling.poll(true));
+    const unwatchCommands = watchRecordingCommands((changedId) => {
+      if (changedId === id) void polling.poll(true);
+    });
     return () => {
       polling.close();
       window.clearInterval(timer);
       unwatch();
+      unwatchCommands();
     };
   }, [id, enabled, phase, client]);
 }

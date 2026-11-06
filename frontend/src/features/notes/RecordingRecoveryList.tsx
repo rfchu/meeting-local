@@ -1,3 +1,5 @@
+import RecordingStateSummary from "./RecordingStateSummary";
+import { recordingActive } from "./recordingStatus";
 import { useState } from "react";
 import { emptyRecording } from "./recordingInventory";
 import type { RecordingSession } from "../../types";
@@ -5,9 +7,9 @@ import { clock } from "../../utils";
 export function recoveryGroups(sessions: RecordingSession[]) {
   return {
     pending: sessions.filter(
-      (s) => !s.health?.native_running && !emptyRecording(s),
+      (s) => !recordingActive(s.health) && !emptyRecording(s),
     ),
-    active: sessions.filter((s) => s.health?.native_running),
+    active: sessions.filter((s) => recordingActive(s.health)),
     empty: sessions.filter(
       (s) => emptyRecording(s) && !s.health?.recovery_archived,
     ),
@@ -25,11 +27,13 @@ export default function RecordingRecoveryList({
   onArchive,
   inventoryConfirmed = true,
   recoveryAvailable = true,
+  stateUnavailable = false,
   showEmptyState = true,
 }: {
   sessions: RecordingSession[];
   inventoryConfirmed?: boolean;
   recoveryAvailable?: boolean;
+  stateUnavailable?: boolean;
   showEmptyState?: boolean;
   onRecover: (s: RecordingSession) => void;
   onDiagnostics: (id: string) => void;
@@ -81,11 +85,13 @@ export default function RecordingRecoveryList({
               <span className="recovery-state-tag">
                 {!h
                   ? "状态待确认"
-                  : h.audio.missing_chunk_count
-                    ? "分段待补齐"
-                    : audio
-                      ? "待保存"
-                      : "仅保存了信息"}
+                  : h.runtime?.control?.status === "unconfirmed"
+                    ? "控制待确认"
+                    : h.audio.missing_chunk_count
+                      ? "分段待补齐"
+                      : audio
+                        ? "待保存"
+                        : "仅保存了信息"}
               </span>
             </header>
             <p>
@@ -107,6 +113,11 @@ export default function RecordingRecoveryList({
                   : "本机音频尚未核对，暂不能判断是否有可恢复音频。已有简记和准备信息仍保留。"}
               </p>
             )}
+            <RecordingStateSummary
+              id={session.id}
+              runtime={h?.runtime}
+              unavailable={stateUnavailable || !h?.runtime}
+            />
             <div className="recovery-session-actions">
               <button
                 className="primary"
@@ -145,13 +156,27 @@ export default function RecordingRecoveryList({
         );
       })}
       {groups.active.length > 0 && (
-        <details className="recovery-secondary">
-          <summary>正在录制 · {groups.active.length} 条</summary>
-          <p>请在原录音页面结束录音；此处不会停止或重新开始采集。</p>
+        <details
+          className="recovery-secondary"
+          open={groups.active.some(
+            (s) => s.health?.runtime?.control?.status === "unconfirmed",
+          )}
+        >
+          <summary>正在采集或暂停 · {groups.active.length} 条</summary>
+          <p>
+            列表检查不会停止或重新开始采集。若有待确认控制，可使用明确确认的结束入口；正常录音请在原页面结束。
+          </p>
           {groups.active.map((s) => (
-            <p key={s.id}>
-              {date(s)} · {clock(s.duration)}
-            </p>
+            <div key={s.id}>
+              <p>
+                {date(s)} · {clock(s.duration)}
+              </p>
+              <RecordingStateSummary
+                id={s.id}
+                runtime={s.health?.runtime}
+                unavailable={stateUnavailable}
+              />
+            </div>
           ))}
         </details>
       )}

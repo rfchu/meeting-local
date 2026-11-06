@@ -39,6 +39,14 @@ export class RecordingCommandClient {
     private definitive: (error: unknown) => boolean,
     private requestId = () => crypto.randomUUID().replaceAll("-", ""),
   ) {}
+  pendingNativeCommand(id: string): "pause" | "resume" | "stop" | null {
+    const intent = this.intents.get(id);
+    if (!intent?.sent || !intent.key.endsWith(":native")) return null;
+    const command = intent.key.split(":")[0];
+    return command === "pause" || command === "resume" || command === "stop"
+      ? command
+      : null;
+  }
   execute(
     id: string,
     command: RecordingCommand,

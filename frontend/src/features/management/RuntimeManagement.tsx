@@ -1,3 +1,4 @@
+import RuntimeRecordingsPanel from "./RuntimeRecordingsPanel";
 import RecordingValidationPanel from "./RecordingValidationPanel";
 import TasksPanel from "./TasksPanel";
 import ServiceLifecyclePanel from "./ServiceLifecyclePanel";
@@ -81,6 +82,7 @@ export default function RuntimeManagement({
   toast,
   onOpenMeeting,
   onRecording,
+  onRecovery,
   onSearch,
 }: {
   page: ManagementPage;
@@ -90,6 +92,7 @@ export default function RuntimeManagement({
   toast: (text: string) => void;
   onOpenMeeting: (id: string) => void;
   onRecording: () => void;
+  onRecovery: () => void;
   onSearch: () => void;
 }) {
   const [modelDirty, setModelDirty] = useState(false);
@@ -160,6 +163,9 @@ export default function RuntimeManagement({
               onClick={() => {
                 void query.refetch();
                 void client.invalidateQueries({
+                  queryKey: ["runtime-recordings"],
+                });
+                void client.invalidateQueries({
                   queryKey: ["model-preferences"],
                 });
               }}
@@ -184,6 +190,12 @@ export default function RuntimeManagement({
           )}
           {!data && query.isPending && (
             <p role="status">正在读取本机运行信息…</p>
+          )}
+          {page === "overview" && (
+            <RuntimeRecordingsPanel
+              onRecording={() => leave(onRecording)}
+              onRecovery={() => leave(onRecovery)}
+            />
           )}
           {page === "overview" && data && (
             <>
@@ -240,7 +252,7 @@ export default function RuntimeManagement({
                 </section>
               )}
               <section className="management-section">
-                <h3>当前实时会话</h3>
+                <h3>实时识别会话</h3>
                 {!data.sessions.length ? (
                   <p className="muted">暂无运行中的后端实时识别会话。</p>
                 ) : (

@@ -1,3 +1,4 @@
+import { watchRecordingCommands } from "./recordingCommandEvents";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../../api";
@@ -66,12 +67,16 @@ export function useRecordingHealth(id: string, native: boolean) {
     setNow(Date.now());
     const timer = window.setInterval(() => setNow(Date.now()), 1000);
     const unwatch = watchRecordingRecovery(() => void refresh());
+    const unwatchCommands = watchRecordingCommands((changedId) => {
+      if (changedId === id) void refresh();
+    });
     return () => {
       ++epoch.current;
       window.clearInterval(timer);
       unwatch();
+      unwatchCommands();
     };
-  }, [refresh]);
+  }, [refresh, id]);
   const freshness = healthFreshness(
     server.dataUpdatedAt,
     Math.max(now, Date.now()),
