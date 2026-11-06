@@ -87,6 +87,7 @@ export default function App() {
   const [meeting, setMeeting] = useState<Meeting | null>(null),
     [workspace, setWorkspace] = useState<Workspace>("transcript");
   const [actionsFocus, setActionsFocus] = useState(false);
+  const [deliveryFocus, setDeliveryFocus] = useState(false);
   const [overviewFocus, setOverviewFocus] = useState(false);
   const [overviewSourceId, setOverviewSourceId] = useState<string>();
   const [noteSourceId, setNoteSourceId] = useState<string>();
@@ -1149,6 +1150,10 @@ export default function App() {
               }}
               onAnalysis={() => setWorkspace("analysis")}
               onMinutes={() => navigateReview("minutes")}
+              onDelivery={() => {
+                setDeliveryFocus(true);
+                navigateReview("minutes");
+              }}
               onPreview={() => void openMinutesPreview()}
             />
             <div className="workspace" id="meeting-workspace">
@@ -1406,6 +1411,14 @@ export default function App() {
                         toast={toast}
                       />
                       <MinutesDeliveryPanel
+                        focusRequested={deliveryFocus}
+                        onFocused={() => setDeliveryFocus(false)}
+                        onNavigate={(target) => {
+                          if (target === "actions") {
+                            setActionsFocus(true);
+                            navigateReview("minutes");
+                          } else navigateReview(target);
+                        }}
                         meeting={meeting}
                         selectedId={selectedMinutesId}
                         dirty={minutesDirty || transcriptDirty}

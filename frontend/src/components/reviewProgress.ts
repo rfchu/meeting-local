@@ -1,3 +1,4 @@
+import { deliveryAttentionCount } from "./deliveryAttention";
 import type { Meeting, ReviewStep } from "../types";
 import { currentMinutes } from "../utils";
 
@@ -37,7 +38,15 @@ export function reviewProgress(
   const next = steps.find(
     (s) => s.state !== "done" && s.state !== "not_needed",
   );
+  const required = steps.filter(
+    (s) => s.key !== "notes" || deliveryAttentionCount(meeting) > 0,
+  );
   return {
+    requiredTotal: required.length,
+    requiredComplete: required.filter(
+      (s) => s.state === "done" || s.state === "not_needed",
+    ).length,
+    requiredStale: required.filter((s) => s.state === "stale").length,
     steps,
     next,
     complete: steps.filter(

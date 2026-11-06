@@ -1,3 +1,4 @@
+import type { DeliveryReadiness } from "./features/minutes/deliveryReadiness";
 import type {
   HandoffSources,
   SourceDecision,
@@ -636,6 +637,25 @@ export const api = {
     request(`/meetings/${mid}/tasks/${tid}/carry`, json("POST")),
   unlinkTask: (mid: string, tid: string) =>
     request(`/meetings/${mid}/tasks/${tid}/link`, { method: "DELETE" }),
+  deliveryReadiness: (mid: string, includeCitations: boolean) =>
+    request<DeliveryReadiness>(
+      `/meetings/${mid}/minutes/delivery-readiness?include_citations=${includeCitations}`,
+    ),
+  finalizeDelivery: (
+    mid: string,
+    artifactId: string,
+    fingerprint: string,
+    includeCitations: boolean,
+  ) =>
+    request<import("./types").MinutesDelivery & { reused: boolean }>(
+      `/meetings/${mid}/minutes/delivery-finalize`,
+      json("POST", {
+        artifact_id: artifactId,
+        fingerprint,
+        include_citations: includeCitations,
+        confirmed: true,
+      }),
+    ),
   createDelivery: (
     mid: string,
     artifactId: string,

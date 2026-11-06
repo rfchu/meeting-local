@@ -1,4 +1,4 @@
-"""C1/C2/C3/C4/D1/D2 synthetic resource UI: PYTHONPATH=. .venv/bin/python scripts/resource_ui_fixture.py.
+"""C1/C2/C3/C4/D1/D2/D3 synthetic resource UI: PYTHONPATH=. .venv/bin/python scripts/resource_ui_fixture.py.
 No models, microphone or user data. Scenario controls exist only in this fixture.
 """
 import argparse,os,tempfile
@@ -10,7 +10,7 @@ def main():
     parser.add_argument('--port',type=int,default=9876)
     parser.add_argument('--static-dir',type=Path)
     args=parser.parse_args()
-    with tempfile.TemporaryDirectory(prefix='tingji-d2-ui-') as directory:
+    with tempfile.TemporaryDirectory(prefix='tingji-d3-ui-') as directory:
         os.environ['MEETING_DATA']=directory
         from unittest.mock import patch
         from fastapi.staticfiles import StaticFiles
@@ -30,6 +30,23 @@ def main():
             claims=[];services=app.state.services;store=services.store;rid=uid();jid=uid();mid=uid();pid=uid()
             @app.post('/_fixture/resources/{scenario}')
             def scenario(scenario:str):
+                if scenario=='delivery-ready':
+                    from app.minutes import MeetingMinutes,MinutesItem
+                    from app import minutes_versions
+                    with store.connect() as db:
+                        if not minutes_versions.selected(db,mid):
+                            minutes_versions.publish_draft(db,mid,1,MeetingMinutes(title='合成交付闭环验收',style='ai',overview=[MinutesItem(content='周五提交材料',source_segment_ids=['s1'])],action_items=[MinutesItem(content='提交材料',source_segment_ids=['s1'],owner='甲',due_date='周五')]),{})
+                    for step in ('transcript','speakers'):
+                        value=services.meeting_review.read(mid)['steps'][step]
+                        services.meeting_review.set(mid,step,value['fingerprint'],'confirmed')
+                    return {'synthetic':True,'delivery_ready':True}
+                if scenario=='delivery-task-change':
+                    from app import minutes_versions,meeting_flow
+                    from app.http_schemas import ActionTrackInput
+                    with store.connect() as db:artifact=minutes_versions.selected(db,mid)
+                    result=meeting_flow.track_action(store,mid,artifact['id'],0,ActionTrackInput(content='提交材料',owner='甲',due_date='周五',confirmed=True))
+                    store.execute("UPDATE note_todos SET owner='乙',due_date='下周',status='done' WHERE id=?",(result['id'],))
+                    return {'synthetic':True,'task_changed':True}
                 if scenario=='source-changed':
                     from app.minutes import MeetingMinutes,MinutesItem
                     from app import minutes_versions

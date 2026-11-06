@@ -28,6 +28,17 @@ def dispositions(db,mid,revision):
         result[item['note_id']]=item
     return result
 
+def attention_counts(db,mid,revision):
+    reviews=dispositions(db,mid,revision);counts={'pending_meeting':0,'optional':0,'confirmed_meeting':0}
+    for note in db.execute('SELECT id,note_scope FROM meeting_notes WHERE meeting_id=?',(mid,)):
+        item=reviews.get(note['id']);decision=item['decision'] if item else None
+        if decision in ('personal','deferred'):counts['optional']+=1
+        elif (not item or item['stale']) and (note['note_scope']=='meeting' or decision=='meeting'):counts['pending_meeting']+=1
+        elif item and not item['stale'] and decision=='meeting':counts['confirmed_meeting']+=1
+        else:counts['optional']+=1
+    return counts
+
+
 def review_attention(store,mid,nid,body):
     with store.connect() as db:
         db.execute('BEGIN IMMEDIATE')

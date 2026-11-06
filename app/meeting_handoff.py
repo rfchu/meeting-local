@@ -1,7 +1,7 @@
 """D1 read-only post-meeting handoff. No inference, file probes or implicit decisions."""
 import hashlib,json
 from .db import encode
-from . import meeting_flow,minutes_versions
+from . import meeting_flow,minutes_versions,minutes_delivery
 from .meeting_review import MeetingReview
 from .live_overview import approved_context
 
@@ -17,13 +17,8 @@ def snapshot(db,mid,quality=None):
     review=MeetingReview.snapshot(db,mid)
     notes=[dict(item) for item in db.execute('SELECT * FROM meeting_notes WHERE meeting_id=? ORDER BY id',(mid,))]
     reviews=meeting_flow.dispositions(db,mid,revision)
-    pending=0;optional=0;approved=0
-    for note in notes:
-        item=reviews.get(note['id']);decision=item['decision'] if item else None
-        if decision in ('personal','deferred'):optional+=1;continue
-        if (not item or item['stale']) and (note['note_scope']=='meeting' or decision=='meeting'):pending+=1
-        elif item and not item['stale'] and decision=='meeting':approved+=1
-        else:optional+=1
+    attention=meeting_flow.attention_counts(db,mid,revision)
+    pending,optional,approved=(attention[key] for key in ('pending_meeting','optional','confirmed_meeting'))
     chosen=minutes_versions.selected(db,mid)
     artifacts=[dict(item) for item in db.execute("SELECT * FROM artifacts WHERE meeting_id=? AND kind='meeting_minutes' ORDER BY created DESC,rowid DESC",(mid,))]
     def reasons(item):return meeting_flow.artifact_reasons(db,mid,json.loads(item['provenance']),item['revision'])
@@ -74,7 +69,10 @@ def snapshot(db,mid,quality=None):
     bindings=meeting_flow.action_bindings(db,mid,chosen) if valid else {}
     candidates=sum(str(index) not in bindings for index,_ in enumerate(document.get('action_items',[]))) if valid else 0
     deliveries=db.execute('SELECT id,artifact_id FROM minutes_deliveries WHERE meeting_id=? ORDER BY created DESC,rowid DESC',(mid,)).fetchall()
-    delivered=bool(valid and any(item['artifact_id']==chosen['id'] for item in deliveries))
+    try:delivery_payload=minutes_delivery.prepare(db,mid,chosen['id'],False) if valid else None
+    except ValueError:delivery_payload=None
+    matching=minutes_delivery.matching(db,mid,chosen['id'],delivery_payload,exact_citations=False,review=review) if valid else []
+    delivered=bool(matching and all(review['steps'][step]['state']=='done' for step in ('transcript','speakers','minutes')))
     stages=[]
     def stage(key,label,state,summary,counts,**source):
         stages.append({'key':key,'label':label,'state':state,'summary':summary,'counts':counts,'source':source})
@@ -96,7 +94,7 @@ def snapshot(db,mid,quality=None):
     stage('actions','行动与跟进','stale' if stale_tasks else 'review' if candidates else 'ready' if meeting_todos else 'optional',f'{candidates} 项纪要候选待确认；{stale_tasks} 项待办来源需复核'+(f'；{historical_stale} 项已完成事项仅保留历史提醒' if historical_stale else ''),
         {'candidates':candidates,'tracked':len(meeting_todos),'stale':stale_tasks+historical_stale,'active_stale':stale_tasks,'historical_stale':historical_stale,'pending':sum(item['status']=='pending' for item in meeting_todos)},artifact_id=chosen['id'] if valid else None)
     stage('delivery','交付版本','ready' if delivered else 'review' if valid else 'missing','当前采用稿已有交付快照，导出不等于已发送' if delivered else '核对后确认交付版本；旧交付快照保留',
-        {'snapshots':len(deliveries),'current':int(delivered)},artifact_id=chosen['id'] if chosen else None)
+        {'snapshots':len(deliveries),'current':int(delivered)},artifact_id=chosen['id'] if chosen else None,current_delivery_id=matching[0] if delivered else None)
     def action(code,target,label,summary,job_id=None):return {'code':code,'target':target,'label':label,'summary':summary,**({'job_id':job_id} if job_id else {})}
     if jobs:
         job=jobs[0];primary=action('processing','minutes' if job['kind']=='minutes' else 'tasks','查看纪要进度' if job['kind']=='minutes' else '查看处理进度',job['stage'] or '后台任务处理中，已有资料保留',job['id'])
@@ -109,9 +107,9 @@ def snapshot(db,mid,quality=None):
     elif drafts and (not valid or review['steps']['minutes']['state']!='done'):primary=action('choose_draft','minutes','查看纪要草稿',f'{len(drafts)} 份当前草稿可供比较；不会自动替换采用稿。')
     elif minutes_interruption:primary=action('interrupted_minutes','tasks','查看纪要任务','当前纪要任务失败或已取消；先查看原因，已有稿件保持不变。',minutes_interruption['id'])
     elif not valid:primary=action('refresh_minutes' if chosen else 'generate_minutes','minutes','更新会议纪要' if chosen else '生成会议纪要','、'.join(REASON_LABELS.get(key,key) for key in chosen_reasons) if chosen else '直接从当前全文整理，已确认关注点只作为整理上下文。')
-    elif review['steps']['minutes']['state']!='done':primary=action('review_minutes','minutes','核对会议纪要','核对决策、负责人、期限及个人信息，再记录人工确认。')
-    elif candidates or stale_tasks:primary=action('review_actions','actions','核对行动与跟进',f'{candidates} 项候选、{stale_tasks} 项来源变化；不自动转为承诺，也不要求执行完才交付。')
-    else:primary=action('preview' if delivered else 'delivery','preview' if delivered else 'minutes','预览当前稿' if delivered else '确认交付版本','当前采用稿核对已完成；个人简记和未确认概览可稍后整理。')
+    elif review['steps']['minutes']['state']!='done':primary=action('review_minutes','minutes','核对并保存交付版本','核对决策、负责人、期限及个人信息；最后确认会同时保存纪要核对记录与交付快照。')
+    elif (candidates or stale_tasks) and not delivered:primary=action('review_actions','actions','核对行动与跟进',f'{candidates} 项候选、{stale_tasks} 项来源变化；不自动转为承诺，也不要求执行完才交付。')
+    else:primary=action('preview' if delivered else 'delivery','preview' if delivered else 'minutes','查看交付与导出' if delivered else '确认交付版本','当前采用稿核对已完成；个人简记和未确认概览可稍后整理。')
     edges=[]
     if origin.get('kind')=='live_reuse':edges.append({'from':'live_asr','to':'transcript','relation':'reused_audio_ranges','count':origin.get('reused_ranges',0)})
     if valid and provenance.get('flow_context_hash'):

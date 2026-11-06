@@ -284,3 +284,7 @@ class SourceReviewInput(BaseModel):
     request_id: str=Field(min_length=1,max_length=80)
     decision: Literal['reviewed','keep_history','reset']
     confirmed: bool=False
+
+
+class DeliveryFinalizeInput(DeliveryInput):
+    fingerprint: str=Field(pattern=r'^[a-f0-9]{64}$')

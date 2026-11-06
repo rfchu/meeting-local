@@ -30,6 +30,7 @@ interface Props {
   onOverview?: () => void;
   onMinutes: () => void;
   onPreview: () => void;
+  onDelivery?: () => void;
   onReview: (step: ReviewStep) => void;
   onConfirm: (
     step: ReviewStep,
@@ -220,6 +221,8 @@ export default function Workflow(props: Props) {
         return meeting.live_overview_available && props.onOverview
           ? props.onOverview()
           : onReview("notes");
+      case "delivery":
+        return (props.onDelivery || onMinutes)();
       case "actions":
         return (props.onActions || onMinutes)();
       case "notes":
@@ -230,10 +233,19 @@ export default function Workflow(props: Props) {
         return onMinutes();
     }
   };
+  const followGuidance = () => {
+    if (!guidance) return onMinutes();
+    if (
+      ["delivery", "review_minutes", "preview"].includes(guidance.code) &&
+      props.onDelivery
+    )
+      return props.onDelivery();
+    openTarget(guidance.target);
+  };
   if (guidance) {
     hint = guidance.summary;
     label = guidance.label;
-    action = () => openTarget(guidance.target);
+    action = followGuidance;
   }
   return (
     <section className="workflow" aria-label="会议处理进度">
@@ -254,6 +266,10 @@ export default function Workflow(props: Props) {
           meeting={meeting}
           dirty={transcriptDirty || minutesDirty}
           onClose={() => setSourcesOpen(false)}
+          onContinue={() => {
+            setSourcesOpen(false);
+            followGuidance();
+          }}
           onLocate={(source) => {
             setSourcesOpen(false);
             if (props.onSourceLocate) props.onSourceLocate(source);
@@ -263,8 +279,10 @@ export default function Workflow(props: Props) {
       )}
       <details className="postmeeting-review">
         <summary>
-          会后交接与核对 · {progress.complete}/4
-          {progress.stale ? ` · ${progress.stale} 项待复核` : ""}
+          本次交接与核对 · {progress.requiredComplete}/{progress.requiredTotal}
+          {progress.requiredStale
+            ? ` · ${progress.requiredStale} 项待复核`
+            : ""}
         </summary>
         <p>
           人工核对记录只表示你的确认，不等同于 AI
@@ -288,7 +306,7 @@ export default function Workflow(props: Props) {
                       stage.source.interrupted_job_id
                         ? "tasks"
                         : stage.key === "delivery"
-                          ? "minutes"
+                          ? "delivery"
                           : stage.key,
                       typeof stage.source.interrupted_job_id === "string"
                         ? stage.source.interrupted_job_id

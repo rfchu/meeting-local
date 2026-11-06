@@ -15,11 +15,13 @@ export default function HandoffSourcesDialog({
   dirty,
   onClose,
   onLocate,
+  onContinue,
 }: {
   meeting: Meeting;
   dirty: boolean;
   onClose: () => void;
   onLocate: (source: HandoffSource) => void;
+  onContinue?: () => void;
 }) {
   const [artifactId, setArtifactId] = useState(meeting.active_minutes_id || "");
   const [offset, setOffset] = useState(0);
@@ -239,6 +241,11 @@ export default function HandoffSourcesDialog({
       )}
       {!report && query.isPending && <p role="status">正在读取来源…</p>}
       {message && <p role="status">{message}</p>}
+      {onContinue && (
+        <button disabled={busy || dirty} onClick={onContinue}>
+          回到会后下一步
+        </button>
+      )}
     </Modal>
   );
 }

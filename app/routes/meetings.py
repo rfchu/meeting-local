@@ -13,8 +13,8 @@ from ..providers import LocalDiarization
 from ..analysis import OpenAICompatibleProvider, analysis_chunk_chars, SECTION_NAMES
 from ..transcript_paragraphs import paragraphs
 from ..qa import QA
-from .. import meeting_flow, minutes_delivery, handoff_sources
-from ..http_schemas import SourceReviewInput, ActionTrackInput, AnalysisJobInput, AttentionDecisionInput, DeliveryInput, JobInput, MeetingBriefInput, MeetingNoteInput, MeetingNoteUpdate, MeetingNotesBatchInput, NoteAcceptInput, NoteUseInput, RenameInput, ReviewCheckpointInput, RevisionInput, SpeakerReviewApplyInput, TodoUpdate
+from .. import meeting_flow, minutes_delivery, handoff_sources, delivery_readiness
+from ..http_schemas import DeliveryFinalizeInput, SourceReviewInput, ActionTrackInput, AnalysisJobInput, AttentionDecisionInput, DeliveryInput, JobInput, MeetingBriefInput, MeetingNoteInput, MeetingNoteUpdate, MeetingNotesBatchInput, NoteAcceptInput, NoteUseInput, RenameInput, ReviewCheckpointInput, RevisionInput, SpeakerReviewApplyInput, TodoUpdate
 from ..application_services import ApplicationServices
 
 def register_routes(app,services:ApplicationServices):
@@ -257,6 +257,17 @@ def register_routes(app,services:ApplicationServices):
         store.execute('DELETE FROM meeting_task_links WHERE meeting_id=? AND task_id=?',(mid,tid))
         return {'ok':True}
 
+
+    @app.get('/api/meetings/{mid}/minutes/delivery-readiness')
+    def get_delivery_readiness(mid:str,include_citations:bool=False):
+        try:return delivery_readiness.read(store,mid,include_citations)
+        except KeyError:raise HTTPException(404,'会议不存在')
+
+    @app.post('/api/meetings/{mid}/minutes/delivery-finalize',status_code=201)
+    def finalize_delivery(mid:str,body:DeliveryFinalizeInput):
+        try:return delivery_readiness.finalize(store,mid,body)
+        except KeyError:raise HTTPException(404,'会议不存在')
+        except ValueError as error:raise HTTPException(409,str(error))
 
     @app.post('/api/meetings/{mid}/minutes/deliveries',status_code=201)
     def create_delivery(mid:str,body:DeliveryInput):

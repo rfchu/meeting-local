@@ -23,3 +23,11 @@ test('Title changes invalidate basic information and minutes but retain speaker 
   const meeting=fixture();meeting.title='changed';const progress=reviewProgress(meeting,false,false);
   assert.equal(progress.steps[0].state,'stale');assert.equal(progress.steps[1].state,'done');assert.equal(progress.steps[3].state,'stale');
 });
+test('Personal notes remain optional and do not make completed delivery look incomplete',()=>{
+ const meeting=fixture();meeting.notes=[{id:'n',note_scope:'personal'}];meeting.review.steps.notes.state='pending';
+ const value=reviewProgress(meeting,false,false);assert.equal(value.complete,3);assert.equal(value.requiredComplete,3);assert.equal(value.requiredTotal,3);
+});
+test('Unresolved meeting-intended attention remains a required review step',()=>{
+ const meeting=fixture();meeting.notes=[{id:'n',note_scope:'meeting'}];meeting.review.steps.notes.state='pending';
+ const value=reviewProgress(meeting,false,false);assert.equal(value.requiredComplete,3);assert.equal(value.requiredTotal,4);
+});
