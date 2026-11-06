@@ -1,5 +1,6 @@
+import type { TaskFocus } from "../../types";
 import ResourceStatusPanel from "./ResourceStatusPanel";
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../api";
 import type { ManagementPage } from "./RuntimeManagement";
@@ -52,25 +53,48 @@ const states: Record<string, string> = {
   completed: "已完成",
 };
 export default function TasksPanel({
+  focus,
   onPage,
   onMeeting,
   onRecording,
   onSearch,
 }: {
+  focus?: TaskFocus;
   onPage: (p: ManagementPage) => void;
   onMeeting: (id: string) => void;
   onRecording: () => void;
   onSearch: () => void;
 }) {
-  const [filter, setFilter] = useState<"active" | "failed" | "all">("active"),
+  const [scope, setScope] = useState(focus);
+  const focusRef = useRef<HTMLElement>(null);
+  const scrolled = useRef("");
+  useEffect(() => {
+    setScope(focus);
+    setFilter(focus ? "all" : "active");
+    scrolled.current = "";
+  }, [focus?.meetingId, focus?.jobId]);
+  const [filter, setFilter] = useState<"active" | "failed" | "all">(
+      focus ? "all" : "active",
+    ),
     [busy, setBusy] = useState(""),
     [error, setError] = useState("");
   const client = useQueryClient();
   const query = useQuery({
-    queryKey: ["runtime-tasks", filter],
-    queryFn: () => api.runtimeTasks(filter),
+    queryKey: ["runtime-tasks", filter, scope?.meetingId, scope?.jobId],
+    queryFn: () => api.runtimeTasks(filter, scope),
     refetchInterval: 5000,
   });
+  useEffect(() => {
+    const key = scope ? `${scope.meetingId}:${scope.jobId}` : "";
+    if (
+      key &&
+      scrolled.current !== key &&
+      query.data?.items.some((item) => item.id === scope?.jobId)
+    ) {
+      focusRef.current?.scrollIntoView({ block: "nearest" });
+      scrolled.current = key;
+    }
+  }, [scope, query.data]);
   const overview = (query.data?.live_overview || []).filter(
     (v) => filter !== "active" || v.enabled,
   );
@@ -92,6 +116,19 @@ export default function TasksPanel({
   return (
     <section className="management-tasks">
       <ResourceStatusPanel />
+      {scope && (
+        <div className="management-task-scope" role="status">
+          <span>正在查看当前会议的指定任务，状态变更后仍保留在此页。</span>
+          <button
+            onClick={() => {
+              setScope(undefined);
+              setFilter("active");
+            }}
+          >
+            查看全部任务
+          </button>
+        </div>
+      )}
       <div className="management-task-toolbar">
         <div role="group" aria-label="任务筛选">
           {(
@@ -136,7 +173,11 @@ export default function TasksPanel({
         </div>
       )}
       {query.data?.items.map((task) => (
-        <article className="management-section management-task" key={task.id}>
+        <article
+          ref={scope?.jobId === task.id ? focusRef : undefined}
+          className={`management-section management-task${scope?.jobId === task.id ? " focused" : ""}`}
+          key={task.id}
+        >
           <div className="management-task-heading">
             <div>
               <h3>{task.kind_label}</h3>

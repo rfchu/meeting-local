@@ -1,4 +1,4 @@
-"""C1/C2/C3/C4/D1 synthetic resource UI: PYTHONPATH=. .venv/bin/python scripts/resource_ui_fixture.py.
+"""C1/C2/C3/C4/D1 follow-up synthetic resource UI: PYTHONPATH=. .venv/bin/python scripts/resource_ui_fixture.py.
 No models, microphone or user data. Scenario controls exist only in this fixture.
 """
 import argparse,os,tempfile
@@ -10,7 +10,7 @@ def main():
     parser.add_argument('--port',type=int,default=9876)
     parser.add_argument('--static-dir',type=Path)
     args=parser.parse_args()
-    with tempfile.TemporaryDirectory(prefix='tingji-d1-ui-') as directory:
+    with tempfile.TemporaryDirectory(prefix='tingji-d1-followup-ui-') as directory:
         os.environ['MEETING_DATA']=directory
         from unittest.mock import patch
         from fastapi.staticfiles import StaticFiles
@@ -30,6 +30,14 @@ def main():
             claims=[];services=app.state.services;store=services.store;rid=uid();jid=uid();mid=uid();pid=uid()
             @app.post('/_fixture/resources/{scenario}')
             def scenario(scenario:str):
+                if scenario=='handoff-interrupted':
+                    from app.db import encode
+                    job_id=uid()
+                    store.execute("INSERT INTO jobs(id,meeting_id,kind,state,stage,config,error) VALUES(?,?,'minutes','failed','处理失败',?,'synthetic JSON format')",(job_id,mid,encode({'revision':1,'model':'synthetic'})))
+                    for step in ('transcript','speakers'):
+                        value=services.meeting_review.read(mid)['steps'][step]
+                        services.meeting_review.set(mid,step,value['fingerprint'],'confirmed')
+                    return {'synthetic':True,'interrupted':True}
                 if scenario=='handoff-ready':
                     for step in ('transcript','speakers','minutes'):
                         value=services.meeting_review.read(mid)['steps'][step]

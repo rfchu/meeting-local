@@ -1,4 +1,4 @@
-import type { Meeting } from "../types";
+import type { Meeting, TaskFocus } from "../types";
 
 // A background response cannot replace local unsaved work or a newer adopted version.
 export function currentHandoff(meeting: Meeting) {
@@ -59,4 +59,14 @@ export function handoffWorkspace(
   if (!target || target === "notes" || target === "overview") return "notes";
   if (["minutes", "actions", "preview"].includes(target)) return "minutes";
   return "transcript";
+}
+
+export function handoffTaskFocus(
+  meeting: Meeting,
+  explicitJobId?: unknown,
+): TaskFocus | undefined {
+  const value = currentHandoff(meeting);
+  const id =
+    typeof explicitJobId === "string" ? explicitJobId : value?.primary.job_id;
+  return value && id ? { meetingId: meeting.id, jobId: id } : undefined;
 }

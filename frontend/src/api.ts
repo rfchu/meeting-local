@@ -1,3 +1,4 @@
+import { taskQuery } from "./features/management/taskScope";
 import type { ResourceStatus } from "./features/management/ResourceStatusPanel";
 import { reportRecordingCommand } from "./features/notes/recordingCommandEvents";
 import { RecordingCommandClient } from "./features/notes/recordingCommands";
@@ -166,8 +167,8 @@ export const api = {
         ? AbortSignal.any([signal, AbortSignal.timeout(10000)])
         : AbortSignal.timeout(10000),
     }),
-  runtimeTasks: (state: string) =>
-    request<RuntimeTasks>(`/runtime/tasks?state=${state}`),
+  runtimeTasks: (state: string, focus?: import("./types").TaskFocus) =>
+    request<RuntimeTasks>(taskQuery(state, focus)),
   runtimeResources: () => request<ResourceStatus>("/runtime/resources"),
   runtimeOverview: () => request<RuntimeOverview>("/runtime/overview"),
   serviceLifecycle: () =>

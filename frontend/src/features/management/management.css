@@ -390,3 +390,16 @@
   display: flex;
   gap: 8px;
 }
+
+.management-task-scope {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 0;
+  color: #64748b;
+  font-size: 13px;
+}
+.management-task.focused {
+  border-color: #a5b4fc;
+}

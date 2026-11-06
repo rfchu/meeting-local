@@ -14,3 +14,11 @@ test('Context, explicit adoption and confirmed tracking have different labels',(
 
 const {handoffWorkspace}=await load('../src/components/handoff.ts');
 test('Recording handoff chooses the relevant workspace and keeps compatibility fallback',()=>{for(const [target,expected] of [['tasks','transcript'],['transcript','transcript'],['notes','notes'],['actions','minutes'],['minutes','minutes'],['overview','notes']]){const value=fixture();value.handoff.primary.target=target;assert.equal(handoffWorkspace(value),expected);}assert.equal(handoffWorkspace({}), 'notes');});
+
+const {handoffTaskFocus}=await load('../src/components/handoff.ts');
+const {taskQuery}=await load('../src/features/management/taskScope.ts');
+test('Handoff task inspection keeps both the current meeting and exact job identity',()=>{const value={...fixture(),id:'m'};value.handoff.primary.job_id='j';assert.deepEqual(handoffTaskFocus(value),{meetingId:'m',jobId:'j'});});
+test('An interrupted stage can focus its own task instead of a different primary job',()=>{const value={...fixture(),id:'m'};value.handoff.primary.job_id='other';assert.deepEqual(handoffTaskFocus(value,'stage-job'),{meetingId:'m',jobId:'stage-job'});});
+test('Stale source projection cannot send an old task focus to another meeting view',()=>{const value={...fixture(),id:'m',revision:2};assert.equal(handoffTaskFocus(value,'old-job'),undefined);});
+test('Scoped task query encodes IDs as values and keeps completed tasks visible with all filter',()=>{const query=taskQuery('all',{meetingId:'m & other=1',jobId:'job?#'});const params=new URLSearchParams(query.split('?')[1]);assert.equal(params.get('meeting_id'),'m & other=1');assert.equal(params.get('job_id'),'job?#');assert.equal(params.get('state'),'all');assert.equal(params.size,3);});
+test('Unscoped task query retains the old runtime task URL',()=>{assert.equal(taskQuery('active'),'/runtime/tasks?state=active');});

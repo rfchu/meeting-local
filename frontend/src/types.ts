@@ -459,6 +459,10 @@ export interface MinutesGenerationStatus {
   error: string;
   artifact_id?: string;
 }
+export interface TaskFocus {
+  meetingId: string;
+  jobId: string;
+}
 export interface MeetingHandoff {
   version: 1;
   source_version: string;
@@ -479,6 +483,7 @@ export interface MeetingHandoff {
     };
   }[];
   primary: {
+    job_id?: string;
     code: string;
     target:
       | "transcribe"

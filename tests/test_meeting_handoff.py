@@ -168,7 +168,7 @@ def test_overview_cursor_is_a_segment_count_and_unconfirmed_items_are_optional(s
     s.execute("INSERT INTO live_overview_snapshots(recording_id,version,cursor,covered_hash,meta_hash,payload) VALUES(?,1,4,'h','m',?)",(m,encode({'items':[]})))
     publish(setup);confirm(setup)
     value=read(setup)
-    assert stage(value,'overview')['state']=='review'
+    assert stage(value,'overview')['state']=='optional'
     assert stage(value,'overview')['source']['covered_segments']==4
     assert 'covered_seconds' not in stage(value,'overview')['source']
     assert value['primary']['code']=='delivery'

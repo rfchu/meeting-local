@@ -31,6 +31,17 @@ def retry_blocker(store,job,worker):
     if not isinstance(config,dict):return '任务配置不完整，请回到会议重新发起'
     checkpoint_error=recovery_blocker(store,job)
     if checkpoint_error:return checkpoint_error
+    if job.get('kind')=='minutes' and 'revision' in config:
+        source=store.one('SELECT revision,title FROM meetings WHERE id=?',(job['meeting_id'],))
+        if not source or source['revision']!=config['revision']:return '原文版本已变化，请回到会议重新生成纪要'
+        if config.get('operation'):
+            if config.get('title',source['title'])!=source['title']:return '会议主题已变化，请回到会议重新生成纪要'
+            if config.get('context_hash'):
+                from .meeting_flow import ai_context
+                try:
+                    with store.connect() as db:current_hash=ai_context(db,job['meeting_id'])[1]
+                except (ValueError,TypeError,KeyError):return '会议资料无法核对，请回到会议重新生成纪要'
+                if current_hash!=config['context_hash']:return '会议资料已变化，请回到会议重新生成纪要'
     if job.get('kind')=='retrieval_answer':
         qa=store.one('SELECT config,cloud_confirmed FROM qa_runs WHERE id=?',(config.get('qa_id'),))
         if not qa:return '本次问答依据已清理，请重新检索后提问'
@@ -50,10 +61,14 @@ def retry_blocker(store,job,worker):
     return ''
 
 def register_task_management(app,store,worker,resources=None):
-    def records(state,limit):
+    def records(state,limit,meeting_id=None,job_id=None):
         if state not in ('active','failed','all'):raise HTTPException(400,'未知任务筛选')
         where="WHERE j.state IN ('queued','running')" if state=='active' else "WHERE j.state IN ('failed','cancelled')" if state=='failed' else ''
-        rows=store.all("SELECT j.*,m.title AS meeting_title FROM jobs j LEFT JOIN meetings m ON m.id=j.meeting_id "+where+" ORDER BY CASE j.state WHEN 'running' THEN 0 WHEN 'queued' THEN 1 ELSE 2 END,CASE WHEN j.state IN ('queued','running') THEN j.created END,CASE WHEN j.state NOT IN ('queued','running') THEN j.created END DESC,j.rowid LIMIT ?",(limit,))
+        clauses=[];args=[]
+        if meeting_id is not None:clauses.append('j.meeting_id=?');args.append(meeting_id)
+        if job_id is not None:clauses.append('j.id=?');args.append(job_id)
+        scope=(' AND ' if where else ' WHERE ')+ ' AND '.join(clauses) if clauses else ''
+        rows=store.all("SELECT j.*,m.title AS meeting_title FROM jobs j LEFT JOIN meetings m ON m.id=j.meeting_id "+where+scope+" ORDER BY CASE j.state WHEN 'running' THEN 0 WHEN 'queued' THEN 1 ELSE 2 END,CASE WHEN j.state IN ('queued','running') THEN j.created END,CASE WHEN j.state NOT IN ('queued','running') THEN j.created END DESC,j.rowid LIMIT ?",(*args,limit))
         live=bool(store.one("SELECT 1 FROM live_sessions WHERE status IN ('running','paused','draining') LIMIT 1"))
         queued=store.all("SELECT * FROM jobs WHERE state='queued' ORDER BY created,rowid")
         processing=bool(worker.busy_jid or store.one("SELECT 1 FROM jobs WHERE state='running' LIMIT 1"))
@@ -81,13 +96,18 @@ def register_task_management(app,store,worker,resources=None):
                 'exiting':worker.busy_jid==job['id'] and job['state']=='cancelled'})
         return values
     @app.get('/api/runtime/tasks')
-    def tasks(state:str='active',limit:int=50):
+    def tasks(state:str='active',limit:int=50,meeting_id:str|None=None,job_id:str|None=None):
         if not 1<=limit<=100:raise HTTPException(400,'任务数量范围为 1–100')
-        values=records(state,limit)
-        counts={r['state']:r['n'] for r in store.all('SELECT state,count(*) AS n FROM jobs GROUP BY state')}
+        if any(value is not None and (not value or len(value)>100) for value in (meeting_id,job_id)):raise HTTPException(400,'任务定位参数无效')
+        values=records(state,limit,meeting_id,job_id)
+        filters=[];args=[]
+        if meeting_id is not None:filters.append('meeting_id=?');args.append(meeting_id)
+        if job_id is not None:filters.append('id=?');args.append(job_id)
+        scope=' WHERE '+' AND '.join(filters) if filters else ''
+        counts={r['state']:r['n'] for r in store.all('SELECT state,count(*) AS n FROM jobs'+scope+' GROUP BY state',args)}
         # Live overview failures are separate from durable meeting jobs.
         overview=[]
-        for row in store.all("SELECT recording_id,state,enabled,failures,error FROM live_overview_runs WHERE enabled=1 OR failures>0 ORDER BY updated DESC LIMIT 20"):
+        for row in ([] if filters else store.all("SELECT recording_id,state,enabled,failures,error FROM live_overview_runs WHERE enabled=1 OR failures>0 ORDER BY updated DESC LIMIT 20")):
             overview.append({k:row[k] for k in ('recording_id','state','enabled','failures')}|{'published':bool(store.one('SELECT 1 FROM meetings WHERE id=?',(row['recording_id'],))),'failure':classify(row['error']) if row['error'] and row['failures'] else None})
         return {'checked_at':time.time(),'items':values,'counts':counts,'live_overview':overview,'limit':limit}
     @app.get('/api/runtime/diagnostics')

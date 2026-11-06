@@ -57,6 +57,7 @@ import {
 import SearchDialog, { type SearchHit } from "./features/SearchDialog";
 import Sidebar from "./components/Sidebar";
 import Workflow from "./components/Workflow";
+import type { TaskFocus } from "./types";
 import { handoffWorkspace } from "./components/handoff";
 import Player from "./components/Player";
 import { MinutesPreview, RenameDialog } from "./components/Dialogs";
@@ -149,6 +150,7 @@ export default function App() {
     [previewOpen, setPreviewOpen] = useState(false),
     [recordingOpen, setRecordingOpen] = useState(false),
     [recoveryOpen, setRecoveryOpen] = useState(false);
+  const [taskFocus, setTaskFocus] = useState<TaskFocus | undefined>();
   const [managementPage, setManagementPage] = useState<ManagementPage | null>(
     null,
   );
@@ -1116,7 +1118,10 @@ export default function App() {
               onConfirm={(step, decision) => void confirmReview(step, decision)}
               onTranscribe={() => void startTranscription()}
               onSave={() => void saveTranscript()}
-              onTasks={() => setManagementPage("tasks")}
+              onTasks={(focus) => {
+                setTaskFocus(focus);
+                setManagementPage("tasks");
+              }}
               onActions={() => {
                 setActionsFocus(true);
                 navigateReview("minutes");
@@ -1499,8 +1504,15 @@ export default function App() {
             void openMeeting(id);
           }}
           page={managementPage}
-          onPage={setManagementPage}
-          onClose={() => setManagementPage(null)}
+          taskFocus={taskFocus}
+          onPage={(page) => {
+            setTaskFocus(undefined);
+            setManagementPage(page);
+          }}
+          onClose={() => {
+            setTaskFocus(undefined);
+            setManagementPage(null);
+          }}
           onChanged={() =>
             void client.invalidateQueries({ queryKey: ["environment"] })
           }

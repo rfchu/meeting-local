@@ -1,3 +1,4 @@
+import type { TaskFocus } from "../../types";
 import RuntimeOverviewPage from "./RuntimeOverviewPage";
 import RuntimeEnvironmentPage from "./RuntimeEnvironmentPage";
 import ModelServicesPage from "./ModelServicesPage";
@@ -28,6 +29,7 @@ const pages: [ManagementPage, string, string][] = [
 
 export default function RuntimeManagement({
   page,
+  taskFocus,
   onPage,
   onClose,
   onChanged,
@@ -38,6 +40,7 @@ export default function RuntimeManagement({
   onSearch,
 }: {
   page: ManagementPage;
+  taskFocus?: TaskFocus;
   onPage: (p: ManagementPage) => void;
   onClose: () => void;
   onChanged: () => void;
@@ -157,6 +160,7 @@ export default function RuntimeManagement({
           )}
           {page === "tasks" && (
             <TasksPanel
+              focus={taskFocus}
               onPage={onPage}
               onRecording={() => leave(onRecording)}
               onSearch={() => leave(onSearch)}

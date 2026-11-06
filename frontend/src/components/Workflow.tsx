@@ -1,13 +1,14 @@
 import {
   currentHandoff,
   handoffAction,
+  handoffTaskFocus,
   handoffStates,
   handoffRelations,
 } from "./handoff";
 import { recordingQualityAttention } from "../features/notes/recordingQuality";
 import { deliveryAttentionCount } from "./deliveryAttention";
 import { pendingMinutesDrafts } from "../features/minutes/presentation";
-import type { Meeting, ReviewStep } from "../types";
+import type { Meeting, ReviewStep, TaskFocus } from "../types";
 import { currentMinutes, isRunning, latestMinutes } from "../utils";
 import { reviewProgress } from "./reviewProgress";
 
@@ -20,7 +21,7 @@ interface Props {
   onRecordingReview?: () => void;
   onSave: () => void;
   onAnalysis: () => void;
-  onTasks?: () => void;
+  onTasks?: (focus?: TaskFocus) => void;
   onActions?: () => void;
   onOverview?: () => void;
   onMinutes: () => void;
@@ -196,10 +197,12 @@ export default function Workflow(props: Props) {
   const handoff =
     transcriptDirty || minutesDirty ? null : currentHandoff(meeting);
   const guidance = handoffAction(meeting, transcriptDirty, minutesDirty);
-  const openTarget = (target: string) => {
+  const openTarget = (target: string, jobId?: string) => {
     switch (target) {
       case "tasks":
-        return (props.onTasks || onAnalysis)();
+        if (props.onTasks)
+          return props.onTasks(handoffTaskFocus(meeting, jobId));
+        return onAnalysis();
       case "recording":
         return openRecordingReview();
       case "transcribe":
@@ -263,7 +266,16 @@ export default function Workflow(props: Props) {
                 <button
                   className="text-btn"
                   onClick={() =>
-                    openTarget(stage.key === "delivery" ? "minutes" : stage.key)
+                    openTarget(
+                      stage.source.interrupted_job_id
+                        ? "tasks"
+                        : stage.key === "delivery"
+                          ? "minutes"
+                          : stage.key,
+                      typeof stage.source.interrupted_job_id === "string"
+                        ? stage.source.interrupted_job_id
+                        : undefined,
+                    )
                   }
                 >
                   查看
