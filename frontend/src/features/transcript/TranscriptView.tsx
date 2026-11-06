@@ -12,6 +12,8 @@ import SpeakerReviewDialog from "./SpeakerReviewDialog";
 
 interface Props {
   meeting: Meeting;
+  qualityReviewRequest?: number;
+  qualityReviewView?: "pending" | "all" | "gaps";
   jumpSegmentId?: string;
   onChange: (segments: Segment[]) => void;
   onSeek: (time: number) => void;
@@ -104,6 +106,8 @@ function CompareDialog({
 }
 
 export default function TranscriptView({
+  qualityReviewRequest = 0,
+  qualityReviewView = "pending",
   meeting,
   jumpSegmentId,
   onChange,
@@ -246,7 +250,9 @@ export default function TranscriptView({
   return (
     <>
       <MeetingRecordingQuality
-        key={meeting.id}
+        key={`${meeting.id}:${qualityReviewRequest}`}
+        initialView={qualityReviewRequest > 0 ? qualityReviewView : "pending"}
+        initiallyOpen={qualityReviewRequest > 0}
         id={meeting.id}
         onSeek={onSeek}
       />

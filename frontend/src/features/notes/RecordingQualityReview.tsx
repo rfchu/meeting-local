@@ -15,6 +15,7 @@ export default function RecordingQualityReview({
   onReview,
   busy = false,
   controls,
+  initiallyOpen = false,
 }: {
   quality: RecordingQuality;
   onSeek?: (seconds: number) => void;
@@ -25,6 +26,7 @@ export default function RecordingQualityReview({
   ) => void;
   busy?: boolean;
   controls?: ReactNode;
+  initiallyOpen?: boolean;
 }) {
   if (!quality.recorded) return null;
   if (!quality.available)
@@ -41,16 +43,19 @@ export default function RecordingQualityReview({
           : "本次缺少采集异常观测记录，无法据此确认录音完整性。"}
       </p>
     );
+  const settled = compact && quality.pending_count === 0 && !quality.gap_count;
   return (
     <section
       className={`recording-quality-review ${quality.pending_count === 0 && !quality.gap_count ? "" : "health-warning"}`}
       aria-label="录音异常回听核对"
     >
-      <strong>
-        {quality.pending_count != null
-          ? `待核对 ${quality.pending_count} 条 · 已明确结论 ${quality.reviewed_count || 0} 条${quality.gap_count ? ` · 确认缺音 ${quality.gap_count} 条` : ""}`
-          : `有 ${quality.total_count} 条采集异常观测，建议回听`}
-      </strong>
+      {!settled && (
+        <strong>
+          {quality.pending_count != null
+            ? `待核对 ${quality.pending_count} 条 · 已明确结论 ${quality.reviewed_count || 0} 条${quality.gap_count ? ` · 确认缺音 ${quality.gap_count} 条` : ""}`
+            : `有 ${quality.total_count} 条采集异常观测，建议回听`}
+        </strong>
+      )}
       {quality.retained_count != null &&
         quality.total_count > quality.retained_count && (
           <p>
@@ -58,19 +63,23 @@ export default function RecordingQualityReview({
             条较旧观测详情不再保留，不计入当前待核对数。
           </p>
         )}
-      <p>
-        位置是状态观测记录，并非精确缺音范围；文件保存成功和识别覆盖完整都不能证明声音完整。
-      </p>
-      <details>
+      {!settled && (
+        <p>
+          位置是状态观测记录，并非精确缺音范围；文件保存成功和识别覆盖完整都不能证明声音完整。
+        </p>
+      )}
+      <details open={initiallyOpen && !settled}>
         <summary>
-          查看异常位置与状态
+          {settled
+            ? `录音核对已记录 · ${quality.reviewed_count || 0} 条结论`
+            : "查看异常位置与状态"}
           {quality.total_count > quality.items.length
             ? ` · 本页 ${quality.items.length} 条`
             : ""}
         </summary>
         {controls}
         {quality.items.length === 0 && (
-          <p>当前没有待核对的保留详情，可切换“全部记录”查看已记录结论。</p>
+          <p>本页没有符合筛选条件的记录，可切换“全部记录”查看。</p>
         )}
         <ul>
           {quality.items.map((item) => {

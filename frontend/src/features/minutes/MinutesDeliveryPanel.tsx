@@ -1,3 +1,4 @@
+import { recordingQualityAttention } from "../notes/recordingQuality";
 import { useState, useEffect } from "react";
 import { api, download, downloadUrl } from "../../api";
 import type { Meeting } from "../../types";
@@ -20,6 +21,7 @@ export default function MinutesDeliveryPanel({
   const [confirmed, setConfirmed] = useState(false),
     [busy, setBusy] = useState(false);
   const adopted = currentMinutes(meeting);
+  const qualityAttention = recordingQualityAttention(meeting.recording_quality);
   useEffect(
     () => setConfirmed(false),
     [selectedId, meeting.active_minutes_id, dirty, includeCitations],
@@ -38,6 +40,11 @@ export default function MinutesDeliveryPanel({
         <p>
           确认后固定当前采用稿、原文引用和跟进状态记录，后续修改保留为新版本。
         </p>
+        {qualityAttention && (
+          <p className="health-warning" role="status">
+            {qualityAttention.text} 可在文字稿页回听核对。
+          </p>
+        )}
         {!eligible && <p role="status">请先保存并采用当前纪要，再确认交付。</p>}
         <label>
           <input

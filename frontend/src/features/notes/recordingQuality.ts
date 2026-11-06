@@ -37,3 +37,30 @@ export const qualityReviewChoices = {
 export function qualityReviewLabel(item: Observation) {
   return qualityReviewChoices[item.review_status || "pending"];
 }
+
+export function recordingQualityAttention(
+  quality?: Omit<RecordingQuality, "items">,
+) {
+  if (!quality?.recorded) return null;
+  if (!quality.available)
+    return {
+      kind: "unknown" as const,
+      text: "录音异常核对暂不可用，请重新检查。",
+      action: "检查录音",
+    };
+  const pending = quality.pending_count || 0,
+    gaps = quality.gap_count || 0;
+  if (pending)
+    return {
+      kind: "pending" as const,
+      text: `有 ${pending} 条录音观测待核对${gaps ? `，另有 ${gaps} 条已确认缺音` : ""}。`,
+      action: "核对录音",
+    };
+  if (gaps)
+    return {
+      kind: "gap" as const,
+      text: `录音有 ${gaps} 条已确认缺音，整理纪要时请核对受影响的结论。`,
+      action: "查看缺音记录",
+    };
+  return null;
+}

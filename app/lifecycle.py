@@ -108,7 +108,7 @@ class Lifecycle:
                 db.execute('INSERT INTO anomaly_reviews VALUES(?,?,?,?,?) ON CONFLICT(anomaly_id) DO UPDATE SET status=excluded.status,version=excluded.version,updated=excluded.updated',(aid,rid,status,version+1,time.time()))
         except (OSError,sqlite3.Error) as error:raise RuntimeError('核对结果保存失败，请重试') from error
 
-    def anomalies(self,rid,limit=20,*,pending_only=False,offset=0):
+    def anomalies(self,rid,limit=20,*,pending_only=False,offset=0,gaps_only=False):
         unavailable={'available':False,'monitored':False,'total_count':0,'items':[]}
         if not self.available:return unavailable
         try:
@@ -117,7 +117,7 @@ class Lifecycle:
                 count=db.execute('SELECT total FROM anomaly_totals WHERE recording_id=?',(rid,)).fetchone()
                 joined="FROM anomalies a LEFT JOIN anomaly_reviews r ON r.anomaly_id=a.id WHERE a.recording_id=?"
                 retained,reviewed,gaps=db.execute("SELECT COUNT(*),COALESCE(SUM(COALESCE(r.status,'pending') IN ('clear','gap')),0),COALESCE(SUM(r.status='gap'),0) "+joined,(rid,)).fetchone()
-                clause=" AND COALESCE(r.status,'pending') IN ('pending','uncertain')" if pending_only else ''
+                clause=" AND r.status='gap'" if gaps_only else " AND COALESCE(r.status,'pending') IN ('pending','uncertain')" if pending_only else ''
                 rows=db.execute("SELECT a.id,a.component,a.state,a.started,a.last_seen,a.ended,a.start_seconds,a.last_seconds,a.end_state,COALESCE(r.status,'pending'),COALESCE(r.version,0),r.updated "+joined+clause+' ORDER BY a.id DESC LIMIT ? OFFSET ?',(rid,limit,offset)).fetchall()
             return {'available':True,'monitored':bool(monitored),'total_count':count[0] if count else 0,
                     'retained_count':retained,'reviewed_count':reviewed,'pending_count':retained-reviewed,'gap_count':gaps,

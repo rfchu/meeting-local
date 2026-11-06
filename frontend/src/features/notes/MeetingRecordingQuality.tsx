@@ -5,14 +5,18 @@ import RecordingQualityReview from "./RecordingQualityReview";
 export default function MeetingRecordingQuality({
   id,
   onSeek,
+  initiallyOpen = false,
+  initialView = "pending",
 }: {
   id: string;
   onSeek: (seconds: number) => void;
+  initiallyOpen?: boolean;
+  initialView?: "pending" | "all" | "gaps";
 }) {
   const [quality, setQuality] = useState<RecordingQuality | null>(null);
   const [failed, setFailed] = useState(false);
   const [attempt, setAttempt] = useState(0);
-  const [view, setView] = useState<"pending" | "all">("pending");
+  const [view, setView] = useState<"pending" | "all" | "gaps">(initialView);
   const [offset, setOffset] = useState(0);
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -82,6 +86,7 @@ export default function MeetingRecordingQuality({
         quality={quality}
         onSeek={onSeek}
         compact
+        initiallyOpen={initiallyOpen}
         onReview={(item, status) => void review(item, status)}
         busy={busy || loading}
         controls={
@@ -106,6 +111,17 @@ export default function MeetingRecordingQuality({
               >
                 全部记录
               </button>
+              {!!quality.gap_count && (
+                <button
+                  disabled={busy || loading || view === "gaps"}
+                  onClick={() => {
+                    setView("gaps");
+                    setOffset(0);
+                  }}
+                >
+                  确认缺音
+                </button>
+              )}
               <button
                 disabled={busy || loading || offset === 0}
                 onClick={() => setOffset((v) => Math.max(0, v - 20))}
@@ -119,7 +135,9 @@ export default function MeetingRecordingQuality({
                   offset + quality.items.length >=
                     (view === "pending"
                       ? (quality.pending_count ?? quality.total_count)
-                      : (quality.retained_count ?? quality.total_count))
+                      : view === "gaps"
+                        ? quality.gap_count || 0
+                        : (quality.retained_count ?? quality.total_count))
                 }
                 onClick={() => setOffset((v) => v + 20)}
               >

@@ -441,6 +441,7 @@ export interface Meeting extends MeetingSummary {
   minutes_generation?: MinutesGenerationStatus | null;
   flow?: MeetingFlow;
   review?: MeetingReview;
+  recording_quality?: Omit<RecordingQuality, "items">;
   segments: Segment[];
   jobs: Job[];
   revisions: Revision[];

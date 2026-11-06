@@ -1,3 +1,4 @@
+import { recordingQualityAttention } from "../features/notes/recordingQuality";
 import { deliveryAttentionCount } from "./deliveryAttention";
 import { pendingMinutesDrafts } from "../features/minutes/presentation";
 import type { Meeting, ReviewStep } from "../types";
@@ -10,6 +11,7 @@ interface Props {
   minutesDirty: boolean;
   reviewBusy: boolean;
   onTranscribe: () => void;
+  onRecordingReview?: () => void;
   onSave: () => void;
   onAnalysis: () => void;
   onMinutes: () => void;
@@ -47,6 +49,17 @@ export default function Workflow(props: Props) {
     onReview,
     onConfirm,
   } = props;
+  const qualityAttention = recordingQualityAttention(meeting.recording_quality);
+  const openRecordingReview =
+    props.onRecordingReview || (() => onReview("transcript"));
+  const qualityNotice = qualityAttention && (
+    <div className="workflow-quality" role="status">
+      <span>{qualityAttention.text}</span>
+      <button className="text-btn" onClick={openRecordingReview}>
+        {qualityAttention.action}
+      </button>
+    </div>
+  );
   const progress = reviewProgress(meeting, transcriptDirty, minutesDirty);
   const pendingDrafts = pendingMinutesDrafts(meeting);
   const automaticMinutes = meeting.jobs.find(
@@ -64,6 +77,7 @@ export default function Workflow(props: Props) {
   if (!meeting.review)
     return (
       <section className="workflow" aria-label="会议处理进度">
+        {qualityNotice}
         <p>
           会后核对清单将在本次录音结束、服务更新后启用。现有整理功能可以照常使用。
         </p>
@@ -127,6 +141,10 @@ export default function Workflow(props: Props) {
     hint = "文字稿有未保存修改，保存后重新核对受影响的内容。";
     label = "保存文字稿";
     action = onSave;
+  } else if (qualityAttention?.kind === "pending") {
+    hint = `${qualityAttention.text} 先回听附近音频，再核对文字和关键结论。`;
+    label = "核对录音";
+    action = openRecordingReview;
   } else if (deliveryAttention > 0) {
     hint = `有 ${deliveryAttention} 个准备用于会议成果的关注点需核对；个人与暂缓记录可稍后整理。`;
     label = "核对会议关注点";
@@ -155,7 +173,9 @@ export default function Workflow(props: Props) {
   } else {
     hint =
       progress.complete === 4
-        ? "核对清单已完成。发送前可预览并导出 Word 或 PDF。"
+        ? qualityAttention?.kind === "gap"
+          ? "核对清单已完成；录音有已确认缺音，发送前请核对受影响的结论。"
+          : "核对清单已完成。发送前可预览并导出 Word 或 PDF。"
         : "本次交付相关核对已完成，可预览导出；个人与暂缓记录可稍后整理。";
     label = "预览并导出";
     const delivered = meeting.deliveries?.some(
@@ -166,6 +186,7 @@ export default function Workflow(props: Props) {
   }
   return (
     <section className="workflow" aria-label="会议处理进度">
+      {label !== "核对录音" && qualityNotice}
       <div className="workflow-next">
         <span>{hint}</span>
         <button className="primary" disabled={!!busy} onClick={action}>

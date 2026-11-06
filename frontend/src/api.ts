@@ -227,7 +227,11 @@ export const api = {
       ...json("POST", { state }),
       signal: AbortSignal.timeout(5000),
     }),
-  recordingQuality: (id: string, view: "all" | "pending" = "all", offset = 0) =>
+  recordingQuality: (
+    id: string,
+    view: "all" | "pending" | "gaps" = "all",
+    offset = 0,
+  ) =>
     request<RecordingQuality>(
       `/meetings/${id}/recording-quality?view=${view}&offset=${offset}`,
       {

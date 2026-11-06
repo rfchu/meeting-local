@@ -31,7 +31,7 @@ from .keep_awake import KeepAwake
 from .recording_health import RecordingHealth
 from .lifecycle import Lifecycle
 from .recording_runtime import RecordingRuntime
-from .recording_completion import completion_report,recording_quality
+from .recording_completion import completion_report,recording_quality,recording_quality_summary
 from .meeting_review import MeetingReview
 from .qa import QA
 from .minutes_composition import ComposeInput,CompositionSettings,build_from_ai,publish_analysis,canonical_source
@@ -380,6 +380,7 @@ def create_app(data_dir=None, start_worker=True):
             row['action_tasks']={a['id']:meeting_flow.action_bindings(db,row['id'],a) for a in store.all("SELECT * FROM artifacts WHERE meeting_id=? AND kind='meeting_minutes'",(row['id'],))}
         row['deliveries']=[minutes_delivery.public(d) for d in store.all('SELECT * FROM minutes_deliveries WHERE meeting_id=? ORDER BY created DESC,rowid DESC',(row['id'],))]
         row['audio_tracks']=[name for name in ('system','microphone') if (store.directory(row['id'])/(name+'.wav')).is_file()]
+        row['recording_quality']=recording_quality_summary(recordings,row['id'],float(row['duration']))
         row['review']=meeting_review.read(row['id'])
         row['flow']=meeting_flow.flow(store,row['id'])
         row['minutes_generation']=minutes_generation.status(row['id'])
@@ -857,9 +858,9 @@ def create_app(data_dir=None, start_worker=True):
         except FileNotFoundError:raise HTTPException(404,'录音会话不存在')
         except ValueError:raise HTTPException(409,'录音元数据无法读取，已有文件保留')
     @app.get('/api/meetings/{mid}/recording-quality')
-    def meeting_recording_quality(mid:str,view:Literal['all','pending']='all',offset:int=Query(default=0,ge=0,le=10000)):
+    def meeting_recording_quality(mid:str,view:Literal['all','pending','gaps']='all',offset:int=Query(default=0,ge=0,le=10000)):
         row=meeting(mid)
-        return recording_quality(recordings,mid,float(row['duration']),pending_only=view=='pending',offset=offset)
+        return recording_quality(recordings,mid,float(row['duration']),pending_only=view=='pending',offset=offset,gaps_only=view=='gaps')
     @app.post('/api/meetings/{mid}/recording-quality/{aid}/review')
     def review_recording_quality(mid:str,aid:int,body:RecordingQualityReviewInput):
         meeting(mid)

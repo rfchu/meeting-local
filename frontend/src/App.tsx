@@ -218,6 +218,15 @@ export default function App() {
     return () => window.clearTimeout(timer);
   }, [restoredSegment, workspace]);
 
+  const [qualityReviewRequest, setQualityReviewRequest] = useState<{
+    id: string;
+    nonce: number;
+    view: "pending" | "all" | "gaps";
+  }>({
+    id: "",
+    nonce: 0,
+    view: "pending",
+  });
   const navigateReview = (step: ReviewStep) => {
     setWorkspace(step === "speakers" ? "transcript" : step);
     window.requestAnimationFrame(() =>
@@ -502,6 +511,7 @@ export default function App() {
           return {
             ...old,
             review: fresh.review,
+            recording_quality: fresh.recording_quality,
             flow: fresh.flow,
             active_minutes_id: fresh.active_minutes_id,
             minutes_generation: fresh.minutes_generation,
@@ -1063,6 +1073,18 @@ export default function App() {
               transcriptDirty={transcriptDirty}
               minutesDirty={minutesDirty}
               reviewBusy={reviewBusy}
+              onRecordingReview={() => {
+                setQualityReviewRequest((old) => ({
+                  id: meeting.id,
+                  nonce: old.nonce + 1,
+                  view: meeting.recording_quality?.pending_count
+                    ? "pending"
+                    : meeting.recording_quality?.gap_count
+                      ? "gaps"
+                      : "all",
+                }));
+                navigateReview("transcript");
+              }}
               onReview={navigateReview}
               onConfirm={(step, decision) => void confirmReview(step, decision)}
               onTranscribe={() => void startTranscription()}
@@ -1148,6 +1170,12 @@ export default function App() {
                 )}
                 {workspace === "transcript" && (
                   <TranscriptView
+                    qualityReviewView={qualityReviewRequest.view}
+                    qualityReviewRequest={
+                      qualityReviewRequest.id === meeting.id
+                        ? qualityReviewRequest.nonce
+                        : 0
+                    }
                     meeting={meeting}
                     jumpSegmentId={
                       searchTarget?.meeting_id === meeting.id
