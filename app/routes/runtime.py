@@ -3,6 +3,7 @@ import json, os, shutil
 from pathlib import Path
 from fastapi import HTTPException
 from ..db import uid
+from ..host_bridge import identity as host_identity
 from ..providers import WhisperCpp, engine_catalog, LocalDiarization, LocalPunctuation
 from ..analysis import OpenAICompatibleProvider, validate_llm_endpoint, public_llm_config, analysis_chunk_chars
 from ..http_schemas import LLMConfigInput
@@ -15,6 +16,10 @@ def register_routes(app,services:ApplicationServices):
     minutes_template=services.meetings.minutes_template
     store=services.store
     LMStudioProvider=services.providers.llm
+
+    @app.get('/api/runtime/host')
+    def host_connection():
+        return host_identity(app.state.paths)
 
     @app.get('/api/runtime/service')
     def service_identity():
