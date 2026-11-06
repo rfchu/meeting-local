@@ -1,8 +1,5 @@
-import { useEffect, useState } from "react";
-import { api } from "../../api";
-import type { NativeCaptureStatus, RecordingHealth } from "../../types";
-import { pendingRecordingChunks } from "./recordingBuffer";
-import { watchRecordingRecovery } from "./recordingRecovery";
+import type { NativeCaptureStatus } from "../../types";
+import { useRecordingHealth } from "./useRecordingHealth";
 import { recordingStatus, lifecycleLabel } from "./recordingStatus";
 
 export default function RecordingHealthPanel({
@@ -24,39 +21,15 @@ export default function RecordingHealthPanel({
   onDiagnostics: () => void;
   recognitionEnabled?: boolean;
 }) {
-  const [inventory, setInventory] = useState<RecordingHealth | null>(null);
-  const [pending, setPending] = useState<number | null>(null);
-  const [unavailable, setUnavailable] = useState(false);
-  useEffect(() => {
-    if (!id) return;
-    let live = true,
-      busy = false;
-    setInventory(null);
-    setPending(null);
-    setUnavailable(false);
-    const poll = async () => {
-      if (!live || busy) return;
-      busy = true;
-      const [server, local] = await Promise.allSettled([
-        api.recordingHealth(id),
-        pendingRecordingChunks(id),
-      ]);
-      if (live) {
-        setUnavailable(server.status !== "fulfilled");
-        if (server.status === "fulfilled") setInventory(server.value);
-        setPending(local.status === "fulfilled" ? local.value : null);
-      }
-      busy = false;
-    };
-    void poll();
-    const timer = window.setInterval(() => void poll(), 5000);
-    const unwatch = watchRecordingRecovery(() => void poll());
-    return () => {
-      live = false;
-      window.clearInterval(timer);
-      unwatch();
-    };
-  }, [id]);
+  const {
+    inventory,
+    pending,
+    unavailable,
+    freshness,
+    checkedAt,
+    fetching,
+    refresh,
+  } = useRecordingHealth(id, native);
   if (!id) return null;
   const ended = ["failed", "finished", "saving"].includes(state);
   const unified = recordingStatus(inventory?.runtime, state, unavailable);
@@ -114,8 +87,24 @@ export default function RecordingHealthPanel({
   return (
     <section className="recording-health-panel" aria-label="录音健康状态">
       <div className="recording-status-summary" role="status">
-        <strong>{unified.label}</strong>
-        <span>{unified.savedPosition} · 识别状态与采集状态分别核对</span>
+        <strong>
+          {freshness === "checking" && state !== "finished"
+            ? "正在核对录音状态"
+            : unified.label}
+        </strong>
+        <span>
+          {freshness === "stale"
+            ? "状态超过 20 秒未更新，不能确认采集仍在继续"
+            : freshness === "unavailable"
+              ? "状态连接失败，已有音频与确认结果保留"
+              : freshness === "checking"
+                ? "等待本机返回最新状态，录音不会因此重新开始"
+                : `最近核对 ${new Date(checkedAt).toLocaleTimeString()}`}
+        </span>
+        <span>
+          {unavailable && unified.savedPosition ? "上次核对：" : ""}
+          {unified.savedPosition} · 识别状态与采集状态分别核对
+        </span>
       </div>
       <div>
         <strong>音频采集</strong>
@@ -126,6 +115,7 @@ export default function RecordingHealthPanel({
           localFailure ||
           memoryOnly ||
           unavailable ||
+          (!native && pending === null) ||
           pending ||
           inventory?.audio.missing_chunk_count
             ? "health-warning"
@@ -148,9 +138,18 @@ export default function RecordingHealthPanel({
                   : "识别独立运行，变慢不代表原音丢失")}
         </span>
       </div>
-      <button className="text-btn" onClick={onDiagnostics}>
-        导出脱敏诊断
-      </button>
+      <div className="recording-health-actions">
+        <button
+          className="text-btn"
+          disabled={fetching}
+          onClick={() => void refresh()}
+        >
+          {fetching ? "核对中…" : "重新核对状态"}
+        </button>
+        <button className="text-btn" onClick={onDiagnostics}>
+          导出脱敏诊断
+        </button>
+      </div>
       {!!inventory?.lifecycle && (
         <details className="recording-status-summary">
           <summary>

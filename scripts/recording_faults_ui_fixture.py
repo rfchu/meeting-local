@@ -1,8 +1,10 @@
 """Synthetic heartbeat fault/recovery UI, with no microphone or model access.
 PYTHONPATH=. .venv/bin/python scripts/recording_faults_ui_fixture.py --port 9876
 """
-import argparse,json,os,tempfile,time
+import argparse,asyncio,json,os,tempfile,time
 import uvicorn
+from fastapi import HTTPException
+from fastapi.responses import JSONResponse
 import app.main as module
 import app.onboarding as onboarding
 from app.main import create_app
@@ -45,6 +47,18 @@ def main():
     module.LMStudioProvider.status=lambda self:{'ready':False,'models':[],'error':'合成环境不调用模型','profiles':[]}
     with tempfile.TemporaryDirectory(prefix='recording-faults-ui-') as root:
         app=create_app(root,start_worker=False);app.state.keep_awake.supported=False
+        health_mode={'value':'normal'}
+        @app.middleware('http')
+        async def health_response_fault(request,call_next):
+            if request.method=='GET' and request.url.path.startswith('/api/recordings/') and request.url.path.endswith('/health'):
+                if health_mode['value']=='unavailable':return JSONResponse({'detail':'合成状态连接失败'},status_code=503)
+                if health_mode['value']=='delay':await asyncio.sleep(3)
+            return await call_next(request)
+        @app.post('/_fixture/health-mode')
+        def set_health_mode(body:dict):
+            if body.get('mode') not in ('normal','unavailable','delay'):raise HTTPException(400,'未知合成模式')
+            health_mode['value']=body['mode'];return {'ok':True}
+        app.router.routes.insert(0,app.router.routes.pop())
         @app.post('/_fixture/recover')
         def recover():
             capture.stale=False;capture.input_loss=False;capture.file_stall=False

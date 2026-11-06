@@ -252,9 +252,11 @@ export const api = {
     request(`/recordings/${id}/recovery-archive?archived=${archived}`, {
       method: "POST",
     }),
-  recordingHealth: (id: string) =>
+  recordingHealth: (id: string, signal?: AbortSignal) =>
     request<RecordingHealth>(`/recordings/${id}/health`, {
-      signal: AbortSignal.timeout(10000),
+      signal: signal
+        ? AbortSignal.any([signal, AbortSignal.timeout(10000)])
+        : AbortSignal.timeout(10000),
     }),
   captureState: (
     id: string,
