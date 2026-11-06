@@ -243,8 +243,8 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, 
         settings = controller; controller.present(on: window); render()
     }
     @objc private func about() {
-        let alert = NSAlert(); alert.messageText = "听记宿主 · E3"
-        alert.informativeText = "本机连接与启动底座。连接设置保存在本机，菜单栏可随时打开工作台。关闭窗口保留菜单栏，退出宿主不停止服务；采集仍由原页面／API 管理。"
+        let alert = NSAlert(); alert.messageText = "听记宿主 · E4"
+        alert.informativeText = "宿主 0.4.0 · 本机源码运行。应用包、Python 环境、模型与会议数据分别管理；更新宿主不迁移数据。开发签名，未公证发行。\n本机连接与启动底座。连接设置保存在本机，菜单栏可随时打开工作台。关闭窗口保留菜单栏，退出宿主不停止服务；采集仍由原页面／API 管理。"
         alert.beginSheetModal(for: window)
     }
 }
