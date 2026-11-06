@@ -2,16 +2,18 @@
 
 The HTTP/capture process belongs to launchd rather than a development terminal.
 """
-import argparse,json,os,platform,plistlib,re,socket,sqlite3,subprocess,time,uuid,signal,urllib.request
+import sys,argparse,json,os,platform,plistlib,re,socket,sqlite3,subprocess,time,uuid,signal,urllib.request
 from pathlib import Path
 
 ROOT=Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:sys.path.insert(0,str(ROOT))
+from app.paths import RuntimePaths
 LABEL='cn.seeknow.tingji.local'
 
 
 class MacService:
     def __init__(self,root=ROOT):
-        self.root=Path(root);self.data=Path(os.getenv('MEETING_DATA',str(self.root/'data'))).resolve()
+        self.root=Path(root);self.data=RuntimePaths.from_env(root=self.root).data
         self.port=int(os.getenv('PORT','8765'))
         if not 1024<=self.port<=65535:raise ValueError('PORT 必须在 1024～65535 之间')
         self.domain=f'gui/{os.getuid()}';self.target=self.domain+'/'+LABEL

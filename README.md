@@ -700,3 +700,31 @@ Whisper 按约 15 秒片段返回确认结果，暂停／结束时尝试处理�
 不提供直接降级或覆盖式回退。需要回退时，将升级前备份恢复到新目录，使用匹配版本的代码核对后再切换；**不要让 B1 或更早的代码打开已升级目录**，旧代码没有本轮版本保护。B2 的版本化范围为主会议库；生命周期、录音验证和其他派生库仍维持既有格式，后续按模块拆分逐步纳入。命令不启动模型、不自动重放待确认控制或任务。
 
 应用默认通过 `PYDANTIC_DISABLE_PLUGINS=__all__` 关闭未使用的 Pydantic 第三方插件自动发现，避免为扫描无关包元数据而等待云端文件。显式环境变量可覆盖该默认值；本设置不关闭 Pydantic 字段或数据校验。数据目录落地不代表 Python 环境或模型文件也已离线就绪，环境资源应独立检查。
+
+
+## 核心模块边界（B3）
+
+后端装配根为 `app/main.py`；所有业务路由通过显式 `ApplicationServices` 取得当前应用的资源。`application_lifecycle.py` 统一启动／关闭，`http_security.py` 对全部业务与静态响应实施本机访问限制，`http_schemas.py` 定义请求契约。
+
+| 模块 | 职责 |
+| --- | --- |
+| `app/routes/runtime.py` | 运行身份、环境、LLM 配置与模板读取 |
+| `app/routes/retrieval.py` | 索引配置、检索与跨会议问答 |
+| `app/routes/recordings.py` | 原生／浏览器录音、实时识别、恢复与保存 |
+| `app/routes/meetings.py` | 会议、文字稿、简记、任务与导出 |
+| `app/routes/minutes.py` | 纪要生成、编排、采用与导出 |
+| `app/meeting_queries.py`、`configuration_queries.py` | 跨模块共享的读取与校验 |
+| `app/analysis_jobs.py` | 会议与纪要共用的分析任务入队 |
+
+新增路由通过装配根注册并显式传入服务；不要从路由导入 `app.main`，也不要为读取共享对象再构造应用或模型。现有 URL、输入输出契约和应用状态兼容入口保持不变。
+
+前端录音容器 `RecordingDialog` 稳定持有 `useRecordingController`，`RecordingView` 和 `RecordingSettingsDialog` 负责呈现。运行管理壳持有导航和未保存提醒，子页仅负责各自内容；模型表单采用持续挂载与隐藏切换，不能改成切页即卸载，否则会丢失草稿。录音控制与模型任务的生命周期继续独立。
+
+应用、服务和维护命令使用同一 `RuntimePaths`。默认仍为项目内的 `data/` 和 `backups/`；可显式配置非云端优化目录：
+
+```sh
+export MEETING_DATA="/absolute/path/to/local-data"
+export MEETING_BACKUPS="/absolute/path/to/local-backups"
+```
+
+这些变量只选择目录，不移动原文件。`create_app(data_dir=...)` 和维护命令 `--data` 可覆盖默认数据位置；备份 `--output`、升级 `--backup-output` 可覆盖本次备份位置。变更配置前先安全停服、备份并恢复到新目录核对，确认后再显式切换。B3 已用合成数据验证外置目录和恢复启动，未自动搬迁正式数据。

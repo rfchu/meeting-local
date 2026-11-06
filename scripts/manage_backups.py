@@ -1,16 +1,18 @@
 """Local-only offline backup/verify/restore drill. Does not import app.main."""
 import argparse,json,os,sqlite3,subprocess,time,uuid
 from pathlib import Path
+from app.paths import RuntimePaths
 from app.backups import create_backup,verify_backup,restore_backup,drill_backup,preflight,BackupError,write_json
 ROOT=Path(__file__).resolve().parents[1]
 
 def main():
+    paths=RuntimePaths.from_env(root=ROOT)
     parser=argparse.ArgumentParser(description='听记离线一致性备份与恢复（不启动模型，不覆盖既有目录）')
     actions=parser.add_subparsers(dest='action',required=True)
     check=actions.add_parser('preflight',help='不停服检查云端占位文件与预计体积，不读取正文')
-    check.add_argument('--data',default=os.getenv('MEETING_DATA',str(ROOT/'data')))
+    check.add_argument('--data',default=str(paths.data))
     create=actions.add_parser('create',help='服务停止后备份数据目录')
-    create.add_argument('--data',default=os.getenv('MEETING_DATA',str(ROOT/'data')))
+    create.add_argument('--data',default=str(paths.data))
     create.add_argument('--output',default=None)
     for name in ('verify','drill','restore'):
         child=actions.add_parser(name);child.add_argument('backup')
@@ -20,7 +22,7 @@ def main():
     try:
         if args.action=='preflight':result=preflight(args.data)
         elif args.action=='create':
-            output=Path(args.output or ROOT/'backups'/(time.strftime('%Y%m%d-%H%M%S')+'-'+uuid.uuid4().hex[:8]))
+            output=Path(args.output or paths.backups/(time.strftime('%Y%m%d-%H%M%S')+'-'+uuid.uuid4().hex[:8]))
             revision=subprocess.run(['git','rev-parse','HEAD'],cwd=ROOT,capture_output=True,text=True,timeout=3)
             result=create_backup(args.data,output,revision.stdout.strip() if revision.returncode==0 else None)
             result['backup_directory']=str(output.resolve())

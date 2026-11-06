@@ -1,16 +1,18 @@
 """Explicit offline upgrade CLI; never imports app.main or starts model workers."""
 import argparse,json,os,sqlite3,subprocess,time,uuid
 from pathlib import Path
+from app.paths import RuntimePaths
 from app.backups import BackupError,write_json
 from app.migrations import inspect_database,MigrationError
 from app.upgrades import migration_drill,upgrade_data
 ROOT=Path(__file__).resolve().parents[1]
 
 def main():
+    paths=RuntimePaths.from_env(root=ROOT)
     parser=argparse.ArgumentParser(description='听记版本化迁移：先备份和临时恢复预演，再原子升级')
     actions=parser.add_subparsers(dest='action',required=True)
     for name in ('status','upgrade'):
-        child=actions.add_parser(name);child.add_argument('--data',default=os.getenv('MEETING_DATA',str(ROOT/'data')))
+        child=actions.add_parser(name);child.add_argument('--data',default=str(paths.data))
         if name=='upgrade':child.add_argument('--backup-output')
     drill=actions.add_parser('drill');drill.add_argument('backup');drill.add_argument('--report')
     args=parser.parse_args()
@@ -20,7 +22,7 @@ def main():
             result=migration_drill(args.backup)
             if args.report:write_json(Path(args.report),result)
         else:
-            output=args.backup_output or ROOT/'backups'/('pre-upgrade-'+time.strftime('%Y%m%d-%H%M%S')+'-'+uuid.uuid4().hex[:8])
+            output=args.backup_output or paths.backups/('pre-upgrade-'+time.strftime('%Y%m%d-%H%M%S')+'-'+uuid.uuid4().hex[:8])
             revision=subprocess.run(['git','rev-parse','HEAD'],cwd=ROOT,capture_output=True,text=True,timeout=3)
             dirty=subprocess.run(['git','status','--porcelain'],cwd=ROOT,capture_output=True,text=True,timeout=3)
             version=revision.stdout.strip()+('+working-tree' if dirty.stdout else '')
