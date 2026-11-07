@@ -11,8 +11,11 @@ from .minutes_composition import ComposeInput,CompositionSettings,canonical_sour
 from .model_preferences import resolve_profile
 from .job_checkpoints import JobCheckpoints,digest
 from . import minutes_versions,meeting_flow
+from .configuration_queries import ConfigurationQueries
+from .chinese_record import read_meeting_record
 
 class MinutesTaskInput(ComposeInput):
+    chinese_record_profile_id:str|None=None  # Empty string selects original-only coverage.
     operation:Literal['compose','polish']='compose'
     mode:Literal['quick','full']='quick'
     confirm_cloud:bool=False
@@ -28,6 +31,10 @@ def provider_snapshot(profile,provider,model):
 class MinutesJobs:
     def __init__(self,store,meetings,providers,generation):
         self.store=store;self.meetings=meetings;self.providers=providers;self.generation=generation
+    def chinese_record(self,mid,profile_id,segments):
+        services=SimpleNamespace(store=self.store,configurations=ConfigurationQueries(self.store))
+        record=read_meeting_record(services,mid,profile_id,0,len(segments))
+        return record,{'profile_id':profile_id,'counts':record['counts'],'digest':digest(record)}
     def submit(self,mid,body):
         store=self.store;row=self.meetings.meeting(mid)
         if not row['revision'] or not json.loads(row['segments']):raise ValueError('文字稿为空，请先完成转写')
@@ -65,6 +72,11 @@ class MinutesJobs:
                 'settings':settings.model_dump(),'template':template.model_dump(),'profile_id':snapshot['id'],'provider':snapshot,'model':model,
                 'source_minutes_id':source['id'] if source else None,'source_analysis_id':full_analysis['id'] if full_analysis else None,'cloud_confirmed':snapshot['provider_type']=='cloud' and body.confirm_cloud,
                 'also_analyze':body.also_analyze and body.operation=='compose' and settings.method=='ai' and template.id!='online-interview','mode':body.mode}
+            if body.chinese_record_profile_id is not None:
+                if body.operation!='compose' or settings.method!='ai':raise ValueError('中文会议记录只用于 AI 整理全文')
+                record,identity=self.chinese_record(mid,body.chinese_record_profile_id,json.loads(row['segments']))
+                if record['revision']!=row['revision']:raise ValueError('文字稿版本已变化，请刷新后再试')
+                config['chinese_record']=identity
             config['request_key']=digest(config)
             with store.connect() as db:
                 db.execute('BEGIN IMMEDIATE')
@@ -103,6 +115,12 @@ class MinutesJobs:
                 selected=minutes_versions.selected(db,mid,row['revision'])
                 if config['operation']=='polish' and (not selected or selected['id']!=source['id']):raise ValueError('采用的纪要已变化，请重新选择')
             source_document=MeetingMinutes.model_validate(json.loads(source['payload']))
+        if (identity:=config.get('chinese_record')) is not None:
+            record,current_identity=self.chinese_record(mid,identity['profile_id'],segments)
+            if current_identity!=identity:raise ValueError('中文会议记录已变化，请重新生成')
+            translations={item['id']:item['text'] for item in record['items'] if item['status']=='translated'}
+            segments=[{**item,**({'translation_zh':translations[item['id']]} if item['id'] in translations else {})} for item in segments]
+            context['chinese_record_coverage']=identity['counts']
         context['composition']=settings.model_dump()
         if settings.method=='current' and config['operation']=='compose':
             canonical=canonical_source(source_document);payload=canonical.model_dump()
@@ -155,6 +173,7 @@ class MinutesJobs:
                 'edited':False,'ai_generated':True,'provider':snapshot['name'],'provider_type':snapshot['provider_type'],'model':config['model'],
                 'source_transcript_revision':config['revision'],'flow_context_hash':context_hash,'reviewed_attention':context['reviewed_attention'],'reviewed_live_overview':context.get('reviewed_live_overview',[]),'composition':settings.model_dump(),
                 'source_analysis_id':config['source_analysis_id'],'parent_minutes_id':config['source_minutes_id'],'source_minutes_dependencies':[source['id']] if source else []}
+            if identity is not None:provenance['chinese_record']=identity
             if config['operation']=='polish':
                 provenance['llm_polished']=True
                 original=json.loads(source['provenance'])

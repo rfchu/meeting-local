@@ -725,6 +725,7 @@ export default function App() {
       toast((error as Error).message);
     }
   };
+  const [chineseMinutes, setChineseMinutes] = useState<{ id: string; revision: number; profileId: string }>();
   const startMinutes = async () => {
     const target = meetingRef.current;
     if (!target || generating) return;
@@ -762,6 +763,9 @@ export default function App() {
       const response = await api.composeMinutes(target.id, {
         ...options,
         also_analyze: withAnalysis && options.method === "ai",
+        chinese_record_profile_id:
+          options.method === "ai" && chineseMinutes?.id === target.id &&
+          chineseMinutes.revision === target.revision ? chineseMinutes.profileId : undefined,
         ...(profile?.provider_type === "cloud" && options.method !== "analysis"
           ? {
               confirm_cloud: true,
@@ -1324,7 +1328,11 @@ export default function App() {
                       ) || []
                     }
                     onSeek={(time) => seekRef.current?.(time)}
-                    onContinue={() => setWorkspace("minutes")}
+                    onContinue={(profileId) => {
+                      setChineseMinutes({ id: meeting.id, revision: meeting.revision, profileId });
+                      setMinutesOptions((old) => ({ ...old, method: "ai", output_language: "zh" }));
+                      setWorkspace("minutes");
+                    }}
                   />
                 )}
                 {workspace === "transcript" && (

@@ -20,7 +20,7 @@ export default function ChineseMeetingRecord({
   dirty: boolean;
   profiles: LLMConfig[];
   onSeek: (time: number) => void;
-  onContinue: () => void;
+  onContinue: (profileId: string) => void;
 }) {
   const [open, setOpen] = useState(false);
   const [selected, setSelected] = useState("");
@@ -93,7 +93,7 @@ export default function ChineseMeetingRecord({
                 </p>
                 {!data.total && <p>生成文字稿后可查看中文记录。</p>}
                 {data.total > 0 && (
-                  <button onClick={onContinue}>
+                  <button onClick={() => onContinue(profile?.id || "")}>
                     {missing
                       ? "使用当前可用内容，继续整理纪要"
                       : "继续整理纪要"}

@@ -152,6 +152,7 @@ export default function MinutesView(props: Props) {
       ? artifact
       : undefined;
   const readOnly = !!artifact && !current;
+  const coverage = (artifact?.provenance.chinese_record as { counts?: { original: number; translated: number; pending: number; unknown: number } } | undefined)?.counts;
   const generatedOptions = artifact?.provenance.composition as
     MinutesOptions | undefined;
   const analysis = currentAnalysis(meeting),
@@ -598,6 +599,13 @@ export default function MinutesView(props: Props) {
           </select>
         </div>
       </details>
+      {coverage && (
+        <p className="muted">
+          生成时的中文记录：中文原文 {coverage.original} 段 · 译文 {coverage.translated} 段 ·
+          待翻译 {coverage.pending} 段 · 语言待确认 {coverage.unknown} 段。
+          {coverage.pending + coverage.unknown > 0 && "缺少译文的片段使用原文，请核对。"}
+        </p>
+      )}
       {readOnly && (
         <p className="analysis-notice">
           这个版本的来源已变化，仅供查看和导出；请根据当前原文生成新草稿，旧稿仍保留。

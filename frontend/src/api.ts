@@ -1077,6 +1077,7 @@ export const api = {
     id: string,
     body: import("./features/minutes/composition").MinutesOptions & {
       also_analyze?: boolean;
+      chinese_record_profile_id?: string;
       confirm_cloud?: boolean;
       expected_provider?: {
         id: string;

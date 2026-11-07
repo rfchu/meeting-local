@@ -19,6 +19,7 @@ def setup(tmp_path,monkeypatch):
         def generate_ai_minutes(self,model,segments,context,work,run):
             calls.append(('generate',segments,context))
             if hooks.get('generate'):hooks['generate']()
+            if 'result' in hooks:return hooks['result']
             return AIMinutesResult(basic_info=AIMinutesBasicInfo(topic='合成会',source_segment_ids=['s1']),core_content=[AnalysisItem(content='周五交付',source_segment_ids=['s1'])])
         def polish_minutes(self,*args):
             calls.append(('polish',))
@@ -256,3 +257,35 @@ def test_polish_never_overwrites_a_newly_adopted_version(setup,monkeypatch):
     with pytest.raises(ValueError,match='采用稿已变化'):execute(setup,jid)
     assert len(s.all("SELECT * FROM artifacts WHERE kind='meeting_minutes'"))==2
     assert c.get(f'/api/meetings/{m}').json()['active_minutes_id']==second['id']
+
+@pytest.mark.parametrize('template,section',[
+    ('general-meeting','decisions'),('project-weekly','risks'),
+    ('customer-interview','opportunities'),('online-interview','qa'),
+])
+def test_chinese_record_minutes_preserve_original_sources(setup,template,section,monkeypatch):
+    from app.chinese_record import provider_for,translation_path,write_translation
+    from app.configuration_queries import ConfigurationQueries
+    c,s,m,calls,hooks=setup;pid=uid()
+    s.execute("INSERT INTO llm_configs(id,name,provider_type,base_url,model) VALUES(?,?,'local',?,?)",
+              (pid,'translator','http://localhost:1234/v1','translator'))
+    original={'id':'s1','start':0,'end':1,'speaker':'甲','text':'Delivery on Friday'}
+    missing={'id':'s2','start':1,'end':2,'speaker':'乙','text':'Budget still open'}
+    s.save_revision(m,[original,missing],encode({'language':'en'}))
+    services=SimpleNamespace(store=s,configurations=ConfigurationQueries(s))
+    write_translation(translation_path(services,m,original,'en',provider_for(services,pid)),'周五交付')
+    if template=='online-interview':
+        from app.interview import InterviewResult
+        result=AIMinutesResult(basic_info=AIMinutesBasicInfo(topic='合成面试'),interview=InterviewResult(qa=[
+            {'question':'何时交付？','content':'周五','evidence':[{'segment_id':'s1','quote':'Delivery on Friday'}]}]))
+        # Supply a structured result from the same fake inference path.
+        hooks['result']=result
+    from app.analysis import OpenAICompatibleProvider
+    from app.main import LMStudioProvider
+    monkeypatch.setattr(OpenAICompatibleProvider,"generate_ai_minutes",LMStudioProvider.generate_ai_minutes)
+    artifact=execute(setup,enqueue(setup,template_id=template,chinese_record_profile_id=pid))
+    document=json.loads(artifact['payload'])
+    assert document['template_id']==template
+    assert section in {item['id'] for item in document['template_snapshot']['sections']}
+    assert document.get('interviewer_evaluation','')==''
+    assert calls[0][1]==[{**original,'translation_zh':'周五交付'},missing]
+    assert json.loads(artifact['provenance'])['chinese_record']['counts']=={'original':0,'translated':1,'pending':1,'unknown':0}
