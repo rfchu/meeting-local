@@ -1,6 +1,7 @@
+"""Editable, source-grounded meeting minutes and document exports."""
+from functools import partial
 from typing import Literal
 from .interview import InterviewResult,InterviewPreparation
-"""Editable, source-grounded meeting minutes and document exports."""
 from io import BytesIO
 from pathlib import Path
 from xml.sax.saxutils import escape
@@ -47,6 +48,7 @@ class MinutesItem(BaseModel):
 
 
 class MeetingMinutes(BaseModel):
+    output_language:Literal["zh","en"]="zh"
     interview_context:InterviewPreparation|None=None
     interview:InterviewResult|None=None
     interview_reviews:dict[str,Literal['kept','ignored']]=Field(default_factory=dict,max_length=30)
@@ -75,6 +77,51 @@ class MeetingMinutes(BaseModel):
     def all_items(self):
         for section in MINUTES_SECTIONS:
             yield from getattr(self, section)
+
+
+ENGLISH_SECTIONS = {
+    'overview': 'Overview', 'conclusions': 'Discussion',
+    'decisions': 'Decisions', 'action_items': 'Action Items',
+    'open_questions': 'Risks and Open Questions', 'summary': 'Summary',
+}
+
+
+ENGLISH_LABELS = {
+    '日期': 'Date', '地点': 'Location', '会议形式': 'Format',
+    '参会人': 'Attendees', '参会人员': 'Attendees', '记录人': 'Recorder',
+    '会议目的': 'Purpose', '会议基本信息': 'Meeting Information',
+    '决策事项': 'Decision', '负责人': 'Owner', '生效或完成时间': 'Effective / Due Date',
+    '行动项': 'Action Item', '截止时间': 'Due Date', '状态': 'Status',
+    '无明确内容': 'No items recorded', '待确认': 'To be confirmed', '待开始': 'Pending',
+    '原文依据': 'Source References', '编号': 'No.', '时间': 'Time',
+    '发言人': 'Speaker', '原文摘录': 'Original Excerpt', '未分配': 'Unassigned',
+    '负责人：': 'Owner: ', '时间：': 'Time: ', '状态：': 'Status: ',
+    '截止：': 'Due: ', '原文：': 'Source: ',
+    '## 会议目标': '## Purpose', '- 无': '- None',
+    '| 决策事项 | 负责人 | 生效/完成时间 |': '| Decision | Owner | Effective / Due Date |',
+    '| 行动项 | 负责人 | 截止时间 | 状态 |': '| Action Item | Owner | Due Date | Status |',
+    '第 ': 'Page ', ' 页 / 共 ': ' of ', ' 页': '',
+    '进行中': 'In progress', '已完成': 'Done', '已延期': 'Deferred',
+}
+
+
+def minute_label(document, text):
+    return ENGLISH_LABELS.get(text, text) if document.output_language == 'en' else text
+
+
+def set_output_language(document, language):
+    document=document.model_copy(deep=True)
+    document.output_language=language
+    if language=='en':
+        for suffix in ('会议纪要','面试纪要'):
+            if document.title.endswith(suffix):
+                document.title=document.title[:-len(suffix)].rstrip()+' — Meeting Minutes'
+                break
+        if document.template_snapshot:
+            document.template_snapshot['name']='Interview Minutes' if document.interview else 'Meeting Minutes'
+            for section in document.template_snapshot.get('sections',[]):
+                section['title']=ENGLISH_SECTIONS.get(section.get('source'),section['title'])
+    return document
 
 
 def validate_minutes_citations(document: MeetingMinutes, valid_ids: set[str]):
@@ -186,38 +233,38 @@ def _citation_text(item: MinutesItem, segments: dict[str, dict]):
 def minutes_markdown(document: MeetingMinutes, segments: list[dict], include_citations=False):
     by_id = {segment["id"]: segment for segment in segments}
     lines = [f"# {document.title}", ""]
-    metadata = (("日期", document.meeting_date), ("地点", document.location),
-                ("会议形式", document.meeting_form), ("参会人", document.attendees), ("记录人", document.recorder))
+    metadata = ((minute_label(document, "日期"), document.meeting_date), (minute_label(document, "地点"), document.location),
+                (minute_label(document, "会议形式"), document.meeting_form), (minute_label(document, "参会人"), document.attendees), (minute_label(document, "记录人"), document.recorder))
     for label, value in metadata:
-        if value: lines.append(f"**{label}：** {value}")
+        if value: lines.append(f"**{minute_label(document, label)}:** {value}" if document.output_language=="en" else f"**{label}：** {value}")
     if any(value for _, value in metadata): lines.append("")
-    if document.purpose: lines.extend(["## 会议目标", "", document.purpose, ""])
+    if document.purpose: lines.extend([minute_label(document, "## 会议目标"), "", document.purpose, ""])
     labels, sections = _style_layout(document)
     for section in sections:
         lines.extend([f"## {labels[section]}", ""])
         items = getattr(document, section)
         if not items:
-            lines.extend(["- 无", ""]); continue
+            lines.extend([minute_label(document, "- 无"), ""]); continue
         if _section_kind(document,section) == "decision_table":
-            lines.extend(["| 决策事项 | 负责人 | 生效/完成时间 |", "| --- | --- | --- |"]) 
+            lines.extend([minute_label(document, "| 决策事项 | 负责人 | 生效/完成时间 |"), "| --- | --- | --- |"])
             for item in items:
-                content = _content_with_ref(item, by_id, include_citations)
-                lines.append(f"| {_md_cell(content)} | {_md_cell(item.owner or '待确认')} | {_md_cell(item.due_date or '待确认')} |")
+                content = _content_with_ref(item, by_id, include_citations, document.output_language)
+                lines.append(f"| {_md_cell(content)} | {_md_cell(item.owner or minute_label(document, '待确认'))} | {_md_cell(item.due_date or minute_label(document, '待确认'))} |")
             lines.append(""); continue
         if _section_kind(document,section) == "action_table":
-            lines.extend(["| 行动项 | 负责人 | 截止时间 | 状态 |", "| --- | --- | --- | --- |"]) 
+            lines.extend([minute_label(document, "| 行动项 | 负责人 | 截止时间 | 状态 |"), "| --- | --- | --- | --- |"])
             for item in items:
-                content = _content_with_ref(item, by_id, include_citations)
-                lines.append(f"| {_md_cell(content)} | {_md_cell(item.owner or '待确认')} | {_md_cell(item.due_date or '待确认')} | {_md_cell(item.status or '待开始')} |")
+                content = _content_with_ref(item, by_id, include_citations, document.output_language)
+                lines.append(f"| {_md_cell(content)} | {_md_cell(item.owner or minute_label(document, '待确认'))} | {_md_cell(item.due_date or minute_label(document, '待确认'))} | {_md_cell(minute_label(document, item.status or '待开始'))} |")
             lines.append(""); continue
         for item in items:
             details = []
-            if item.owner: details.append("负责人：" + item.owner)
-            if item.due_date: details.append("截止：" + item.due_date)
-            if item.status: details.append("状态：" + item.status)
+            if item.owner: details.append(minute_label(document, "负责人：") + item.owner)
+            if item.due_date: details.append(minute_label(document, "截止：") + item.due_date)
+            if item.status: details.append(minute_label(document, "状态：") + minute_label(document,item.status))
             if include_citations:
                 refs = _citation_text(item, by_id)
-                if refs: details.append("原文：" + refs)
+                if refs: details.append(minute_label(document, "原文：") + refs)
             lines.append(f"- {item.content}" + (f"（{'；'.join(details)}）" if details else ""))
         lines.append("")
     return "\n".join(lines).rstrip() + "\n"
@@ -225,6 +272,12 @@ def minutes_markdown(document: MeetingMinutes, segments: list[dict], include_cit
 
 def _style_layout(value):
     if isinstance(value, MeetingMinutes):
+        if value.output_language=='en':
+            labels=({'overview':'Candidate Background','conclusions':'Questions and Answers',
+                     'decisions':'Competency Evidence','action_items':'Follow-up Actions',
+                     'open_questions':'Reviewed Concerns','summary':'Interview Summary'}
+                    if value.interview else ENGLISH_SECTIONS)
+            return labels,MINUTES_SECTIONS
         snapshot=value.template_snapshot
         if snapshot:
             try:
@@ -265,11 +318,11 @@ def _md_cell(value):
     return str(value).replace("|", "\\|").replace("\n", "<br>")
 
 
-def _content_with_ref(item, by_id, include_citations):
+def _content_with_ref(item, by_id, include_citations, output_language="zh"):
     content = item.content
     if include_citations:
         refs = _citation_text(item, by_id)
-        if refs: content += f"（原文：{refs}）"
+        if refs: content += f" (Source: {refs})" if output_language=="en" else f"（原文：{refs}）"
     return content
 
 
@@ -277,6 +330,7 @@ STYLE_NAMES = {"formal":"正式会议纪要","brief":"精简会议纪要","inter
 
 
 def _document_label(document: MeetingMinutes):
+    if document.output_language=="en":return "Interview Minutes" if document.interview else "Meeting Minutes"
     if document.template_snapshot:
         name=document.template_snapshot.get("name")
         if isinstance(name,str) and name.strip():return name.strip()
@@ -393,9 +447,9 @@ def _add_docx_header_footer(section,document):
     _write_docx_text(left_p,_excerpt(document.title,45),size=8,color=MUTED)
     _write_docx_text(right_p,document.meeting_date or _document_label(document),size=8,color=MUTED)
     footer=section.footer.paragraphs[0];footer.alignment=WD_ALIGN_PARAGRAPH.CENTER
-    _write_docx_text(footer,"第 ",size=8,color=MUTED);_add_docx_field(footer,"PAGE")
-    _write_docx_text(footer," 页 / 共 ",size=8,color=MUTED);_add_docx_field(footer,"NUMPAGES")
-    _write_docx_text(footer," 页",size=8,color=MUTED)
+    _write_docx_text(footer,minute_label(document, "第 "),size=8,color=MUTED);_add_docx_field(footer,"PAGE")
+    _write_docx_text(footer,minute_label(document, " 页 / 共 "),size=8,color=MUTED);_add_docx_field(footer,"NUMPAGES")
+    _write_docx_text(footer,minute_label(document, " 页"),size=8,color=MUTED)
 
 
 def _docx_table(document,headers,rows,widths,item_column=None,reference_numbers=None):
@@ -425,7 +479,7 @@ def _docx_metadata(document,minutes,reference_numbers):
     for label,value in rows:
         cells=table.add_row().cells;_cant_split(table.rows[-1]);cells[0].width=Cm(2.8);cells[1].width=Cm(14)
         for cell in cells:cell.vertical_alignment=WD_CELL_VERTICAL_ALIGNMENT.CENTER;_cell_margins(cell,110,140,110,140)
-        _shade_cell(cells[0],PALE);p=cells[0].paragraphs[0];p.paragraph_format.space_after=Pt(0);_write_docx_text(p,label,bold=True,size=9.5)
+        _shade_cell(cells[0],PALE);p=cells[0].paragraphs[0];p.paragraph_format.space_after=Pt(0);_write_docx_text(p,minute_label(minutes,label),bold=True,size=9.5)
         p=cells[1].paragraphs[0];p.paragraph_format.space_after=Pt(0);_write_docx_text(p,value,size=9.5)
         if label=="会议目的":
             marks=_reference_marks(minutes.basic_info_source_segment_ids,reference_numbers)
@@ -440,45 +494,49 @@ def minutes_docx(document: MeetingMinutes, segments: list[dict], include_citatio
     title=word.add_paragraph(style="Title");_write_docx_text(title,document.title,bold=True,color="000000",size=21)
     subtitle=word.add_paragraph();subtitle.alignment=WD_ALIGN_PARAGRAPH.CENTER;subtitle.paragraph_format.space_after=Pt(16)
     _write_docx_text(subtitle,_document_label(document)+(" · "+document.meeting_date if document.meeting_date else ""),size=9,color=MUTED)
-    number=1;word.add_heading(f"{number} 会议基本信息",level=1);_docx_metadata(word,document,reference_numbers);number+=1
+    number=1;word.add_heading(f"{number} {minute_label(document, '会议基本信息')}",level=1);_docx_metadata(word,document,reference_numbers);number+=1
     labels,sections=_style_layout(document)
     for section_name in sections:
         items=getattr(document,section_name)
         if document.style=="brief" and not items:continue
         word.add_heading(f"{number} {labels[section_name]}",level=1);number+=1
         if not items:
-            paragraph=word.add_paragraph();_write_docx_text(paragraph,"无明确内容",color=MUTED);continue
+            paragraph=word.add_paragraph();_write_docx_text(paragraph,minute_label(document, "无明确内容"),color=MUTED);continue
         if _section_kind(document,section_name)=="decision_table":
-            _docx_table(word,["决策事项","负责人","生效或完成时间"],
-                [[item,item.owner or "待确认",item.due_date or "待确认"] for item in items],[10.1,3,3.7],0,reference_numbers);continue
+            _docx_table(word,[minute_label(document, "决策事项"),minute_label(document, "负责人"),minute_label(document, "生效或完成时间")],
+                [[item,item.owner or minute_label(document, "待确认"),item.due_date or minute_label(document, "待确认")] for item in items],[10.1,3,3.7],0,reference_numbers);continue
         if _section_kind(document,section_name)=="action_table":
-            _docx_table(word,["行动项","负责人","截止时间","状态"],
-                [[item,item.owner or "待确认",item.due_date or "待确认",item.status or "待开始"] for item in items],[8.5,2.6,3.4,2.3],0,reference_numbers);continue
+            _docx_table(word,[minute_label(document, "行动项"),minute_label(document, "负责人"),minute_label(document, "截止时间"),minute_label(document, "状态")],
+                [[item,item.owner or minute_label(document, "待确认"),item.due_date or minute_label(document, "待确认"),minute_label(document, item.status or "待开始")] for item in items],[8.5,2.6,3.4,2.3],0,reference_numbers);continue
         for item in items:
             paragraph=word.add_paragraph(style="List Bullet");paragraph.paragraph_format.keep_together=True
             _write_docx_item(paragraph,item,reference_numbers)
             details=[]
-            if item.owner:details.append("负责人："+item.owner)
-            if item.due_date:details.append("时间："+item.due_date)
-            if item.status:details.append("状态："+item.status)
+            if item.owner:details.append(minute_label(document, "负责人：")+item.owner)
+            if item.due_date:details.append(minute_label(document, "时间：")+item.due_date)
+            if item.status:details.append(minute_label(document, "状态：")+minute_label(document,item.status))
             if details:_write_docx_text(paragraph,"（"+"；".join(details)+"）",size=9,color=MUTED)
     if ordered:
-        word.add_heading(f"{number} 原文依据",level=1)
+        word.add_heading(f"{number} {minute_label(document, '原文依据')}",level=1)
         rows=[]
         for sid in ordered:
-            segment=by_id[sid];rows.append([f"[{reference_numbers[sid]}]",stamp(segment.get("start")),segment.get("speaker") or "未分配",_excerpt(segment.get("text"))])
-        _docx_table(word,["编号","时间","发言人","原文摘录"],rows,[1.5,2.2,2.8,10.3])
+            segment=by_id[sid];rows.append([f"[{reference_numbers[sid]}]",stamp(segment.get("start")),segment.get("speaker") or minute_label(document, "未分配"),_excerpt(segment.get("text"))])
+        _docx_table(word,[minute_label(document, "编号"),minute_label(document, "时间"),minute_label(document, "发言人"),minute_label(document, "原文摘录")],rows,[1.5,2.2,2.8,10.3])
     output=BytesIO();word.save(output);return output.getvalue()
 
 
 class _NumberedCanvas(Canvas):
-    def __init__(self,*args,**kwargs):super().__init__(*args,**kwargs);self._saved_page_states=[]
+    def __init__(self,*args,output_language="zh",**kwargs):
+        super().__init__(*args,**kwargs)
+        self.output_language=output_language
+        self._saved_page_states=[]
     def showPage(self):self._saved_page_states.append(dict(self.__dict__));self._startPage()
     def save(self):
         page_count=len(self._saved_page_states)
         for state in self._saved_page_states:
             self.__dict__.update(state);self.setFillColor(colors.HexColor("#667085"));self.setFont("MinutesBody",8)
-            self.drawCentredString(A4[0]/2,11*mm,f"第 {self._pageNumber} 页 / 共 {page_count} 页");Canvas.showPage(self)
+            label=f"Page {self._pageNumber} of {page_count}" if self.output_language=="en" else f"第 {self._pageNumber} 页 / 共 {page_count} 页"
+            self.drawCentredString(A4[0]/2,11*mm,label);Canvas.showPage(self)
         Canvas.save(self)
 
 
@@ -544,13 +602,13 @@ def minutes_pdf(document: MeetingMinutes, segments: list[dict], include_citation
     frame=Frame(pdf.leftMargin,pdf.bottomMargin,pdf.width,pdf.height,id="content",leftPadding=0,rightPadding=0,topPadding=0,bottomPadding=0)
     pdf.addPageTemplates(PageTemplate(id="minutes",frames=[frame],onPage=_pdf_header))
     story=[_pdf_paragraph(document.title,styles["title"]),_pdf_paragraph(_document_label(document)+(" · "+document.meeting_date if document.meeting_date else ""),styles["subtitle"])]
-    number=1;story.append(_pdf_paragraph(f"{number} 会议基本信息",styles["heading"]));number+=1
-    metadata=[("日期",document.meeting_date),("会议形式",document.meeting_form),("地点",document.location),("参会人员",document.attendees),("记录人",document.recorder),("会议目的",document.purpose)]
+    number=1;story.append(_pdf_paragraph(f"{number} {minute_label(document, '会议基本信息')}",styles["heading"]));number+=1
+    metadata=[(minute_label(document, "日期"),document.meeting_date),(minute_label(document, "会议形式"),document.meeting_form),(minute_label(document, "地点"),document.location),(minute_label(document, "参会人员"),document.attendees),(minute_label(document, "记录人"),document.recorder),(minute_label(document, "会议目的"),document.purpose)]
     metadata=[item for item in metadata if item[1]]
     meta_data=[]
     for label,value in metadata:
-        marks=_reference_marks(document.basic_info_source_segment_ids,reference_numbers) if label=="会议目的" else ""
-        meta_data.append([_pdf_paragraph(label,styles["head"]),_pdf_paragraph(value,styles["cell"],marks)])
+        marks=_reference_marks(document.basic_info_source_segment_ids,reference_numbers) if label==minute_label(document, "会议目的") else ""
+        meta_data.append([_pdf_paragraph(minute_label(document,label),styles["head"]),_pdf_paragraph(value,styles["cell"],marks)])
     meta=LongTable(meta_data,colWidths=[28*mm,142*mm],splitByRow=1)
     meta.setStyle(TableStyle([("BACKGROUND",(0,0),(0,-1),colors.HexColor("#253A5B")),("GRID",(0,0),(-1,-1),0.5,colors.HexColor("#D9E0E8")),
         ("VALIGN",(0,0),(-1,-1),"MIDDLE"),("LEFTPADDING",(0,0),(-1,-1),7),("RIGHTPADDING",(0,0),(-1,-1),7),
@@ -560,25 +618,25 @@ def minutes_pdf(document: MeetingMinutes, segments: list[dict], include_citation
         items=getattr(document,section_name)
         if document.style=="brief" and not items:continue
         story.append(_pdf_paragraph(f"{number} {labels[section_name]}",styles["heading"]));number+=1
-        if not items:story.append(_pdf_paragraph("无明确内容",styles["muted"]));continue
+        if not items:story.append(_pdf_paragraph(minute_label(document, "无明确内容"),styles["muted"]));continue
         if _section_kind(document,section_name)=="decision_table":
-            story.append(_pdf_table(["决策事项","负责人","生效或完成时间"],[[item,item.owner or "待确认",item.due_date or "待确认"] for item in items],[102,30,38],styles,0,reference_numbers));continue
+            story.append(_pdf_table([minute_label(document, "决策事项"),minute_label(document, "负责人"),minute_label(document, "生效或完成时间")],[[item,item.owner or minute_label(document, "待确认"),item.due_date or minute_label(document, "待确认")] for item in items],[102,30,38],styles,0,reference_numbers));continue
         if _section_kind(document,section_name)=="action_table":
-            story.append(_pdf_table(["行动项","负责人","截止时间","状态"],[[item,item.owner or "待确认",item.due_date or "待确认",item.status or "待开始"] for item in items],[86,26,35,23],styles,0,reference_numbers));continue
+            story.append(_pdf_table([minute_label(document, "行动项"),minute_label(document, "负责人"),minute_label(document, "截止时间"),minute_label(document, "状态")],[[item,item.owner or minute_label(document, "待确认"),item.due_date or minute_label(document, "待确认"),minute_label(document, item.status or "待开始")] for item in items],[86,26,35,23],styles,0,reference_numbers));continue
         for item in items:
             details=[]
-            if item.owner:details.append("负责人："+item.owner)
-            if item.due_date:details.append("时间："+item.due_date)
-            if item.status:details.append("状态："+item.status)
+            if item.owner:details.append(minute_label(document, "负责人：")+item.owner)
+            if item.due_date:details.append(minute_label(document, "时间：")+item.due_date)
+            if item.status:details.append(minute_label(document, "状态：")+minute_label(document,item.status))
             text="• "+escape(item.content)
             if details:text+=f' <font size="8.5" color="#667085">（{escape("；".join(details))}）</font>'
             marks=_reference_marks(item.source_segment_ids,reference_numbers)
             if marks:text+=f' <font size="8" color="#667085">{escape(marks)}</font>'
             story.append(Paragraph(text,styles["bullet"]))
     if ordered:
-        story.append(_pdf_paragraph(f"{number} 原文依据",styles["heading"]))
+        story.append(_pdf_paragraph(f"{number} {minute_label(document, '原文依据')}",styles["heading"]))
         rows=[]
         for sid in ordered:
-            segment=by_id[sid];rows.append([f"[{reference_numbers[sid]}]",stamp(segment.get("start")),segment.get("speaker") or "未分配",_excerpt(segment.get("text"))])
-        story.append(_pdf_table(["编号","时间","发言人","原文摘录"],rows,[14,22,28,106],styles))
-    pdf.build(story,canvasmaker=_NumberedCanvas);return output.getvalue()
+            segment=by_id[sid];rows.append([f"[{reference_numbers[sid]}]",stamp(segment.get("start")),segment.get("speaker") or minute_label(document, "未分配"),_excerpt(segment.get("text"))])
+        story.append(_pdf_table([minute_label(document, "编号"),minute_label(document, "时间"),minute_label(document, "发言人"),minute_label(document, "原文摘录")],rows,[14,22,28,106],styles))
+    pdf.build(story,canvasmaker=partial(_NumberedCanvas,output_language=document.output_language));return output.getvalue()

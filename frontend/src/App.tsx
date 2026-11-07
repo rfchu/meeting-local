@@ -165,6 +165,16 @@ export default function App() {
     enabled: !recordingOpen && !recoveryOpen,
   });
   const [libraryOpen, setLibraryOpen] = useState(false);
+  const [transcriptionLanguage, setTranscriptionLanguage] = useState<
+    "auto" | "zh" | "en"
+  >("auto");
+  useEffect(() => {
+    if (meeting)
+      setTranscriptionLanguage(
+        meeting.flow?.brief.source_language ||
+          (meeting.revision ? "zh" : "auto"),
+      );
+  }, [meeting?.id, meeting?.flow?.brief.source_language]);
   const [reviewFocus, setReviewFocus] = useState<number | null>(null);
   const [reviewFocusVersion, setReviewFocusVersion] = useState(0);
   const [reviewSourceOpen, setReviewSourceOpen] = useState(true);
@@ -425,6 +435,14 @@ export default function App() {
       const value = await api.meeting(id);
       if (request !== openingMeeting.current) return null;
       setMeeting(value);
+      setMinutesOptions((old) => ({
+        ...old,
+        output_language:
+          value.flow?.brief.output_language || old.output_language || "zh",
+      }));
+      setTranscriptionLanguage(
+        value.flow?.brief.source_language || (value.revision ? "zh" : "auto"),
+      );
       setTranscriptDirty(false);
       const restored = resolveMeetingView(
         value,
@@ -592,6 +610,7 @@ export default function App() {
             followUpErrors.push("未授权云端纪要，本次只生成文字稿");
           const task = await api.transcribe(created.id, {
             ...plan,
+            source_language: created.flow?.brief.source_language || "zh",
             recording_handoff: true,
             ...(requested && consent
               ? {
@@ -608,7 +627,14 @@ export default function App() {
                           model: profile.model,
                         }
                       : undefined,
-                    settings: { ...minutesOptions, method: "ai" },
+                    settings: {
+                      ...minutesOptions,
+                      output_language:
+                        created.flow?.brief.output_language ||
+                        minutesOptions.output_language ||
+                        "zh",
+                      method: "ai",
+                    },
                   },
                 }
               : {}),
@@ -661,6 +687,7 @@ export default function App() {
         return;
       await api.transcribe(meeting.id, {
         engine,
+        source_language: transcriptionLanguage,
         diarization,
         num_speakers: numSpeakers,
       });
@@ -701,7 +728,15 @@ export default function App() {
   const startMinutes = async () => {
     const target = meetingRef.current;
     if (!target || generating) return;
-    const options = { ...minutesOptions };
+    const options = {
+      ...minutesOptions,
+      output_language:
+        minutesOptions.method === "analysis"
+          ? undefined
+          : minutesOptions.output_language ||
+            target.flow?.brief.output_language ||
+            "zh",
+    };
     if (
       !minutesModel &&
       !(options.method === "analysis" && currentAnalysis(target))
@@ -939,6 +974,23 @@ export default function App() {
                   {meeting.revision ? "重新转写与识别设置" : "转写设置"}
                 </summary>
                 <div className="transcription-options-body">
+                  <label>
+                    原文语言{" "}
+                    <select
+                      aria-label="转写原文语言"
+                      value={transcriptionLanguage}
+                      disabled={transcriptionRunning}
+                      onChange={(event) =>
+                        setTranscriptionLanguage(
+                          event.target.value as typeof transcriptionLanguage,
+                        )
+                      }
+                    >
+                      <option value="auto">自动识别</option>
+                      <option value="zh">中文</option>
+                      <option value="en">英文</option>
+                    </select>
+                  </label>
                   <label className="engine-field">
                     识别引擎{" "}
                     <select
@@ -1602,6 +1654,8 @@ export default function App() {
                 left.payload.template_version ===
                   right.payload.template_version &&
                 left.payload.template_version >= 2 &&
+                (left.payload.output_language || "zh") ===
+                  (right.payload.output_language || "zh") &&
                 !left.payload.interview &&
                 !right.payload.interview
                   ? async (document) => {
@@ -1752,7 +1806,7 @@ function Welcome({
         <div>
           <b>01</b>
           <h3>本地转写</h3>
-          <p>普通话优先，支持长会议分段处理</p>
+          <p>中文与英文，支持自动识别及长会议分段处理</p>
         </div>
         <div>
           <b>02</b>

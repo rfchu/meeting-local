@@ -312,6 +312,34 @@ export default function MinutesView(props: Props) {
               ))}
             </select>
           </label>
+          {options.method !== "analysis" && (
+            <label>
+              纪要输出语言
+              <select
+                aria-label="纪要输出语言"
+                disabled={options.method === "current"}
+                value={
+                  options.output_language ||
+                  meeting.flow?.brief.output_language ||
+                  "zh"
+                }
+                onChange={(event) =>
+                  props.onOptions({
+                    ...options,
+                    output_language: event.target.value as "zh" | "en",
+                  })
+                }
+              >
+                <option value="zh">中文</option>
+                <option value="en">英文</option>
+              </select>
+            </label>
+          )}
+          {options.method === "analysis" && (
+            <p className="muted">
+              沿用会议分析的文字；需要转换语言时选择 AI 整理。
+            </p>
+          )}
           <label>
             内容详略
             <select
@@ -396,6 +424,9 @@ export default function MinutesView(props: Props) {
                 props.onOptions({
                   ...options,
                   method: e.target.value as MinutesOptions["method"],
+                  ...(e.target.value === "current"
+                    ? { output_language: draft?.output_language || "zh" }
+                    : {}),
                 })
               }
             >

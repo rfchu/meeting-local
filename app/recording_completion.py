@@ -1,5 +1,6 @@
 """Read-only publication receipt; ASR coverage uses the same plan as quick completion."""
 from .live_results import plan_ranges, RATE
+from .languages import recording_language
 
 
 def completion_report(store, recordings, live_results, rid, engine):
@@ -8,7 +9,7 @@ def completion_report(store, recordings, live_results, rid, engine):
     duration=float(meeting['duration'] if meeting else session.get('duration',0))
     original=store.directory(rid)/'original'
     size=original.stat().st_size if original.is_file() else 0
-    reused,gaps=plan_ranges(live_results.snapshot(rid,engine),duration)
+    reused,gaps=plan_ranges(live_results.snapshot(rid,engine,recording_language(recordings,rid)),duration)
     covered=sum((row['end_frame']-row['start_frame'])/RATE for row in reused)
     attempts=store.all('SELECT state,COUNT(*) AS count FROM live_asr_ranges WHERE recording_id=? AND engine=? GROUP BY state',(rid,engine))
     states={row['state']:row['count'] for row in attempts}

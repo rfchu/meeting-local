@@ -2,6 +2,7 @@
 import argparse,json,gc,sys,time
 from pathlib import Path
 from qwen_transcribe import transcribe_streamed
+from app.languages import source_language
 from qwen_stream_decoder import MLXStreamDecoder,PrefixHistory,decode_with_fallback
 
 def main():
@@ -19,17 +20,19 @@ def main():
             samples,rate=sf.read(request['audio'],dtype='float32')
             if rate!=16000 or samples.ndim!=1 or not .5<=len(samples)/rate<=45:raise RuntimeError('常驻识别只接受 0.5–45 秒单声道 16kHz 音频')
             mx.random.seed(0)
+            language=source_language(request.get('source_language'))
             context=str(request.get('context',''))[:5000];continuation=request.get('continuation') or {}
-            prefix=history.choose(model._tokenizer,continuation,samples.tobytes(),context) if decoder.enabled else []
+            history_context=language+'\n'+context
+            prefix=history.choose(model._tokenizer,continuation,samples.tobytes(),history_context) if decoder.enabled and language!='auto' else []
             def decode(adapter,prefix_ids):
                 mx.random.seed(0)
-                return transcribe_streamed(model,samples,rate,context=context,decoder=adapter,prefix_tokens=prefix_ids,emit=lambda event:send({**event,'id':rid}))
+                return transcribe_streamed(model,samples,rate,context=context,language=language,decoder=adapter,prefix_tokens=prefix_ids,emit=lambda event:send({**event,'id':rid}))
             text,attempts,prefix,fallback_reason=decode_with_fallback(decode,decoder,prefix)
             if fallback_reason:history.clear()
             metrics={**(decoder.metrics if decoder.enabled else {}),'mode':'prefix' if prefix else 'full','prefix_tokens':len(prefix),
                      'generated_tokens':attempts[0]['generation_tokens'],'fallback':bool(fallback_reason),'fallback_reason':fallback_reason,
                      'final_verified':bool(continuation.get('confirmed',True)) and not prefix}
-            history.update(continuation,samples.tobytes(),context,text)
+            history.update(continuation,samples.tobytes(),history_context,text)
             duration=len(samples)/rate
             send({'type':'qwen_final','id':rid,'segments':[{'start':0,'end':duration,'text':text}] if text else [],
                   'peak_memory_gb':mx.get_peak_memory()/1e9,'tokens':attempts[0]['generation_tokens'],'decoder':metrics})

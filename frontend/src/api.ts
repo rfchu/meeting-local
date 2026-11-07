@@ -606,6 +606,7 @@ export const api = {
     id: string,
     offset: number,
     engine: "whisper" | "qwen" = "whisper",
+    sourceLanguage?: "auto" | "zh" | "en",
   ) =>
     request<{
       ready: boolean;
@@ -613,7 +614,10 @@ export const api = {
       skipped_seconds: number;
       segments: LiveDraftSegment[];
       processing_ms: number;
-    }>(`/native-capture/${id}/draft`, json("POST", { offset, engine })),
+    }>(
+      `/native-capture/${id}/draft`,
+      json("POST", { offset, engine, source_language: sourceLanguage }),
+    ),
   nativeDraftStream: (
     id: string,
     offset: number,
@@ -623,6 +627,7 @@ export const api = {
     windowSeconds: 5 | 10 | 15 = 15,
     contextEnabled = true,
     terms = "",
+    sourceLanguage?: "auto" | "zh" | "en",
   ) =>
     readLiveStream<
       LiveStreamResult & {
@@ -640,6 +645,7 @@ export const api = {
           window_seconds: windowSeconds,
           context_enabled: contextEnabled,
           terms,
+          source_language: sourceLanguage,
         }),
         signal,
       },
@@ -851,6 +857,7 @@ export const api = {
     confirmed = true,
     contextEnabled = true,
     terms = "",
+    sourceLanguage?: "auto" | "zh" | "en",
   ) => {
     const data = new FormData();
     data.append("file", file);
@@ -858,6 +865,7 @@ export const api = {
     data.append("confirmed", String(confirmed));
     data.append("context_enabled", String(contextEnabled));
     data.append("terms", terms);
+    if (sourceLanguage) data.append("source_language", sourceLanguage);
     if (recordingId) data.append("recording_id", recordingId);
     return readLiveStream<LiveStreamResult>(
       "/live-transcribe/stream",
@@ -871,11 +879,13 @@ export const api = {
     engine: "whisper" | "qwen" = "whisper",
     recordingId?: string,
     signal?: AbortSignal,
+    sourceLanguage?: "auto" | "zh" | "en",
   ) => {
     const data = new FormData();
     data.append("file", file);
     data.append("offset", String(offset));
     data.append("engine", engine);
+    if (sourceLanguage) data.append("source_language", sourceLanguage);
     if (recordingId) data.append("recording_id", recordingId);
     return request<{
       segments: LiveDraftSegment[];
@@ -905,6 +915,7 @@ export const api = {
     id: string,
     body: {
       engine: string;
+      source_language?: "auto" | "zh" | "en";
       diarization: boolean;
       num_speakers: number;
       completion_mode?: "quick" | "full";

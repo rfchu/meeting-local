@@ -1,4 +1,5 @@
 """Meetings HTTP routes; shared services are supplied by the composition root."""
+from ..languages import configure_asr, meeting_languages
 from ..resources import optional_slot
 from ..task_management import retry_blocker, classify
 from ..model_preferences import resolve_profile
@@ -65,8 +66,11 @@ def register_routes(app,services:ApplicationServices):
     @app.put('/api/meeting-preparation')
     def set_preparation(body:MeetingBriefInput):
         if body.previous_meeting_id and not store.one('SELECT id FROM meetings WHERE id=?',(body.previous_meeting_id,)):raise HTTPException(409,'关联会议不存在')
-        store.execute('INSERT OR REPLACE INTO meeting_preparation(id,payload) VALUES(1,?)',(encode(body.model_dump()),))
-        return body.model_dump()
+        value=body.model_dump()
+        for key in ('source_language','output_language'):
+            if value.get(key) is None:value.pop(key,None)
+        store.execute('INSERT OR REPLACE INTO meeting_preparation(id,payload) VALUES(1,?)',(encode(value),))
+        return value
 
 
     @app.put('/api/meeting-library')
@@ -400,17 +404,23 @@ def register_routes(app,services:ApplicationServices):
             if not (recordings.root/mid/'session.json').exists():raise HTTPException(409,'会后交接仅适用于本机录音')
             existing=store.one('SELECT id FROM jobs WHERE id=? AND meeting_id=?',(jid,mid))
             if existing:return {'id':existing['id'],'reused':True}
-        provider=get_asr_provider(body.engine)
+        language=body.source_language or meeting_languages(store,mid)['source_language']
+        provider=configure_asr(get_asr_provider(body.engine),language)
         if body.completion_mode!='quick' and not provider.ready(): raise HTTPException(409,f'{provider.label} 尚未就绪，请先安装对应模型')
         if body.completion_mode=='quick' and not (recordings.root/mid/'session.json').exists():raise HTTPException(409,'快速完成仅适用于本机实时录音')
         if body.completion_mode!='quick' and body.diarization and not LocalDiarization().ready(): raise HTTPException(409,'尚未配置本地发言人模型')
+        if body.minutes_followup and body.minutes_followup.settings.output_language is None:
+            body.minutes_followup.settings.output_language=meeting_languages(store,mid)['output_language']
         try:followup=prepare_auto_minutes(store,body.minutes_followup) if body.minutes_followup else None
         except (ValueError,RuntimeError) as error:raise HTTPException(409,str(error))
         with store.connect() as db:
             db.execute('BEGIN IMMEDIATE')
             if body.recording_handoff and db.execute('SELECT id FROM jobs WHERE id=?',(jid,)).fetchone():return {'id':jid,'reused':True}
             if db.execute("SELECT 1 FROM jobs WHERE meeting_id=? AND state IN ('running','queued')",(mid,)).fetchone(): raise HTTPException(409,'已有任务正在处理')
-            db.execute('INSERT INTO jobs(id,meeting_id,state,stage,config) VALUES(?,?,?,?,?)',(jid,mid,'queued','等待处理',encode({'engine':body.engine,'chunk_seconds':provider.chunk_seconds,'punctuation':provider.needs_punctuation,'diarization':body.diarization,'num_speakers':body.num_speakers,'base_revision':row['revision'],'engine_identity':provider.identity(),'pipeline_version':2,'minutes_followup':followup,'completion_mode':body.completion_mode,'live_snapshot':live_results.snapshot(mid,body.engine) if body.completion_mode=='quick' else []})))
+            if body.source_language is not None:
+                current_brief=meeting_flow.brief(db,mid)
+                meeting_flow.save_brief(db,mid,{**current_brief,'source_language':language})
+            db.execute('INSERT INTO jobs(id,meeting_id,state,stage,config) VALUES(?,?,?,?,?)',(jid,mid,'queued','等待处理',encode({'engine':body.engine,'source_language':language,'chunk_seconds':provider.chunk_seconds,'punctuation':provider.needs_punctuation,'diarization':body.diarization,'num_speakers':body.num_speakers,'base_revision':row['revision'],'engine_identity':provider.identity(),'pipeline_version':2,'minutes_followup':followup,'completion_mode':body.completion_mode,'live_snapshot':live_results.snapshot(mid,body.engine,language) if body.completion_mode=='quick' else []})))
         return {'id':jid,'reused':False}
 
 

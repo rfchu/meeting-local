@@ -1,4 +1,5 @@
 """Expose completed transcription work without publishing an incomplete formal revision."""
+from .languages import configure_asr
 import hashlib,json,math,wave
 from pathlib import Path
 from .db import encode,uid
@@ -10,7 +11,7 @@ from .providers import get_asr_provider,checkpoint_identity_matches,merge_overla
 
 def collect_progress(store,job):
     config=json.loads(job['config']);folder=store.directory(job['meeting_id'])/job['id']
-    provider=get_asr_provider(config.get('engine','whisper'))
+    provider=configure_asr(get_asr_provider(config.get('engine','whisper')),config.get('source_language'))
     if config.get('engine_identity') and not checkpoint_identity_matches(provider.engine_id,config['engine_identity'],provider.identity()):return None
     try:
         with wave.open(str(folder/'audio.wav')) as wav:duration=wav.getnframes()/wav.getframerate()

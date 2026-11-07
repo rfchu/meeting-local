@@ -61,3 +61,8 @@ test('adoption stays blocked during unsaved transcript edits or a revision misma
   assert.match(minutesAdoptionBlockReason(meeting,{revision:1,stale:false},false),/来源已变化/);
   assert.match(minutesAdoptionBlockReason(meeting,{revision:2,stale:true},false),/来源已变化/);
 });
+
+test('language comparison treats older documents as Chinese and detects translated versions',()=>{
+  assert.equal(compareDocuments(doc(),doc({output_language:'zh'})).metadataChanges,0);
+  assert.equal(compareDocuments(doc(),doc({output_language:'en'})).metadataChanges,1);
+});

@@ -78,6 +78,7 @@ export function compareDocuments(left: MeetingMinutes, right: MeetingMinutes) {
   const originals = [canonicalMinutes(left), canonicalMinutes(right)];
   const metadata = (
     [
+      ["output_language", "输出语言"],
       ["title", "标题"],
       ["meeting_date", "日期"],
       ["meeting_form", "会议形式"],
@@ -88,9 +89,11 @@ export function compareDocuments(left: MeetingMinutes, right: MeetingMinutes) {
     ] as const
   ).map(([key, label]) => ({
     label,
-    left: originals[0][key] || "",
-    right: originals[1][key] || "",
-    changed: (originals[0][key] || "") !== (originals[1][key] || ""),
+    left: originals[0][key] || (key === "output_language" ? "zh" : ""),
+    right: originals[1][key] || (key === "output_language" ? "zh" : ""),
+    changed:
+      (originals[0][key] || (key === "output_language" ? "zh" : "")) !==
+      (originals[1][key] || (key === "output_language" ? "zh" : "")),
   }));
   const sections = Object.entries(minutesSectionLabels).map(([key, title]) => {
     const name = key as keyof typeof minutesSectionLabels;

@@ -5,6 +5,7 @@ import type {
   LiveStreamResult,
 } from "./liveStream";
 export interface SessionConfig {
+  source_language?: "auto" | "zh" | "en";
   engine?: "qwen" | "whisper";
   responsive: boolean;
   context_enabled: boolean;

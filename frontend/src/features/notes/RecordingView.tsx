@@ -354,7 +354,7 @@ export default function RecordingView({
       {state === "idle" ? (
         <RecordingSetupBar
           source={sourceLabel}
-          recognition={`${engineName} · ${draftEngine === "qwen" && streamEnabled ? (responsiveMode ? "短片段模式" : "逐字推送") : "分段识别"}`}
+          recognition={`${engineName} · ${({ auto: "自动识别", zh: "中文", en: "英文" } as const)[brief.source_language || "auto"]} · ${draftEngine === "qwen" && streamEnabled ? (responsiveMode ? "短片段模式" : "逐字推送") : "分段识别"}`}
           outcome={
             completionMode === "none"
               ? "仅保存录音与简记"
@@ -392,7 +392,11 @@ export default function RecordingView({
         <div className="recording-session-strip" aria-label="当前录音方案">
           <strong>{brief.title || "本次会议"}</strong>
           <span>{sourceLabel}</span>
-          <span>{recordOnly ? "仅录音与简记" : engineName}</span>
+          <span>
+            {recordOnly
+              ? "仅录音与简记"
+              : `${engineName} · ${({ auto: "自动识别", zh: "中文", en: "英文" } as const)[brief.source_language || "zh"]}`}
+          </span>
           <span>
             {postGoal === "minutes" && !recordOnly
               ? "会后整理 AI 纪要"

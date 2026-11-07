@@ -1,4 +1,5 @@
 export type MinutesOptions = {
+  output_language?: "zh" | "en";
   template_id: string;
   detail_level: "brief" | "standard" | "detailed";
   audience: "external" | "internal";
@@ -16,6 +17,9 @@ export function readMinutesOptions(): MinutesOptions {
       localStorage.getItem("tingji.minutes.options.v1") || "{}",
     );
     return {
+      ...(["en", "zh"].includes(raw.output_language)
+        ? { output_language: raw.output_language }
+        : {}),
       template_id:
         typeof raw.template_id === "string"
           ? raw.template_id

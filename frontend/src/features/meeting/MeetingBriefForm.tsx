@@ -1,5 +1,7 @@
 import type { MeetingBrief, MeetingSummary } from "../../types";
 export const emptyBrief: MeetingBrief = {
+  source_language: "auto",
+  output_language: "zh",
   title: "",
   purpose: "",
   agenda: "",
@@ -29,6 +31,41 @@ export default function MeetingBriefForm({
   ] as const;
   return (
     <fieldset disabled={disabled} className="meeting-brief-form">
+      <label>
+        原文语言
+        <select
+          aria-label="会议原文语言"
+          value={value.source_language || "zh"}
+          onChange={(event) =>
+            onChange({
+              ...value,
+              source_language: event.target
+                .value as MeetingBrief["source_language"],
+            })
+          }
+        >
+          <option value="auto">自动识别</option>
+          <option value="zh">中文</option>
+          <option value="en">英文</option>
+        </select>
+      </label>
+      <label>
+        纪要输出语言
+        <select
+          aria-label="会议纪要输出语言"
+          value={value.output_language || "zh"}
+          onChange={(event) =>
+            onChange({
+              ...value,
+              output_language: event.target
+                .value as MeetingBrief["output_language"],
+            })
+          }
+        >
+          <option value="zh">中文</option>
+          <option value="en">英文</option>
+        </select>
+      </label>
       {fields.map(([key, label, max]) => (
         <label key={key}>
           {label}

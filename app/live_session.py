@@ -1,4 +1,5 @@
 """Recording-bound ASR supervisor. Subscribers never own inference lifetime."""
+from .languages import configure_asr, recording_language
 from .resource_policy import sync_live_demand
 import asyncio,hashlib,io,json,math,os,shutil,time,unicodedata,wave
 from contextlib import aclosing
@@ -64,7 +65,7 @@ class LiveSessions:
             try:duration=self.native.status(rid,touch=False).get('duration',session['duration'])
             except (OSError,ValueError):duration=session['duration']
         else:duration=max(session['duration'],self.input_end(rid)/RATE)
-        rows,_=plan_ranges(self.cache.snapshot(rid,json.loads(row['config']).get('engine','qwen')),duration)
+        rows,_=plan_ranges(self.cache.snapshot(rid,json.loads(row['config']).get('engine','qwen'),json.loads(row['config']).get('source_language','zh')),duration)
         for record in rows:
             segments.extend(dict(s,live_range_id=record['id'],live_segment_index=i) for i,s in enumerate(record['segments']))
         return {'type':'snapshot','protocol_version':1,'recording_id':rid,'engine':json.loads(row['config']).get('engine','qwen'),'seq':row['seq'],'status':row['status'],'segments':segments,
@@ -105,6 +106,7 @@ class LiveSessions:
     async def start(self,rid,config):
         if self.closed:raise ValueError('服务正在关闭')
         config={'engine':'qwen','prefix_enabled':True,**config}
+        config['source_language']=recording_language(self.recordings,rid,config.get('source_language'))
         if config['engine'] not in ('qwen','whisper'):raise ValueError('不支持的实时识别引擎')
         if config['engine']=='whisper':config.update(responsive=False,prefix_enabled=False,context_enabled=False,terms='')
         session=self.recordings.read(rid)
@@ -113,10 +115,10 @@ class LiveSessions:
         if source=='native' and self.native.status(rid,touch=False).get('state') not in ('recording','paused'):raise ValueError('原生采集未运行，已有结果仍可查看')
         row=self.store.one('SELECT * FROM live_sessions WHERE recording_id=?',(rid,))
         if row and row['status']=='stopped':raise ValueError('实时会话已结束，已有结果仍可查看')
-        if row and {'engine':'qwen','prefix_enabled':True,**json.loads(row['config'])}!=config:raise ValueError('正在运行的实时会话不能更换识别配置')
+        if row and {'engine':'qwen','prefix_enabled':True,'source_language':'zh',**json.loads(row['config'])}!=config:raise ValueError('正在运行的实时会话不能更换识别配置')
         if not row:
             # Adopt old completed ranges without re-recognizing them after an upgrade.
-            ranges,_=plan_ranges(self.cache.snapshot(rid,config['engine']),86400)
+            ranges,_=plan_ranges(self.cache.snapshot(rid,config['engine'],config['source_language']),86400)
             cursor=max((r['end_frame'] for r in ranges),default=0)
             self.store.execute("INSERT INTO live_sessions(recording_id,source,config,cursor) VALUES(?,?,?,?)",(rid,source,encode(config),cursor))
         self.ensure(rid)
@@ -251,12 +253,12 @@ class LiveSessions:
                     if window.get('boundary_reason')=='preview':window.update(boundary_reason='stop',extending=False)
                 if config.get('engine','qwen')=='qwen':window.update(self.continuation(rid,window,break_at))
                 payload=window.pop('payload');window.pop('silent',None);result=None;failure=None;last_sent=0
-                iterator=None if config.get('engine')=='whisper' else qwen_events(self.provider(),self.cache,self.asr_lock,payload,window['offset'],rid,row['source'],self.store.root,window,
+                iterator=None if config.get('engine')=='whisper' else qwen_events(configure_asr(self.provider(),config.get('source_language')),self.cache,self.asr_lock,payload,window['offset'],rid,row['source'],self.store.root,window,
                     resident=self.resident,confirmed=window['confirmed'],context_enabled=config['context_enabled'],terms=config['terms'],continuation={'key':rid+':'+str(round(window['offset']*RATE)),'enabled':config.get('prefix_enabled',True) and config['responsive'],
                     'confirmed':window['confirmed'],'previous_text':previous,'stable_text':stable})
                 if config.get('engine')=='whisper':
                     if not self.batch_provider:raise ValueError('Whisper 托管识别尚未配置')
-                    iterator=whisper_events(self.batch_provider(),self.cache,self.asr_lock,payload,window['offset'],rid,row['source'],self.store.root,window)
+                    iterator=whisper_events(configure_asr(self.batch_provider(),config.get('source_language')),self.cache,self.asr_lock,payload,window['offset'],rid,row['source'],self.store.root,window)
                 async with aclosing(iterator):
                     async for line in iterator:
                         event=json.loads(line)

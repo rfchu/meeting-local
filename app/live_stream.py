@@ -61,7 +61,7 @@ async def qwen_events(provider,cache,lock,payload,offset,rid,source,root,window=
         sequence+=1;return json.dumps(item,ensure_ascii=False)+'\n'
     try:
         cached=None
-        context=recognition_context(cache,rid,offset,terms,context_enabled)
+        context=recognition_context(cache,rid,offset,terms,context_enabled,getattr(provider,'language','zh'))
         identity=provider.identity()
         if context:identity={"model":identity,"context":context,"live_version":2}
         if rid:aid,cached=cache.begin(rid,source,'qwen',offset,duration,payload,identity)

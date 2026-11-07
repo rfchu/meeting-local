@@ -1,6 +1,7 @@
 """Durable, range-bound live ASR attempts and immutable fast-completion plans."""
 import hashlib,json,math,time
 from .db import uid,encode
+from .languages import identity_language, source_language
 
 RATE=16000
 
@@ -27,6 +28,7 @@ class LiveResults:
         with self.recordings.lock:
             session=self.check_session(rid,source)
             session['draft_engine']=engine
+            session['source_language']=identity_language(identity)
             self.recordings.write(self.recordings.folder(rid)/'session.json',session)
         start=round(offset*RATE);end=start+round(duration*RATE)
         digest=hashlib.sha256(payload).hexdigest();identity=encode(identity)
@@ -48,13 +50,14 @@ class LiveResults:
             changed=db.execute("UPDATE live_asr_ranges SET state='failed',error=?,updated=CURRENT_TIMESTAMP WHERE id=? AND state='running'",(str(error)[:1000],aid)).rowcount
             row=db.execute('SELECT recording_id FROM live_asr_ranges WHERE id=?',(aid,)).fetchone() if changed else None
         if row:self.recordings.event('asr.failed',row['recording_id'])
-    def snapshot(self,rid,engine):
+    def snapshot(self,rid,engine,language=None):
         rows=self.store.all("SELECT * FROM live_asr_ranges WHERE recording_id=? AND engine=? AND state='completed' ORDER BY rowid DESC",(rid,engine))
         accepted={}
         for correction in self.store.all("SELECT * FROM live_corrections WHERE recording_id=? AND state='accepted'",(rid,)):
             accepted.setdefault(correction['range_id'],[]).append(correction)
         seen=set();result=[]
         for row in rows:
+            if language is not None and identity_language(row['identity'])!=source_language(language):continue
             key=(row['start_frame'],row['end_frame'])
             if key in seen:continue
             seen.add(key);row['segments']=json.loads(row['segments'])
@@ -72,7 +75,10 @@ class LiveResults:
             if session.get('source')=='macos':
                 try:duration=json.loads((self.recordings.folder(rid)/'capture.json').read_text()).get('duration',duration)
                 except (FileNotFoundError,ValueError):pass
-        rows=self.snapshot(rid,engine);reused,gaps=plan_ranges(rows,duration)
+        language=session.get('source_language') or (session.get('brief') or {}).get('source_language') or 'zh'
+        live=self.store.one('SELECT config FROM live_sessions WHERE recording_id=?',(rid,))
+        if live:language=json.loads(live['config']).get('source_language') or language
+        rows=self.snapshot(rid,engine,language);reused,gaps=plan_ranges(rows,duration)
         states=self.store.all('SELECT state,COUNT(*) AS count FROM live_asr_ranges WHERE recording_id=? AND engine=? GROUP BY state',(rid,engine))
         attempts=self.store.all("SELECT id,start_frame,end_frame,state,error FROM live_asr_ranges WHERE recording_id=? AND engine=? AND state!='completed' ORDER BY rowid DESC LIMIT 50",(rid,engine))
         return {'engine':engine,'duration':duration,'covered_seconds':sum((r['end_frame']-r['start_frame'])/RATE for r in reused),

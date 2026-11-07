@@ -76,21 +76,24 @@ def project(document):
     if document.template_id!=TEMPLATE_ID or not document.interview:return document
     from .minutes import MinutesItem
     data=document.interview
+    english=document.output_language=='en'
     if not document.interviewer_evaluation.strip():document.interview_evaluation_needs_review=False
     def item(value,text=None):return MinutesItem(content=(text or value.content),source_segment_ids=list(dict.fromkeys(e.segment_id for e in value.evidence)),owner=getattr(value,'owner',None),due_date=getattr(value,'due_date',None))
     document.overview=[item(x) for x in data.background]
     context=document.interview_context
     if context:
-        labels={'candidate':'候选人（代称）','role':'应聘岗位','round':'面试轮次','interviewers':'计划面试官','focus':'本轮考察重点'}
+        labels=({'candidate':'Candidate','role':'Role','round':'Round','interviewers':'Planned Interviewers','focus':'Focus'}
+                if english else {'candidate':'候选人（代称）','role':'应聘岗位','round':'面试轮次','interviewers':'计划面试官','focus':'本轮考察重点'})
         text='；'.join(labels[k]+'：'+getattr(context,k) for k in labels if getattr(context,k).strip())
-        if text:document.overview.insert(0,MinutesItem(content='面试准备（人工填写）：'+text))
-    document.conclusions=[item(x,f'问题：{x.question}\n回答摘要：{x.content}') for x in data.qa]
-    document.decisions=[item(x,f'{x.dimension}｜{COVERAGE[x.coverage]}：{x.content}') for x in data.competencies]
-    document.open_questions=[item(x,f'关注点：{x.content}\n依据说明：{x.reason}\n建议追问：{x.followup}') for i,x in enumerate(data.concerns) if document.interview_reviews.get(str(i))=='kept']
+        if text:document.overview.insert(0,MinutesItem(content=('Interview Preparation (manually entered): ' if english else '面试准备（人工填写）：')+text))
+    document.conclusions=[item(x,f'Question: {x.question}\nAnswer: {x.content}' if english else f'问题：{x.question}\n回答摘要：{x.content}') for x in data.qa]
+    coverage_labels=({'covered':'Related answer found','needs_examples':'More examples needed','not_discussed':'Not discussed','unclear':'Audio review needed'} if english else COVERAGE)
+    document.decisions=[item(x,f'{x.dimension}｜{coverage_labels.get(x.coverage,x.coverage)}：{x.content}') for x in data.competencies]
+    document.open_questions=[item(x,f'Concern: {x.content}\nEvidence: {x.reason}\nFollow-up: {x.followup}' if english else f'关注点：{x.content}\n依据说明：{x.reason}\n建议追问：{x.followup}') for i,x in enumerate(data.concerns) if document.interview_reviews.get(str(i))=='kept']
     document.action_items=[item(x) for x in data.followups]
     document.summary=[item(x) for x in data.summary]
     if document.interviewer_evaluation.strip() and not document.interview_evaluation_needs_review:
-        document.summary.append(MinutesItem(content='面试官评价（人工填写）：'+document.interviewer_evaluation.strip()))
+        document.summary.append(MinutesItem(content=('Interviewer Assessment (manually entered): ' if english else '面试官评价（人工填写）：')+document.interviewer_evaluation.strip()))
     return document
 
 def preserve_review(document,previous,same_inputs):

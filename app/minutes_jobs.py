@@ -1,4 +1,5 @@
 """Durable editorial handoff; consent and source versions bind before enqueue."""
+from .languages import meeting_languages
 import fcntl,hashlib,json
 from types import SimpleNamespace
 from typing import Literal
@@ -35,6 +36,7 @@ class MinutesJobs:
             try:fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
             except BlockingIOError:raise ValueError('本场纪要正在生成，请等待当前请求完成')
             settings=CompositionSettings.model_validate(body.model_dump())
+            settings.output_language=body.output_language or meeting_languages(store,mid)['output_language']
             with store.connect() as db:
                 context,context_hash=meeting_flow.ai_context(db,mid)
                 if body.operation=='polish':source=minutes_versions.selected(db,mid,row['revision'])
@@ -50,6 +52,8 @@ class MinutesJobs:
                 settings=CompositionSettings.model_validate(json.loads(source['provenance']).get('composition') or {'template_id':document.template_id,'method':'current'})
                 template=MinutesTemplate.model_validate(document.template_snapshot) if document.template_snapshot else self.meetings.minutes_template(document.template_id)
             else:template=semantic_template(settings.template_id,self.meetings.minutes_template(settings.template_id))
+            settings.output_language=body.output_language or (document.output_language if body.operation=='polish' else meeting_languages(store,mid)['output_language'])
+            if settings.method=='current' and body.operation!='polish' and source and settings.output_language!=MeetingMinutes.model_validate(json.loads(source['payload'])).output_language:raise ValueError('转换纪要语言请使用 AI 基于全文生成')
             if template.id=='online-interview' and (body.operation!='compose' or settings.method!='ai'):raise ValueError('面试纪要仅支持 AI 整理全文')
             profile=resolve_profile(store,'minutes',body.profile_id)
             provider=OpenAICompatibleProvider(profile) if profile else self.providers.llm()
@@ -88,6 +92,7 @@ class MinutesJobs:
         if any(actual.get(key)!=value for key,value in snapshot.items() if key!='name'):raise ValueError('模型配置或服务地址已变化，请重新确认')
         if snapshot['provider_type']=='cloud' and not config['cloud_confirmed']:raise ValueError('缺少本次云端发送确认')
         settings=CompositionSettings.model_validate(config['settings'])
+        provider.output_language=settings.output_language or 'zh'
         from .minutes_templates import MinutesTemplate
         template=MinutesTemplate.model_validate(config['template'])
         segments=json.loads(row['segments']);source=None;source_document=None
@@ -115,7 +120,8 @@ class MinutesJobs:
                 valid={sid for item in source_document.all_items() for sid in item.source_segment_ids}
                 from .analysis import validate_citations
                 validate_citations(result,valid)
-                document=apply_polished_minutes(source_document,result)
+                from .minutes import set_output_language
+                document=set_output_language(apply_polished_minutes(source_document,result),settings.output_language or 'zh')
             else:
                 result=AIMinutesResult.model_validate(value)
                 if not any(result.all_items()):raise ValueError('模型未返回有效纪要')
@@ -124,7 +130,8 @@ class MinutesJobs:
                     from .interview import InterviewPreparation,project
                     document.interview.validate_sources(segments)
                     document.interview_context=InterviewPreparation.model_validate(context['preparation']['interview']) if context['preparation'].get('interview') else None
-                    document=project(document)
+                    from .minutes import set_output_language
+                    document=set_output_language(project(document),settings.output_language or 'zh')
             validate_minutes_citations(document,{item['id'] for item in segments})
             return document
         worker.update(jid,'后台整理纪要，完成后自动保存草稿',.1)

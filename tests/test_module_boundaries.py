@@ -10,6 +10,11 @@ from app.main import create_app
 def test_http_contract_matches_pre_split_v22(tmp_path):
     app=create_app(tmp_path/'contract',start_worker=False)
     schema=app.openapi()
+    # Language choices are additive. Keep checking the historical contract without them.
+    for definition in schema['components']['schemas'].values():
+        for name in ('source_language','output_language'):
+            definition.get('properties',{}).pop(name,None)
+
     assert schema['paths'].pop('/api/runtime/workspace')
     assert schema['paths'].pop('/api/meeting-library')
     assert schema['components']['schemas'].pop('LibraryUpdate')

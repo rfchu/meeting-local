@@ -82,7 +82,7 @@ class QwenResident:
             self.busy=True;completed=False;rid=uid()
             try:
                 await self._ensure(provider)
-                self.process.stdin.write((json.dumps({'id':rid,'audio':str(audio),'context':context,'continuation':continuation})+'\n').encode());await self.process.stdin.drain()
+                self.process.stdin.write((json.dumps({'id':rid,'audio':str(audio),'context':context,'continuation':continuation,'source_language':getattr(provider,'language','zh')})+'\n').encode());await self.process.stdin.drain()
                 async with asyncio.timeout(90):
                     while line:=await self.process.stdout.readline():
                         try:event=json.loads(line)

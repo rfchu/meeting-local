@@ -13,7 +13,8 @@ def brief(db,mid):
 
 def save_brief(db,mid,value):
     value={**EMPTY_BRIEF,**value}
-    if not value.get('interview'):value.pop('interview',None)
+    for key in ('interview','source_language','output_language'):
+        if not value.get(key):value.pop(key,None)
     previous=value.get('previous_meeting_id')
     if previous and (previous==mid or not db.execute('SELECT id FROM meetings WHERE id=?',(previous,)).fetchone()):raise ValueError('关联会议不存在，或不能关联自己')
     db.execute('INSERT INTO meeting_briefs(meeting_id,payload) VALUES(?,?) ON CONFLICT(meeting_id) DO UPDATE SET payload=excluded.payload,updated=CURRENT_TIMESTAMP',(mid,encode(value)))
@@ -69,7 +70,11 @@ def ai_context(db,mid):
     approved.sort(key=lambda n:n['note_id'])
     # Never silently omit approved priorities; require the user to reduce an oversized set.
     if len(approved)>40 or sum(len(n['content']) for n in approved)>12000:raise ValueError('已确认关注点超过本次整理预算，请减少后再生成纪要')
-    payload={'preparation':brief(db,mid),'reviewed_attention':approved}
+    preparation=brief(db,mid)
+    # Generation preferences have their own task/checkpoint identity.
+    for key in ('source_language','output_language'):
+        preparation.pop(key,None)
+    payload={'preparation':preparation,'reviewed_attention':approved}
     from .terminology import confirmed_context
     terms=confirmed_context(db,mid)
     if terms:payload['confirmed_terminology']=terms
@@ -153,11 +158,17 @@ def flow(store,mid):
 def publish_preparation(db,mid,value):
     if not value:return
     value={**EMPTY_BRIEF,**value}
+    for key in ('source_language','output_language'):
+        if not value.get(key):value.pop(key,None)
     if value.get('previous_meeting_id') and not db.execute('SELECT id FROM meetings WHERE id=?',(value['previous_meeting_id'],)).fetchone():value['previous_meeting_id']=None
     save_brief(db,mid,value)
     if value.get('title','').strip():db.execute('UPDATE meetings SET title=? WHERE id=?',(value['title'].strip(),mid))
     previous=db.execute('SELECT payload FROM meeting_preparation WHERE id=1').fetchone()
-    if previous and json.loads(previous['payload'])==value:db.execute('DELETE FROM meeting_preparation WHERE id=1')
+    if previous:
+        previous_value={k:v for k,v in json.loads(previous['payload']).items() if v is not None}
+        current_value={k:v for k,v in value.items() if v is not None}
+        if previous_value==current_value:
+            db.execute('DELETE FROM meeting_preparation WHERE id=1')
 
 
 def track_action(store,mid,aid,index,body):

@@ -1,4 +1,5 @@
 """HTTP input contracts, independent of application construction."""
+from .languages import SourceLanguage, OutputLanguage
 from .interview import InterviewPreparation
 from typing import Literal
 from pydantic import BaseModel, Field, model_validator
@@ -33,6 +34,7 @@ class RevisionInput(BaseModel):
 
 
 class JobInput(BaseModel):
+    source_language: SourceLanguage | None=None
     recording_handoff: bool=False
     minutes_followup: MinutesFollowupInput | None=None
     completion_mode: Literal["full","quick"]="full"
@@ -155,6 +157,8 @@ class MeetingNoteUpdate(BaseModel):
 
 
 class MeetingBriefInput(BaseModel):
+    source_language: SourceLanguage | None=None
+    output_language: OutputLanguage | None=None
     interview:InterviewPreparation|None=None
     title: str=Field(default='',max_length=200)
     purpose: str=Field(default='',max_length=1000)
@@ -205,6 +209,7 @@ class RecordingFinish(BaseModel):
 
 
 class NativeDraftInput(BaseModel):
+    source_language: SourceLanguage | None=None
     context_enabled: bool=True
     terms: str=Field(default="",max_length=1000)
     engine: Literal["whisper","qwen"]="whisper"
@@ -214,6 +219,7 @@ class NativeDraftInput(BaseModel):
 
 
 class LiveSessionInput(BaseModel):
+    source_language: SourceLanguage | None=None
     engine: Literal["whisper","qwen"]="qwen"
     prefix_enabled: bool=True
     responsive: bool=True
@@ -267,6 +273,7 @@ class MinutesSaveInput(BaseModel):
 
 
 class MinutesPolishInput(BaseModel):
+    output_language: OutputLanguage | None=None
     profile_id: str | None=Field(default=None,max_length=100)
     model: str | None=Field(default=None,max_length=500)
 

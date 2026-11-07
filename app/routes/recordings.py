@@ -1,4 +1,5 @@
 """Recordings HTTP routes; shared services are supplied by the composition root."""
+from ..languages import configure_asr, recording_language, SourceLanguage
 import sqlite3, io, json, subprocess, tempfile, time, wave
 from pathlib import Path
 from typing import Literal
@@ -36,10 +37,11 @@ def register_routes(app,services:ApplicationServices):
     @app.post('/api/live-transcribe')
     async def live_transcribe(file:UploadFile=File(...),offset:float=Form(default=0,ge=0,le=86400,allow_inf_nan=False),
                               engine:Literal['whisper','qwen']=Form(default='whisper'),
-                              recording_id:str|None=Form(default=None),source:Literal['browser','native']=Form(default='browser')):
+                              recording_id:str|None=Form(default=None),source:Literal['browser','native']=Form(default='browser'),
+                              source_language:SourceLanguage|None=Form(default=None)):
         started=time.monotonic();aid=None;locked=False
         try:
-            provider=get_asr_provider(engine)
+            provider=configure_asr(get_asr_provider(engine),recording_language(recordings,recording_id,source_language))
             payload=await file.read(4*1024*1024+1)
             if len(payload)>4*1024*1024:raise HTTPException(413,'实时音频片段最大支持 4MB')
             if not payload:raise HTTPException(400,'实时音频片段为空')
@@ -94,7 +96,8 @@ def register_routes(app,services:ApplicationServices):
     @app.post('/api/live-transcribe/stream')
     async def live_transcribe_stream(file:UploadFile=File(...),offset:float=Form(default=0,ge=0,le=86400,allow_inf_nan=False),
                                     recording_id:str|None=Form(default=None),confirmed:bool=Form(default=True),
-                                    context_enabled:bool=Form(default=True),terms:str=Form(default="",max_length=1000)):
+                                    context_enabled:bool=Form(default=True),terms:str=Form(default="",max_length=1000),
+                                    source_language:SourceLanguage|None=Form(default=None)):
         try:
             payload=await file.read(4*1024*1024+1)
             inspect_audio(payload)
@@ -102,7 +105,7 @@ def register_routes(app,services:ApplicationServices):
         except FileNotFoundError as error:raise HTTPException(404,str(error))
         except ValueError as error:raise HTTPException(400,str(error))
         finally:await file.close()
-        return stream_response(qwen_events(get_asr_provider('qwen'),live_results,live_asr_lock,payload,offset,recording_id,'browser',store.root,resident=resident,confirmed=confirmed,context_enabled=context_enabled,terms=terms))
+        return stream_response(qwen_events(configure_asr(get_asr_provider('qwen'),recording_language(recordings,recording_id,source_language)),live_results,live_asr_lock,payload,offset,recording_id,'browser',store.root,resident=resident,confirmed=confirmed,context_enabled=context_enabled,terms=terms))
 
 
     @app.get('/api/recordings')
@@ -168,7 +171,7 @@ def register_routes(app,services:ApplicationServices):
             return window|{'segments':[],'duration':0,'processing_ms':0}
         payload=window.pop('payload')
         window.pop('silent')
-        result=await live_transcribe(UploadFile(file=io.BytesIO(payload),filename='native-draft.wav'),window['offset'],body.engine,rid,'native')
+        result=await live_transcribe(UploadFile(file=io.BytesIO(payload),filename='native-draft.wav'),window['offset'],body.engine,rid,'native',body.source_language)
         return window|result
 
 
@@ -184,7 +187,7 @@ def register_routes(app,services:ApplicationServices):
                     'result':window|{'segments':[],'duration':0,'processing_ms':0}})+'\n'
             return stream_response(waiting())
         payload=window.pop('payload');window.pop('silent')
-        return stream_response(qwen_events(get_asr_provider('qwen'),live_results,live_asr_lock,payload,window['offset'],rid,'native',store.root,window,resident=resident,confirmed=window.get('confirmed',True),context_enabled=body.context_enabled,terms=body.terms))
+        return stream_response(qwen_events(configure_asr(get_asr_provider('qwen'),recording_language(recordings,rid,body.source_language)),live_results,live_asr_lock,payload,window['offset'],rid,'native',store.root,window,resident=resident,confirmed=window.get('confirmed',True),context_enabled=body.context_enabled,terms=body.terms))
 
 
     @app.post('/api/native-capture/{rid}/recover-control')

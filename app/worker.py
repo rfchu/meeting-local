@@ -1,3 +1,4 @@
+from .languages import configure_asr
 from .resource_policy import sync_live_demand
 from .job_checkpoints import JobCheckpoints,file_digest,validate_segments,ResourceInterrupted,model_files
 import fcntl, hashlib, json, math, os, subprocess, threading, time
@@ -275,7 +276,7 @@ class Worker:
         if config.get('pipeline_version',1)!=2: raise RuntimeError('处理流程已升级，请新建转写任务')
         folder=self.store.directory(mid); work=folder/jid; work.mkdir(exist_ok=True)
         log=work/'worker.log'; run=lambda args:self.run(jid,args,log)
-        provider=get_asr_provider(config.get('engine','whisper'))
+        provider=configure_asr(get_asr_provider(config.get('engine','whisper')),config.get('source_language'))
         if config.get('engine_identity') and not checkpoint_identity_matches(provider.engine_id,config['engine_identity'],provider.identity()):
             raise RuntimeError('识别模型或引擎已变更，请新建转写任务，不能复用旧检查点')
         meeting=self.store.one('SELECT * FROM meetings WHERE id=?',(mid,))
@@ -322,7 +323,7 @@ class Worker:
             segments=merge_overlapping_chunks(chunks)
             segments.sort(key=lambda s:s['start'])
         punctuation=LocalPunctuation()
-        if config.get('completion_mode')!='quick' and config.get('punctuation',provider.needs_punctuation) and punctuation.ready() and segments:
+        if config.get('source_language','zh')=='zh' and config.get('completion_mode')!='quick' and config.get('punctuation',provider.needs_punctuation) and punctuation.ready() and segments:
             self.update(jid,'恢复中文标点',.87)
             inputs=[segments,model_files([punctuation.model,Path(__file__).resolve().parents[1]/'scripts/punctuate.py'])]
             saved=checkpoints.load('punctuated',inputs,lambda value:validate_segments(value,duration))
@@ -344,7 +345,7 @@ class Worker:
         # Save a candidate artifact if the user changed the transcript during inference.
         source_meta=encode({'engine':provider.engine_id,'engine_label':provider.label,'model':Path(provider.model).name,
                             'aligner':Path(provider.aligner).name if hasattr(provider,'aligner') else None,
-                            'language':'zh','job':jid,**reuse_meta})
+                            'language':config.get('source_language') or 'zh','job':jid,**reuse_meta})
         with self.store.connect() as db:
             db.execute('BEGIN IMMEDIATE')
             state=db.execute('SELECT state FROM jobs WHERE id=?',(jid,)).fetchone()

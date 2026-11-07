@@ -124,7 +124,14 @@ export function useRecordingController({
     void api
       .preparation()
       .then((value) => {
-        if (live) setBrief(value);
+        if (live)
+          setBrief({
+            ...value,
+            source_language:
+              value.source_language || preferences.sourceLanguage || "auto",
+            output_language:
+              value.output_language || preferences.outputLanguage || "zh",
+          });
       })
       .catch((e) => toast("会议准备未载入：" + e.message))
       .finally(() => live && setBriefReady(true));
@@ -340,6 +347,8 @@ export function useRecordingController({
     try {
       saved = saveRecordingPreferences(window.localStorage, {
         version: 1,
+        sourceLanguage: brief.source_language || "auto",
+        outputLanguage: brief.output_language || "zh",
         keepAwake,
         silenceReminder,
         autoProcess,
@@ -363,6 +372,8 @@ export function useRecordingController({
   useEffect(() => {
     persistPreferences();
   }, [
+    brief.source_language,
+    brief.output_language,
     captureSource,
     draftEngine,
     streamEnabled,
@@ -386,6 +397,7 @@ export function useRecordingController({
     managedMode && ["recording", "paused"].includes(state),
     {
       engine: draftEngine,
+      source_language: brief.source_language || "zh",
       responsive: responsiveMode,
       context_enabled: contextEnabled,
       terms: recognitionTerms,
@@ -537,7 +549,12 @@ export function useRecordingController({
     sessionRef.current = session;
     notesRef.current = session.notes || [];
     setNotes(session.notes || []);
-    setBrief(session.brief || emptyBrief);
+    setBrief({
+      ...(session.brief || emptyBrief),
+      source_language:
+        session.brief?.source_language || session.source_language || "zh",
+      output_language: session.brief?.output_language || "zh",
+    });
     setCaptureSource(
       session.include_microphone ? "macos-both" : "macos-system",
     );
@@ -845,6 +862,7 @@ export function useRecordingController({
           nativeSessionId,
           nativeDraftOffsetRef.current,
           draftEngine,
+          briefRef.current.source_language || "zh",
         );
         if (!active || !draftEnabledRef.current || !result.ready) return;
         trackResult(result, result.next_offset);
@@ -1094,6 +1112,8 @@ export function useRecordingController({
             offset,
             draftEngine,
             sessionRef.current.id,
+            undefined,
+            briefRef.current.source_language || "zh",
           );
           if (!draftEnabledRef.current) return;
           trackResult(result, offset + encoded.duration);

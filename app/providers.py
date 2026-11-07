@@ -3,6 +3,7 @@ import json, os, shutil, subprocess, time
 from pathlib import Path
 from typing import Protocol
 from .paths import model_root
+from .languages import source_language
 
 BASE=Path(__file__).resolve().parents[1]
 
@@ -16,6 +17,7 @@ class ASRProvider(Protocol):
     def transcribe(self, audio: Path, output: Path, run) -> list[dict]: ...
 
 class WhisperCpp:
+    language="zh"
     engine_id="whisper"
     label="Whisper large-v3-turbo"
     chunk_seconds=300
@@ -27,10 +29,10 @@ class WhisperCpp:
     def ready(self): return locally_resident(self.binary) and locally_resident(self.model)
     def identity(self):
         files=[Path(self.binary),Path(self.model),self.vad]
-        return [{'path':str(p),'size':p.stat().st_size,'mtime_ns':p.stat().st_mtime_ns} for p in files if p.exists()]
+        return [{'path':str(p),'size':p.stat().st_size,'mtime_ns':p.stat().st_mtime_ns} for p in files if p.exists()]+([{'source_language':self.language}] if self.language!='zh' else [])
     def live_command(self,audio,output):
         if not self.ready(): raise RuntimeError('本地识别引擎或模型尚未安装，请运行 scripts/setup.sh')
-        args=[self.binary,'-m',self.model,'-f',str(audio),'-l','zh','-oj','-of',str(output),'-np','-t','8','-ml','80']
+        args=[self.binary,'-m',self.model,'-f',str(audio),'-l',source_language(self.language),'-oj','-of',str(output),'-np','-t','8','-ml','80']
         vad=self.vad
         if locally_resident(vad): args += ['--vad','-vm',str(vad)]
         return args
@@ -49,6 +51,7 @@ class WhisperCpp:
 
 
 class QwenMLX:
+    language="zh"
     engine_id="qwen"
     label="千问 Qwen3-ASR-1.7B · 8-bit"
     # Keep the ASR/forced-alignment input comfortably below the aligner limit.
@@ -84,7 +87,7 @@ class QwenMLX:
         for directory in (self.model,self.aligner):
             path=Path(directory)
             files.extend(p for p in sorted(path.glob('*')) if p.suffix in ('.json','.safetensors','.txt','.model'))
-        return [{'path':str(p),'size':p.stat().st_size,'mtime_ns':p.stat().st_mtime_ns} for p in files if p.is_file()]
+        return [{'path':str(p),'size':p.stat().st_size,'mtime_ns':p.stat().st_mtime_ns} for p in files if p.is_file()]+([{'source_language':self.language}] if self.language!='zh' else [])
 
     def transcribe(self,audio,output,run):
         return self._transcribe(audio,output,run,False)
@@ -96,13 +99,13 @@ class QwenMLX:
         return [self.python,str(BASE/'scripts/qwen_live_server.py'),'--model',self.model]
 
     def stream_command(self,audio,output):
-        return [self.python,str(BASE/'scripts/qwen_transcribe.py'),'--model',self.model,'--aligner',self.aligner,
+        return [self.python,str(BASE/'scripts/qwen_transcribe.py'),'--model',self.model,'--aligner',self.aligner,'--language',self.language,
                 '--audio',str(audio),'--output',str(output),'--draft','--stream-events']
 
     def _transcribe(self,audio,output,run,draft):
         if not self.ready(): raise RuntimeError('千问模型或对齐模型尚未就绪，请运行 bash scripts/setup_qwen.sh')
         result_path=output.with_suffix('.qwen.json')
-        args=[self.python,str(BASE/'scripts/qwen_transcribe.py'),'--model',self.model,'--aligner',self.aligner,
+        args=[self.python,str(BASE/'scripts/qwen_transcribe.py'),'--model',self.model,'--aligner',self.aligner,'--language',self.language,
               '--audio',str(audio),'--output',str(result_path)]
         if draft:args.append('--draft')
         run(args)

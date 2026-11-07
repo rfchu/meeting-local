@@ -1,3 +1,5 @@
+export type SourceLanguage = "auto" | "zh" | "en";
+export type OutputLanguage = "zh" | "en";
 export type Workspace =
   "prepare" | "transcript" | "notes" | "analysis" | "minutes";
 export type JobState =
@@ -74,6 +76,8 @@ export interface InterviewResult {
   summary: InterviewItem[];
 }
 export interface MeetingBrief {
+  source_language?: SourceLanguage | null;
+  output_language?: OutputLanguage | null;
   interview?: InterviewPreparation | null;
   title: string;
   purpose: string;
@@ -200,6 +204,7 @@ export interface LiveDraftSegment {
   text: string;
 }
 export interface RecordingSession {
+  source_language?: SourceLanguage;
   capture_transport?: string;
   include_microphone?: boolean;
   brief?: MeetingBrief;
@@ -402,6 +407,7 @@ export interface MinutesTemplate {
   sections: MinutesTemplateSection[];
 }
 export interface MeetingMinutes {
+  output_language?: OutputLanguage;
   interview?: InterviewResult | null;
   interview_context?: InterviewPreparation | null;
   interview_reviews?: Record<string, "kept" | "ignored">;

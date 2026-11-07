@@ -41,6 +41,7 @@ def prepare(store,body):
     else:
         provider=LMStudioProvider();model=provider.resolve_model(body.model)
         snapshot={'id':None,'name':'LM Studio','provider_type':'local','base_url':provider.base_url,'model':model}
+    if body.settings.output_language is None:body.settings.output_language='zh'
     return {'profile_id':snapshot['id'],'provider':snapshot,'model':model,'settings':body.settings.model_dump(),
             'template':template.model_dump(),'cloud_confirmed':snapshot['provider_type']=='cloud' and body.confirm_cloud}
 
@@ -97,7 +98,8 @@ def process(worker,job):
             from .interview import InterviewPreparation,project
             document.interview.validate_sources(segments)
             document.interview_context=InterviewPreparation.model_validate(context['preparation']['interview']) if context['preparation'].get('interview') else None
-            document=project(document)
+            from .minutes import set_output_language
+            document=set_output_language(project(document),settings.output_language or 'zh')
         validate_minutes_citations(document,{s['id'] for s in segments})
         worker.check(jid);worker.update(jid,'校验原文与保存纪要草稿',.95)
         with store.connect() as db:

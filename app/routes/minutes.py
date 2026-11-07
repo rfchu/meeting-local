@@ -1,4 +1,6 @@
 """Minutes HTTP routes; shared services are supplied by the composition root."""
+from ..languages import meeting_languages
+from ..minutes import set_output_language
 from ..resources import optional_slot
 from ..minutes_jobs import MinutesTaskInput
 from ..model_preferences import resolve_profile
@@ -116,6 +118,7 @@ def register_routes(app,services:ApplicationServices):
         if template.id=='online-interview' and settings.method!='ai':raise HTTPException(409,'线上面试模板请使用 AI 整理全文，问答与证据不能由普通会议分析代替')
         if body.source_minutes_id and not store.one("SELECT id FROM artifacts WHERE id=? AND meeting_id=? AND kind='meeting_minutes'",(body.source_minutes_id,mid)):raise HTTPException(404,'来源纪要不存在')
         if settings.method=='analysis':
+            if settings.output_language=='en':raise HTTPException(409,'规则纪要沿用分析原文，转换输出语言请使用 AI 整理')
             analysis=store.one("SELECT * FROM artifacts WHERE meeting_id=? AND revision=? AND kind='meeting_analysis' ORDER BY created DESC,rowid DESC LIMIT 1",(mid,row['revision']))
             if not analysis:
                 plan=enqueue_analysis(mid,AnalysisJobInput(profile_id=body.profile_id,model=body.model,minutes_followup={'settings':settings.model_dump(),'parent_minutes_id':body.source_minutes_id,'template':template.model_dump()}))
@@ -155,12 +158,16 @@ def register_routes(app,services:ApplicationServices):
     @app.post('/api/meetings/{mid}/minutes/ai',status_code=201)
     def generate_ai_minutes(mid:str,body:AIMinutesGenerateInput,request:Request):
         if 'respond-async' in request.headers.get('Prefer','').lower():
-            return submit_minutes_task(mid,MinutesTaskInput(**(body.composition.model_dump() if body.composition else {'template_id':body.template_id}),profile_id=body.profile_id,model=body.model,source_minutes_id=body.source_minutes_id,mode=body.mode))
+            settings=body.composition.model_dump() if body.composition else {'template_id':body.template_id}
+            settings['output_language']=body.output_language or settings.get('output_language')
+            return submit_minutes_task(mid,MinutesTaskInput(**settings,profile_id=body.profile_id,model=body.model,source_minutes_id=body.source_minutes_id,mode=body.mode))
         return generate_ai_minutes_sync(mid,body)
 
     @minutes_generation.track
     def generate_ai_minutes_sync(mid:str,body:AIMinutesGenerateInput):
         row=meeting(mid);segments=json.loads(row['segments'])
+        output_language=body.output_language or (body.composition.output_language if body.composition else None) or meeting_languages(store,mid)['output_language']
+        if body.composition:body.composition.output_language=output_language
         if not segments:raise HTTPException(409,'文字稿为空，无法生成 AI 会议纪要')
         template=minutes_template(body.composition.template_id if body.composition else body.template_id)
         if body.composition:
@@ -180,6 +187,7 @@ def register_routes(app,services:ApplicationServices):
                     if not source or source['revision']!=row['revision'] or not meeting_flow.artifact_current(db,mid,json.loads(source['provenance'])):raise HTTPException(409,'来源纪要已过期，请选择当前有效版本')
                 source_document=MeetingMinutes.model_validate(json.loads(source['payload']))
                 if source_document.interview:raise HTTPException(409,'面试纪要请重新生成面试草稿，或直接核对结构化内容；不使用通用纪要派生')
+                if source_document.output_language!=output_language:raise HTTPException(409,'转换纪要语言请使用 AI 基于全文生成')
                 canonical=canonical_source(source_document)
                 # Keep unreferenced manual additions outside the rewrite model and reattach verbatim.
                 source_payload=canonical.model_dump()
@@ -210,13 +218,15 @@ def register_routes(app,services:ApplicationServices):
             resource='cloud_llm' if provider_type=='cloud' else 'local_llm'
             with optional_slot(services.resources,'minutes',resource,('inline_minutes',mid),legacy=resource=='local_llm'):
                 result=provider.generate_ai_minutes(model,segments,{'title':row['title'],'date':row['created'][:10],
-                    'known_attendees':speakers,'minutes_template':template.model_dump(),**context},work/'result',run)
+                    'known_attendees':speakers,'minutes_template':template.model_dump(),**context,'output_language':output_language},work/'result',run)
             document=build_from_ai(row['created'],result,body.composition,source_document,template) if body.composition else build_ai_minutes(row['created'],result,template)
+            document=set_output_language(document,output_language)
             if template.id=='online-interview':
                 document.interview.validate_sources(segments)
                 document.interview_context=InterviewPreparation.model_validate(context['preparation']['interview']) if context['preparation'].get('interview') else None
                 from ..interview import project
                 document=project(document)
+            document=set_output_language(document,output_language)
             validate_minutes_citations(document,{segment['id'] for segment in segments})
         except (RuntimeError,ValueError,subprocess.TimeoutExpired) as error:raise HTTPException(409,str(error))
         aid=uid();provenance={'minutes_version':MINUTES_VERSION,'style':'ai','template_id':template.id,
@@ -241,7 +251,7 @@ def register_routes(app,services:ApplicationServices):
     @app.post('/api/meetings/{mid}/minutes/polish',status_code=201)
     def polish_minutes(mid:str,body:MinutesPolishInput,request:Request):
         if 'respond-async' in request.headers.get('Prefer','').lower():
-            return submit_minutes_task(mid,MinutesTaskInput(operation='polish',profile_id=body.profile_id,model=body.model))
+            return submit_minutes_task(mid,MinutesTaskInput(operation='polish',profile_id=body.profile_id,model=body.model,output_language=body.output_language))
         return polish_minutes_sync(mid,body)
 
     @minutes_generation.track
@@ -254,6 +264,7 @@ def register_routes(app,services:ApplicationServices):
             try:polish_context_hash=meeting_flow.ai_context(db,mid)[1]
             except ValueError as error:raise HTTPException(409,str(error))
         document=MeetingMinutes.model_validate(json.loads(source['payload']))
+        output_language=body.output_language or document.output_language
         if document.template_id=='online-interview':raise HTTPException(409,'面试纪要请直接核对结构化内容，或重新生成草稿')
         segments=json.loads(row['segments']);valid_ids={segment['id'] for segment in segments}
         try:validate_minutes_citations(document,valid_ids)
@@ -276,8 +287,9 @@ def register_routes(app,services:ApplicationServices):
                     raise RuntimeError(f'纪要整理进程失败（{completed.returncode}）：{detail}')
             resource='cloud_llm' if provider_type=='cloud' else 'local_llm'
             with optional_slot(services.resources,'minutes',resource,('inline_minutes',mid),legacy=resource=='local_llm'):
+                provider.output_language=output_language
                 result=provider.polish_minutes(model,document,work/'result',run)
-            polished=apply_polished_minutes(document,result)
+            polished=set_output_language(apply_polished_minutes(document,result),output_language)
             validate_minutes_citations(polished,valid_ids)
         except (RuntimeError,ValueError,subprocess.TimeoutExpired) as error:raise HTTPException(409,str(error))
         source_provenance=json.loads(source['provenance'] or '{}')

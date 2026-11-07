@@ -4,8 +4,10 @@ from pydantic import BaseModel,Field
 from .minutes import MeetingMinutes,MinutesItem
 from .minutes_templates import builtin_template,MinutesTemplateSection
 from . import minutes_versions
+from .languages import OutputLanguage
 
 class CompositionSettings(BaseModel):
+    output_language:OutputLanguage|None=None
     template_id:str=Field(default='general-meeting',max_length=100)
     detail_level:Literal['brief','standard','detailed']='standard'
     audience:Literal['external','internal']='external'
@@ -44,14 +46,18 @@ def build_from_ai(created,result,settings,source=None,template=None):
         style='ai',template_id=template.id,template_version=template.version,template_snapshot=template.model_dump(),
         basic_info_source_segment_ids=result.basic_info.source_segment_ids,overview=copy(result.overview),conclusions=copy(result.core_content),
         decisions=copy(result.decisions),action_items=copy(result.action_items,True),open_questions=copy(result.open_questions),summary=copy(result.summary))
+    from .minutes import set_output_language
+    document=set_output_language(document,settings.output_language or 'zh')
     if template.id=='online-interview':
         if not result.interview:raise ValueError('模型未返回结构化面试结果，请使用 AI 整理全文生成')
         from .interview import project
         document.interview=result.interview.model_copy(deep=True)
         document.title=topic if topic.endswith('面试纪要') else topic+('纪要' if topic.endswith('面试') else '面试纪要')
-        return project(document)
+        return set_output_language(project(document),settings.output_language or 'zh')
     if source:
         base=canonical_source(source)
+        if (settings.output_language or 'zh')!=base.output_language:
+            raise ValueError('转换纪要语言请使用 AI 基于全文生成，当前版本派生保留原有决策和人工内容')
         # Editorial variants cannot silently remove or change commitments and manual facts.
         for field in ('decisions','action_items','open_questions'):setattr(document,field,[item.model_copy(deep=True) for item in getattr(base,field)])
         for field in ('overview','conclusions','summary'):

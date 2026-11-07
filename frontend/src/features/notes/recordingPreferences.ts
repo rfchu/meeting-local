@@ -1,5 +1,8 @@
+import type { SourceLanguage, OutputLanguage } from "../../types";
 export type CompletionMode = "quick" | "full" | "none";
 export interface RecordingPreferences {
+  sourceLanguage?: SourceLanguage;
+  outputLanguage?: OutputLanguage;
   version: 1;
   contextEnabled: boolean;
   prefixEnabled: boolean;
@@ -19,6 +22,8 @@ export interface RecordingPreferences {
 export const RECORDING_PREFERENCES_KEY = "tingji.recording.preferences.v1";
 export const DEFAULT_RECORDING_PREFERENCES: RecordingPreferences = {
   version: 1,
+  sourceLanguage: "auto",
+  outputLanguage: "zh",
   contextEnabled: true,
   prefixEnabled: true,
   recognitionTerms: "",
@@ -45,6 +50,10 @@ export function readRecordingPreferences(
       return { ...DEFAULT_RECORDING_PREFERENCES };
     return {
       ...DEFAULT_RECORDING_PREFERENCES,
+      sourceLanguage: ["auto", "zh", "en"].includes(value.sourceLanguage)
+        ? value.sourceLanguage
+        : "auto",
+      outputLanguage: value.outputLanguage === "en" ? "en" : "zh",
       prefixEnabled:
         typeof value.prefixEnabled === "boolean" ? value.prefixEnabled : true,
       contextEnabled:

@@ -56,3 +56,15 @@ test('Prefix continuation defaults on for old preferences and remembers explicit
   assert.equal(readRecordingPreferences({getItem:()=>JSON.stringify({version:1})}).prefixEnabled,true);
   assert.equal(readRecordingPreferences({getItem:()=>JSON.stringify({version:1,prefixEnabled:false})}).prefixEnabled,false);
 });
+
+test('language choices persist independently and invalid values use supported defaults',()=>{
+  const selected={...DEFAULT_RECORDING_PREFERENCES,sourceLanguage:'en',outputLanguage:'zh'};
+  let value='';
+  const storage={getItem:()=>value,setItem:(_,next)=>{value=next;}};
+  assert.equal(saveRecordingPreferences(storage,selected),true);
+  assert.deepEqual(readRecordingPreferences(storage),selected);
+  assert.equal(readRecordingPreferences({getItem:()=>JSON.stringify({version:1,sourceLanguage:'auto',outputLanguage:'en'})}).sourceLanguage,'auto');
+  const invalid=readRecordingPreferences({getItem:()=>JSON.stringify({version:1,sourceLanguage:'fr',outputLanguage:'auto'})});
+  assert.equal(invalid.sourceLanguage,'auto');
+  assert.equal(invalid.outputLanguage,'zh');
+});

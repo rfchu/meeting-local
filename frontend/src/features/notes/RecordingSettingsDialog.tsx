@@ -139,6 +139,49 @@ export default function RecordingSettingsDialog({
           </button>
         ))}
       </div>
+      {(settingsTab === "model" || settingsTab === "outcome") && (
+        <fieldset disabled={state !== "idle"} className="config-panel-section">
+          {settingsTab === "model" ? (
+            <label>
+              原文语言
+              <select
+                aria-label="录音原文语言"
+                value={brief.source_language || "auto"}
+                onChange={(event) =>
+                  setBrief({
+                    ...brief,
+                    source_language: event.target
+                      .value as typeof brief.source_language,
+                  })
+                }
+              >
+                <option value="auto">自动识别</option>
+                <option value="zh">中文</option>
+                <option value="en">英文</option>
+              </select>
+            </label>
+          ) : (
+            <label>
+              纪要输出语言
+              <select
+                aria-label="录音纪要输出语言"
+                value={brief.output_language || "zh"}
+                onChange={(event) =>
+                  setBrief({
+                    ...brief,
+                    output_language: event.target
+                      .value as typeof brief.output_language,
+                  })
+                }
+              >
+                <option value="zh">中文</option>
+                <option value="en">英文</option>
+              </select>
+            </label>
+          )}
+          <p className="muted">原文按所选语言转写，纪要按独立设置整理。</p>
+        </fieldset>
+      )}
       {settingsTab === "outcome" && (
         <section className="config-panel-section">
           <h3>结束录音后，你希望得到什么？</h3>
