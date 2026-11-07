@@ -1,20 +1,30 @@
 import { useModelChoice } from "../preferences/useModelChoice";
 import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
-import type { LLMConfig, MeetingSummary } from "../types";
+import type { LLMConfig, MeetingSummary, OutputLanguage } from "../types";
 import type { SearchHit } from "./SearchDialog";
 import type { QARun } from "./qaTypes";
 import { clock } from "../utils";
+import {
+  readAnswerLanguage,
+  saveAnswerLanguage,
+  semanticLanguageHint,
+  type RetrievalLanguageSupport,
+} from "./retrievalLanguage";
 
 export default function CrossMeetingQA({
   meetings,
   onOpen,
   onConfigure,
+  languageSupport,
 }: {
   meetings: MeetingSummary[];
   onOpen: (source: SearchHit) => Promise<void>;
   onConfigure: () => void;
+  languageSupport?: RetrievalLanguageSupport;
 }) {
+  const [outputLanguage, setOutputLanguage] =
+    useState<OutputLanguage>(readAnswerLanguage);
   const [question, setQuestion] = useState(""),
     [query, setQuery] = useState("");
   const [profiles, setProfiles] = useState<LLMConfig[]>([]),
@@ -110,6 +120,7 @@ export default function CrossMeetingQA({
       const generation = epoch.current;
       const next = await api.qaPrepare({
         question: question.trim(),
+        output_language: outputLanguage,
         query: query.trim(),
         profile_id: profileId,
         mode,
@@ -149,6 +160,23 @@ export default function CrossMeetingQA({
               placeholder="例如：项目交付时间在哪些会议里发生过变化？"
             />
           </label>
+          <label>
+            回答语言
+            <select
+              aria-label="问答回答语言"
+              value={outputLanguage}
+              onChange={(e) => {
+                invalidate();
+                const language = e.target.value as OutputLanguage;
+                setOutputLanguage(language);
+                saveAnswerLanguage(language);
+              }}
+            >
+              <option value="zh">中文</option>
+              <option value="en">English</option>
+            </select>
+          </label>
+          <small>回答语言独立于问题和原文；引用保留原文。</small>
           <label>
             检索关键词（可选）
             <input
@@ -243,6 +271,9 @@ export default function CrossMeetingQA({
               允许使用个人备注作为线索（不会视为会议共识）
             </label>
           )}
+          {mode !== "keyword" && (
+            <p className="muted">{semanticLanguageHint(languageSupport)}</p>
+          )}
           <div className="qa-actions">
             <button
               className="primary"
@@ -272,6 +303,10 @@ export default function CrossMeetingQA({
       {run && (
         <section className="qa-run" aria-label="本次问答">
           <h3>{run.question}</h3>
+          <small>
+            回答语言：{run.output_language === "en" ? "English" : "中文"} ·
+            引用保持原文
+          </small>
           {run.stale ? (
             <p role="alert" className="health-warning">
               引用资料已修改或删除，旧回答已隐藏。请重新检索依据。
@@ -462,6 +497,7 @@ export default function CrossMeetingQA({
                   invalidate();
                   const next = await api.qaRun(item.id);
                   setQuestion(next.question);
+                  setOutputLanguage(next.output_language || "zh");
                   setQuery(next.user_query);
                   setMode(next.mode);
                   setMeetingId(next.meeting_id || "");

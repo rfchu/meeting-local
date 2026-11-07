@@ -1,5 +1,5 @@
 """Single-turn retrieval QA: preview-bound dispatch, exact quotes and live provenance checks."""
-import hashlib,json,re,shutil,sys
+import hashlib,json,shutil,sys
 from pathlib import Path
 from typing import Literal
 from pydantic import BaseModel,ConfigDict,Field
@@ -45,14 +45,9 @@ def provider_signature(profile):
     return hashlib.sha256(encode({key:profile.get(key) for key in keys}).encode()).hexdigest()
 
 def lexical_query(question):
-    # Bounded Chinese n-grams for natural questions; users can override with explicit keywords.
-    tokens=[]
-    for term in re.findall(r'[A-Za-z0-9_]+|[\u4e00-\u9fff]+',question):
-        if re.fullmatch(r'[\u4e00-\u9fff]+',term) and len(term)>4:
-            tokens.extend(term[i:i+n] for n in (3,2) for i in range(len(term)-n+1))
-        else:tokens.append(term)
-    ignored={'什么','哪些','是否','会议','是谁','我们','这个','怎么','如何','情况','一下'}
-    return ' '.join(list(dict.fromkeys(t for t in tokens if t not in ignored))[:60])[:500]
+    from .retrieval_terms import question_query
+    return question_query(question)
+
 
 def generate_answer(provider,model,question,sources,work,run):
     schema=Answer.model_json_schema()
@@ -63,6 +58,10 @@ def generate_answer(provider,model,question,sources,work,run):
 kind=record 表示资料明确记载；推断必须 kind=inference；任何引用原始简记、扩写或个人备注的条目必须 kind=note，不能声称是会议共识。纪要属于派生记录，应说明这是纪要记载。
 不同会议记录不一致时并列列出不同会议及日期，不擅自断定最后结论。没有充分依据就返回 {"status":"insufficient","claims":[]}，禁止在不足时猜测答案。
 只返回 JSON，status 为 answered 或 insufficient，claims 最多 8 条，每条 text、kind、citations。不要输出 Markdown、思考或无引用总述。'''
+    instruction+=('\nWrite every claim text in English. Preserve names, numbers, dates, JSON keys and source labels. '
+                  'Copy citation quotes exactly in the original source language; never translate them.'
+                  if getattr(provider,'output_language','zh')=='en' else
+                  '\n每条 claim 的 text 使用简体中文；人名、数字、日期、JSON 键与来源编号保持不变。quote 必须保留原文语言，不得翻译引文。')
     work=Path(work);request=work.with_suffix('.request.json');output=work.with_suffix('.response.json')
     request.write_text(encode({'model':model,'messages':[{'role':'system','content':instruction},
         {'role':'user','content':encode({'question':question,'sources':sources})}],
@@ -96,7 +95,8 @@ class QA:
             if any(metadata.get(name)!=source.get(name) for name in ('meeting_id','revision','title','date','kind','note_scope')):return False
         return True
 
-    def prepare(self,question,profile_id,query='',mode='keyword',meeting_id=None,kind='transcript',include_personal=False):
+    def prepare(self,question,profile_id,query='',mode='keyword',meeting_id=None,kind='transcript',include_personal=False,output_language='zh'):
+        if output_language not in ('zh','en'):raise ValueError('回答语言仅支持中文或英文')
         profile=self.profile(profile_id);window=int(profile.get('context_window') or 32768)
         if window<8192:raise ValueError('引用问答需要至少 8192 的已配置上下文窗口')
         effective=query.strip() or (lexical_query(question) if mode=='keyword' else question)
@@ -115,7 +115,7 @@ class QA:
             'include_personal':include_personal,'profile_id':profile_id,'signature':provider_signature(profile),
             'provider':{'name':profile['name'],'provider_type':profile['provider_type'],'base_url':profile['base_url'],'model':profile['model']},
             'sources':sources,'pending_index':found['pending'],'candidate_count':len(found['results']),
-            'evidence_chars':size,'context_budget':budget}
+            'evidence_chars':size,'context_budget':budget,'output_language':output_language}
         self.store.execute('INSERT INTO qa_runs(id,config) VALUES(?,?)',(qid,encode(config)))
         return self.read(qid)
 
@@ -129,7 +129,7 @@ class QA:
         job=self.store.one('SELECT id,state,stage,progress,error FROM jobs WHERE id=?',(row['job_id'],)) if row['job_id'] else None
         state='stale' if not valid else job['state'] if job else 'prepared'
         return {'id':qid,'created':row['created'],'question':config['question'],'query':config['query'],
-            'profile_id':config['profile_id'],
+            'profile_id':config['profile_id'],'output_language':config.get('output_language','zh'),
             'user_query':config.get('user_query',''),'mode':config['mode'],'meeting_id':config['meeting_id'],
             'kind':config['kind'],'include_personal':config['include_personal'],
             'provider':config['provider'],'sources':config['sources'] if valid else [],'stale':not valid,'state':state,
@@ -173,7 +173,9 @@ class QA:
             validate=lambda value:validate_answer(Answer.model_validate(value),config['sources'])
             result=checkpoints.load('answer',config,validate)
             if result is None:
-                result=generate_answer(OpenAICompatibleProvider(profile),profile['model'],config['question'],config['sources'],work/'answer',
+                provider=OpenAICompatibleProvider(profile)
+                provider.output_language=config.get('output_language','zh')
+                result=generate_answer(provider,profile['model'],config['question'],config['sources'],work/'answer',
                     lambda args,extra=None:worker.run(job['id'],args,work/'worker.log',extra,timeout=600))
                 checkpoints.save('answer',result.model_dump(),config,validate)
             worker.check(job['id']);worker.update(job['id'],'核验引用与来源版本',.9)

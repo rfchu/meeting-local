@@ -4,6 +4,10 @@ import { api } from "../api";
 import type { MeetingSummary } from "../types";
 import { clock } from "../utils";
 import CrossMeetingQA from "./CrossMeetingQA";
+import {
+  semanticLanguageHint,
+  type RetrievalLanguageSupport,
+} from "./retrievalLanguage";
 
 export interface SearchHit {
   id: string;
@@ -21,6 +25,7 @@ export interface SearchHit {
   match: string;
 }
 export interface SearchStatus {
+  language_support?: RetrievalLanguageSupport;
   builtin?: {
     installed: boolean;
     loaded: boolean;
@@ -144,6 +149,7 @@ export default function SearchDialog({
       {view === "qa" ? (
         qaReady ? (
           <CrossMeetingQA
+            languageSupport={status?.language_support}
             meetings={meetings}
             onOpen={onOpen}
             onConfigure={onConfigure}
@@ -218,6 +224,11 @@ export default function SearchDialog({
             </span>
             <button onClick={onManageIndex}>管理语义索引</button>
           </div>
+          {mode !== "keyword" && (
+            <p className="muted">
+              {semanticLanguageHint(status?.language_support)}
+            </p>
+          )}
           {error && (
             <p role="alert" className="error">
               {error}

@@ -113,6 +113,7 @@ class IndexBuildInput(BaseModel):
 
 
 class QAPrepareInput(BaseModel):
+    output_language: OutputLanguage='zh'
     question: str=Field(min_length=1,max_length=500)
     profile_id: str=Field(min_length=1,max_length=100)
     query: str=Field(default='',max_length=500)

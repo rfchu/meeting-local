@@ -8,6 +8,7 @@ export interface QAClaim {
   citations: { source: string; quote: string }[];
 }
 export interface QARun {
+  output_language?: "zh" | "en";
   user_query: string;
   mode: string;
   meeting_id: string | null;
@@ -41,6 +42,7 @@ export interface QARun {
   context_budget: number;
 }
 export interface QAPrepare {
+  output_language?: "zh" | "en";
   question: string;
   profile_id: string;
   query: string;

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "../../api";
+import { semanticLanguageHint } from "../retrievalLanguage";
 import type { LLMConfig } from "../../types";
 import type { SearchStatus } from "../SearchDialog";
 export default function IndexManagement({
@@ -70,6 +71,9 @@ export default function IndexManagement({
         <h3>
           本地语义索引 · {status?.indexed || 0}/{status?.units || 0} 已索引
         </h3>
+        <p className="muted">
+          {semanticLanguageHint(status?.language_support)}
+        </p>
         <section className="builtin-embedding" aria-label="内置中文检索模型">
           <h3>内置中文检索 · BGE-small INT8</h3>
           <p>
@@ -157,7 +161,8 @@ export default function IndexManagement({
           <summary>高级：使用 LM Studio 等本机向量服务</summary>
           <p>
             选择支持 /embeddings
-            的模型。数据仅发送到所选本机服务；聊天模型通常不能用于向量检索。
+            的模型。英文或中英跨语言检索应选择支持相应语言的 Embedding
+            模型；模型可用不等于跨语言质量已验证。数据仅发送到所选本机服务。
           </p>
           <label>
             本机服务{" "}

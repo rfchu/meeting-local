@@ -1,11 +1,18 @@
 """Local, versioned retrieval units and sqlite-vec cosine search."""
 from . import minutes_versions
-import hashlib,json,math,re,sqlite3,urllib.request,urllib.error
+import hashlib,json,math,sqlite3,urllib.request,urllib.error
 from .analysis import OpenAICompatibleProvider
 from .db import encode
+from .retrieval_terms import normalize,tokens as keyword_tokens,occurrences
 from .local_embedding import local_embedding,MANIFEST,MODEL_ID
 
 UNIT_VERSION='retrieval-units-v2'
+
+def language_support(config):
+    # Scope metadata is descriptive: it does not claim measured quality or change index identity.
+    return {'keyword_languages':['zh','en'],
+            'semantic_scope':'unconfigured' if not config else 'zh' if config.get('provider')=='builtin' else 'model_dependent'}
+
 class NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self,*args,**kwargs):raise RuntimeError('本地向量接口不允许重定向')
 
@@ -167,7 +174,7 @@ class Retrieval:
             try:self.profile(config)
             except ValueError as e:profile_error=str(e)
             if config.get('provider')=='builtin' and not local_embedding().status()['runtime_ready']:profile_error='内置模型运行依赖未安装，请重新运行 scripts/setup.sh'
-        return {'config':config,'units':count,'indexed':embedded,'pending':count-embedded,'vec_ready':available,'error':error or profile_error,'job':job,'builtin':local_embedding().status()}
+        return {'config':config,'units':count,'indexed':embedded,'pending':count-embedded,'vec_ready':available,'error':error or profile_error,'job':job,'builtin':local_embedding().status(),'language_support':language_support(config)}
     def build(self,worker,job):
         config=json.loads(job['config']);jid=job['id'];profile=self.profile(config)
         from .job_checkpoints import JobCheckpoints
@@ -188,7 +195,7 @@ class Retrieval:
         self.sync();worker.update(jid,'检索索引建立完成',1)
     def search(self,query,mode='keyword',limit=20,meeting_id=None,kind=None,include_personal=True):
         self.sync();config=self.config();query=query.strip()
-        tokens=re.findall(r'[\w]+',query.lower())
+        tokens=list(dict.fromkeys(keyword_tokens(query)))
         vector=None
         if mode!='keyword':
             if not config:raise ValueError('请先配置本地向量模型并建立索引')
@@ -211,11 +218,11 @@ class Retrieval:
             for term in db.execute("SELECT * FROM terminology WHERE status='confirmed'"):
                 scoped.setdefault(term['scope'],[]).append(unpack(term))
             for row in rows:
-                text=(json.loads(row['metadata'])['title']+' '+row['content']).lower()
-                score=sum(text.count(token) for token in tokens)
+                text=normalize(json.loads(row['metadata'])['title']+' '+row['content'])
+                score=sum(occurrences(text,token) for token in tokens)
                 mid=json.loads(row['metadata'])['meeting_id']
                 forms=search_forms(query,scoped.get('library',[])+scoped.get(mid,[]))
-                score=max(score,max((text.count(form) for form in forms),default=0))
+                score=max(score,max((occurrences(text,form) for form in forms),default=0))
                 if score:lexical.append((row['id'],score))
             lexical.sort(key=lambda pair:(-pair[1],pair[0]))
             semantic=[]
