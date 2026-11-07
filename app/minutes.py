@@ -138,10 +138,8 @@ def validate_minutes_citations(document: MeetingMinutes, valid_ids: set[str]):
 def build_minutes(title: str, created: str, segments: list[dict], analysis: MeetingAnalysis, style: str, template: MinutesTemplate | None = None):
     """Rearrange validated analysis without asking a model to invent new facts."""
     validate_citations(analysis, {segment["id"] for segment in segments})
-    speakers = list(dict.fromkeys(
-        segment.get("speaker", "").strip() for segment in segments
-        if segment.get("speaker", "").strip() and segment.get("speaker") != "未分配"
-    ))
+    from .speaker_labels import known_speakers
+    speakers = known_speakers(segments)
 
     def copy(items, limit=None, action=False):
         values = items[:limit] if limit else items
@@ -227,11 +225,21 @@ def stamp(seconds):
 
 
 def _citation_text(item: MinutesItem, segments: dict[str, dict]):
-    return "、".join(stamp(segments[sid]["start"]) for sid in item.source_segment_ids if sid in segments)
+    labels = []
+    for sid in item.source_segment_ids:
+        segment = segments.get(sid)
+        if segment is None:
+            continue
+        label = stamp(segment["start"])
+        if segment.get("source_track") and segment.get("speaker"):
+            label += " " + segment["speaker"]
+        labels.append(label)
+    return "、".join(labels)
 
 
 def minutes_markdown(document: MeetingMinutes, segments: list[dict], include_citations=False, *, citation_appendix=False):
-    by_id = {segment["id"]: segment for segment in segments}
+    from .speaker_labels import with_track_speaker
+    by_id = {segment["id"]: with_track_speaker(segment) for segment in segments}
     lines = [f"# {document.title}", ""]
     metadata = ((minute_label(document, "日期"), document.meeting_date), (minute_label(document, "地点"), document.location),
                 (minute_label(document, "会议形式"), document.meeting_form), (minute_label(document, "参会人"), document.attendees), (minute_label(document, "记录人"), document.recorder))
@@ -348,7 +356,8 @@ DOCX_FONT = "Heiti SC"
 
 
 def _citation_index(document: MeetingMinutes, segments: list[dict]):
-    by_id={segment["id"]:segment for segment in segments}
+    from .speaker_labels import with_track_speaker
+    by_id={segment["id"]:with_track_speaker(segment) for segment in segments}
     ordered=[]
     for sid in document.basic_info_source_segment_ids:
         if sid in by_id and sid not in ordered:ordered.append(sid)

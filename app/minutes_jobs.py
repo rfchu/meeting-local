@@ -1,4 +1,5 @@
 """Durable editorial handoff; consent and source versions bind before enqueue."""
+from .speaker_labels import known_speakers
 from .languages import meeting_languages
 import fcntl,hashlib,json
 from types import SimpleNamespace
@@ -160,7 +161,7 @@ class MinutesJobs:
             worker.boundary(jid)
             if config['operation']=='polish':result=provider.polish_minutes(config['model'],source_document,work/'result',run)
             else:result=provider.generate_ai_minutes(config['model'],segments,{'title':row['title'],'date':row['created'][:10],
-                'known_attendees':list(dict.fromkeys(item['speaker'] for item in segments if item.get('speaker') and item['speaker']!='未分配')),'minutes_template':template.model_dump(),**context},work/'result',run)
+                'known_attendees':known_speakers(segments),'minutes_template':template.model_dump(),**context},work/'result',run)
             document=checkpoints.save('editorial-result',result.model_dump(),inputs,validate)
         worker.check(jid)
         with store.connect() as db:

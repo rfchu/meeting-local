@@ -1,5 +1,6 @@
 """Minutes HTTP routes; shared services are supplied by the composition root."""
 from typing import Literal
+from ..speaker_labels import known_speakers
 from ..minutes_templates import AudienceTemplateUpdate, audience_template, save_audience_template
 from ..languages import meeting_languages
 from ..minutes import set_output_language
@@ -226,7 +227,7 @@ def register_routes(app,services:ApplicationServices):
                 if completed.returncode:
                     detail=(completed.stderr or completed.stdout).decode(errors='replace')[-1800:]
                     raise RuntimeError(f'AI 会议纪要进程失败（{completed.returncode}）：{detail}')
-            speakers=list(dict.fromkeys(s['speaker'] for s in segments if s.get('speaker') and s['speaker']!='未分配'))
+            speakers=known_speakers(segments)
             resource='cloud_llm' if provider_type=='cloud' else 'local_llm'
             with optional_slot(services.resources,'minutes',resource,('inline_minutes',mid),legacy=resource=='local_llm'):
                 result=provider.generate_ai_minutes(model,segments,{'title':row['title'],'date':row['created'][:10],

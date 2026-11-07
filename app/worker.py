@@ -6,6 +6,7 @@ from pathlib import Path
 from .db import uid, encode
 from .resources import request_for,ResourceYielded as Yielded,PRIORITIES,REASONS
 from .live_results import plan_ranges, RATE, is_dual_identity
+from .speaker_labels import with_track_speaker
 from .track_audio import ECHO_VERSION, reduce_echo_wav, remove_echo_duplicates, wav_echo_evidence
 from .providers import WhisperCpp, get_asr_provider, LocalDiarization, LocalPunctuation, attach_speakers, merge_overlapping_chunks, checkpoint_identity_matches
 from .analysis import LMStudioProvider,OpenAICompatibleProvider,MeetingAnalysis,chunk_segments,save_meeting_analysis,validate_citations,TEMPLATE_VERSION
@@ -390,6 +391,8 @@ class Worker:
             segments=attach_speakers(segments,json.loads(diar.read_text()))
         self.check(jid)
         if file_digest(source)!=source_identity['sha256'] or any(file_digest(path)!=digest for path,digest in track_digests.items()):raise ValueError('原音文件已变化，结果未发布；请核对音频后重试')
+        if dual:
+            segments=[with_track_speaker(segment) for segment in segments]
         # Save a candidate artifact if the user changed the transcript during inference.
         if experimental and not segments:raise ValueError('未识别到可保存的草稿文字，请核对原始录音')
         source_meta=encode({'engine':provider.engine_id,'engine_label':provider.label,'model':Path(provider.model).name,

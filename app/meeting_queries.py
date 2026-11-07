@@ -1,6 +1,7 @@
 """Meeting lookup and presentation shared by feature routes."""
 import json
 from fastapi import HTTPException
+from .speaker_labels import with_track_speaker
 from .minutes_templates import MinutesTemplate
 from .recording_completion import recording_quality_summary
 from . import minutes_versions
@@ -22,7 +23,7 @@ class MeetingQueries:
             raise HTTPException(404, '纪要模板不存在或已停用')
         return MinutesTemplate.model_validate(json.loads(row['definition']))
     def decorated(self, row):
-        row['segments'] = json.loads(row['segments'])
+        row['segments'] = [with_track_speaker(segment) for segment in json.loads(row['segments'])]
         row['live_overview_available'] = bool(self.store.one('SELECT 1 FROM live_overview_snapshots WHERE recording_id=? LIMIT 1', (row['id'],)))
         row['jobs'] = self.store.all("SELECT j.*,(SELECT count(*) FROM job_runtime_events e WHERE e.job_id=j.id AND e.action='retry') AS recorded_retries FROM jobs j WHERE meeting_id=? ORDER BY created DESC,j.rowid DESC", (row['id'],))
         row['revisions'] = self.store.all('SELECT revision,created,source FROM revisions WHERE meeting_id=? ORDER BY revision DESC', (row['id'],))

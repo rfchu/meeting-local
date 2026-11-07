@@ -2,6 +2,7 @@
 import hashlib,json
 from types import SimpleNamespace
 from pydantic import BaseModel,Field
+from .speaker_labels import known_speakers
 from .job_checkpoints import JobCheckpoints
 from .db import encode
 from .analysis import LMStudioProvider,OpenAICompatibleProvider,AIMinutesResult
@@ -88,7 +89,7 @@ def process(worker,job):
             return result
         result=checkpoints.load('minutes',identity,validate_result)
         if result is None:
-            speakers=list(dict.fromkeys(s['speaker'] for s in segments if s.get('speaker') and s['speaker']!='未分配'))
+            speakers=known_speakers(segments)
             result=provider.generate_ai_minutes(config['model'],segments,{'title':row['title'],'date':row['created'][:10],
                 'known_attendees':speakers,'minutes_template':template.model_dump(),**context},work/'result',
                 lambda args,extra=None:worker.run(jid,args,work/'worker.log',extra,timeout=660))

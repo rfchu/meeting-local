@@ -359,3 +359,18 @@ def test_full_ai_minutes_require_and_bind_current_analysis(client,monkeypatch):
     assert response.status_code==201
     provenance=response.json()['provenance']
     assert provenance['generation_mode']=='full' and provenance['source_analysis_id']==source_id
+
+
+def test_minutes_citations_distinguish_tracks_without_overwriting_confirmed_speaker():
+    segments = [
+        {'id':'s', 'start':8, 'text':'周五发布', 'speaker':'未分配', 'source_track':'system'},
+        {'id':'m', 'start':8, 'text':'明早核对', 'speaker':'未分配', 'source_track':'microphone'},
+        {'id':'named', 'start':9, 'text':'我来核对', 'speaker':'小陈', 'speaker_locked':True, 'source_track':'microphone'},
+    ]
+    document = MeetingMinutes(title='双轨纪要', decisions=[
+        MinutesItem(content='确定发布与核对安排', source_segment_ids=['s','m','named']),
+    ])
+    markdown = minutes_markdown(document, segments, include_citations=True, citation_appendix=True)
+    assert '00:08 线上发言' in markdown
+    assert '00:08 现场发言' in markdown
+    assert '00:09 小陈' in markdown

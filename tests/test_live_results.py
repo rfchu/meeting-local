@@ -177,3 +177,4 @@ def test_dual_quick_completion_reuses_each_track_and_patches_both_tails(setup):
         (0,'线上原话','system'),(0,'现场原话','microphone'),
         (15,'补齐尾段','system'),(15,'补齐尾段','microphone')]
     assert provider.calls==['draft','draft']
+    assert [s['speaker'] for s in segments]==['线上发言','现场发言','线上发言','现场发言']
