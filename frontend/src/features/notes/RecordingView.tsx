@@ -607,11 +607,13 @@ export default function RecordingView({
                         ? "已保存的原音保留，当前采集状态异常；请查看底部详情。"
                         : recordOnly
                           ? "本次未开启实时识别，请关注下方音轨与文件状态。会后可配置模型生成文字稿。"
-                          : responsiveMode &&
-                              draftEngine === "qwen" &&
-                              streamEnabled
-                            ? "约 3 秒开始预览，后端根据识别速度调整更新节奏。"
-                            : undefined
+                          : captureSource === "macos-both"
+                            ? "电脑声音和麦克风分别识别，确认后的文字会按时间出现。"
+                            : responsiveMode &&
+                                draftEngine === "qwen" &&
+                                streamEnabled
+                              ? "约 3 秒开始预览，后端根据识别速度调整更新节奏。"
+                              : undefined
                     }
                     onAddNote={(draft) =>
                       setNotes((old) => [

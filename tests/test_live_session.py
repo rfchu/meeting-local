@@ -213,3 +213,28 @@ def test_duplicate_pcm_cache_is_removed_only_after_original_recording_is_publish
             assert manager.cache.overview(rid,'qwen',3)['covered_seconds']==3
         finally:await manager.close()
     asyncio.run(run())
+
+
+def test_dual_capture_keeps_overlapping_evidence_and_reads_the_requested_track(tmp_path):
+    app=create_app(tmp_path,start_worker=False)
+    services=app.state.services
+    recordings=services.recordings
+    session=recordings.create('audio/wav')
+    rid=session['id'];folder=recordings.folder(rid)
+    recordings.write(folder/'session.json',session|{'source':'macos','include_microphone':True})
+    tracks={'system':b'\x71\x15'*16000,'microphone':b'\x64\x17'*16000}
+    for track,pcm in tracks.items():(folder/(track+'.pcm')).write_bytes(pcm)
+    aid,_=services.live_results.begin(rid,'native','qwen',0,1,b'fixture',{'track_mode':'dual-v1'})
+    services.live_results.complete(aid,[
+        {'start':0,'end':1,'source_track':track,'text':text}
+        for track,text in [('system','周五交付'),('microphone','周四检查')]])
+    parts,_=services.live_overview.source(rid,'qwen')
+    assert [(part['source_track'],part['start']) for part in parts]==[('system',0),('microphone',0)]
+    client=TestClient(app)
+    for i,track in enumerate(tracks):
+        response=client.get(f'/api/recordings/{rid}/live-audio/{aid}/{i}')
+        assert response.status_code==200
+        with wave.open(io.BytesIO(response.content),'rb') as wav:
+            assert wav.readframes(16000)==tracks[track]
+    assert client.get(f'/api/recordings/{"0"*32}/live-audio/{aid}/0').status_code==404
+    assert client.get(f'/api/recordings/{rid}/live-audio/{aid}/-1').status_code==404

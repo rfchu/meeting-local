@@ -6,7 +6,7 @@ import sqlite3, io, json, subprocess, tempfile, time, wave
 from pathlib import Path
 from typing import Literal
 from fastapi import File, Form, UploadFile, HTTPException, Query
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse, Response
 from starlette.concurrency import run_in_threadpool
 from ..db import uid, encode
 from ..live_stream import inspect_audio, qwen_events
@@ -263,6 +263,32 @@ def register_routes(app,services:ApplicationServices):
         except FileNotFoundError as error:raise HTTPException(404,str(error))
         except ValueError as error:raise HTTPException(409,str(error))
 
+
+    @app.get('/api/recordings/{rid}/live-audio/{aid}/{index}')
+    def live_track_audio(rid:str,aid:str,index:int):
+        row=store.one("SELECT segments,start_frame,end_frame FROM live_asr_ranges WHERE id=? AND recording_id=? AND state='completed'",(aid,rid))
+        parts=json.loads(row['segments']) if row else []
+        if not 0<=index<len(parts):raise HTTPException(404,'找不到这句原音')
+        part=parts[index];track=part.get('source_track')
+        if track not in ('system','microphone'):raise HTTPException(404,'这句没有独立音轨')
+        start=max(row['start_frame'],round(part['start']*16000))
+        count=min(row['end_frame'],round(part['end']*16000),start+45*16000)-start
+        if count<=0:raise HTTPException(404,'找不到这句原音')
+        try:
+            try:
+                with (recordings.folder(rid)/(track+'.pcm')).open('rb') as pcm:
+                    pcm.seek(start*2);frames=pcm.read(count*2)
+            except FileNotFoundError:
+                with wave.open(str(store.directory(rid)/(track+'.wav')),'rb') as wav:
+                    wav.setpos(start);frames=wav.readframes(count)
+        except (FileNotFoundError,ValueError,EOFError,wave.Error):
+            raise HTTPException(404,'这段音轨暂不可回听')
+        frames=frames[:len(frames)//2*2]
+        if not frames:raise HTTPException(404,'这段音轨暂不可回听')
+        output=io.BytesIO()
+        with wave.open(output,'wb') as wav:
+            wav.setparams((1,2,16000,0,'NONE','not compressed'));wav.writeframes(frames)
+        return Response(output.getvalue(),media_type='audio/wav',headers={'Cache-Control':'no-store'})
 
     @app.get('/api/recordings/{rid}/live-session/events')
     async def live_session_events(rid:str,after:int=0):

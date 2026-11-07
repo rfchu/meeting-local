@@ -393,7 +393,10 @@ export function useRecordingController({
   ]);
   const correctionSessionId = nativeSessionId || sessionRef.current?.id;
   const managedMode =
-    !recordOnly && (draftEngine === "whisper" || streamEnabled);
+    !recordOnly &&
+    (captureSource === "macos-both" ||
+      draftEngine === "whisper" ||
+      streamEnabled);
   const backendLive = useLiveSession(
     correctionSessionId,
     managedMode && ["recording", "paused"].includes(state),
@@ -452,7 +455,9 @@ export function useRecordingController({
           event.result.skipped_seconds > 0
             ? "已跟随最近语音，积压范围保留待补识别"
             : event.result.boundary_reason === "hard_limit"
-              ? "达到 25 秒上限，后续片段将关联阅读"
+              ? event.result.segments.some((part) => part.source_track)
+                ? "达到 25 秒上限，双轨文字已保存"
+                : "达到 25 秒上限，后续片段将关联阅读"
               : "本段已确认并保存",
         );
       } else if (event.type === "status") setDraftStatus(event.message);

@@ -3,7 +3,7 @@ import { api } from "../../api";
 import TermDialog from "../terminology/TermDialog";
 import Modal from "../../components/Modal";
 import type { LLMConfig } from "../../types";
-import { clock } from "../../utils";
+import { clock, trackLabel } from "../../utils";
 import { useModelChoice } from "../../preferences/useModelChoice";
 import type {
   OverviewItem,
@@ -246,10 +246,16 @@ export default function LiveOverviewPanel({
           {onLocate && evidence && (
             <button
               className="text-btn overview-locate"
-              aria-label={`${locateLabel} ${clock(evidence.start)}`}
+              aria-label={`${locateLabel} ${clock(evidence.start)}${evidence.source_track ? " · " + trackLabel(evidence.source_track) : ""}`}
               onClick={() => onLocate(evidence)}
             >
-              {clock(evidence.start)} {timeline ? "›" : "· " + locateLabel}
+              {clock(evidence.start)}{" "}
+              {evidence.source_track
+                ? evidence.source_track === "system"
+                  ? "线上"
+                  : "现场"
+                : ""}{" "}
+              {timeline ? "›" : "· " + locateLabel}
             </button>
           )}
           <button

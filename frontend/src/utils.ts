@@ -72,3 +72,7 @@ export const latestMinutes = (meeting: Meeting | null) =>
 export const isRunning = (job?: Job) =>
   !!job && (job.state === "queued" || job.state === "running");
 export const clone = <T>(value: T): T => structuredClone(value);
+
+export function trackLabel(track: "system" | "microphone") {
+  return track === "system" ? "线上 · 电脑声音" : "现场 · 麦克风";
+}

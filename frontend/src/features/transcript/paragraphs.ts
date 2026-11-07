@@ -3,6 +3,7 @@ export interface ContinuousPart {
   end: number;
   text: string;
   speaker?: string;
+  source_track?: string | null;
   continuation_id?: string;
   continues_previous?: boolean;
   continues_next?: boolean;
@@ -10,6 +11,7 @@ export interface ContinuousPart {
 }
 export function continuous(left: ContinuousPart, right: ContinuousPart) {
   return !!(
+    (left.source_track ?? null) === (right.source_track ?? null) &&
     left.continues_next &&
     right.continues_previous &&
     left.continuation_id &&

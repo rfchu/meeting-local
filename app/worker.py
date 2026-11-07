@@ -5,7 +5,8 @@ import fcntl, hashlib, json, math, os, subprocess, threading, time
 from pathlib import Path
 from .db import uid, encode
 from .resources import request_for,ResourceYielded as Yielded,PRIORITIES,REASONS
-from .live_results import plan_ranges, RATE
+from .live_results import plan_ranges, RATE, is_dual_identity
+from .track_audio import ECHO_VERSION, reduce_echo_wav
 from .providers import WhisperCpp, get_asr_provider, LocalDiarization, LocalPunctuation, attach_speakers, merge_overlapping_chunks, checkpoint_identity_matches
 from .analysis import LMStudioProvider,OpenAICompatibleProvider,MeetingAnalysis,chunk_segments,save_meeting_analysis,validate_citations,TEMPLATE_VERSION
 
@@ -299,31 +300,73 @@ class Worker:
         if config.get('completion_mode')!='quick' and not provider.ready(): raise RuntimeError(f'{provider.label} 尚未就绪，请检查运行环境')
         experimental=config.get('source_language') in EXPERIMENTAL_TRANSCRIPTION_LANGUAGES
         reuse_meta={}
-        if config.get('completion_mode')=='quick':
-            segments,reuse_meta=self.fast_transcription(config,duration,audio,work,provider,run,jid,checkpoints,source_identity)
-        else:
-            # Fixed chunks with context overlap; merge using both timing and text.
-            chunk_seconds=config.get('chunk_seconds',provider.chunk_seconds); count=math.ceil(duration/chunk_seconds); chunks=[]
-            overlap=config.get('chunk_overlap',2)
-            for i in range(count):
-                self.update(jid,f'识别与对齐片段 {i+1}/{count}' if provider.engine_id=='qwen' else f'转写片段 {i+1}/{count}',.08+.78*i/count)
-                start=max(0,i*chunk_seconds-overlap); end=min(duration,(i+1)*chunk_seconds+overlap)
-                inputs=[source_identity,provider.identity(),start,end]
-                part=checkpoints.load(f'chunk-{i}',inputs,lambda value:validate_segments(value,duration))
-                if part is None:
-                    chunk=work/f'chunk-{i}.wav'
-                    run(['ffmpeg','-v','error','-y','-ss',str(start),'-i',str(audio),'-t',str(end-start),'-c:a','pcm_s16le',str(chunk)])
-                    part=provider.transcribe(chunk,work/f'chunk-{i}',run)
-                    owned=[]
-                    for s in part:
-                        s['start']+=start; s['end']=min(duration,s['end']+start)
-                        s['id']=uid();s.setdefault('speaker','未分配');owned.append(s)
-                    part=owned
-                    checkpoints.save(f'chunk-{i}',part,inputs,lambda value:validate_segments(value,duration))
-                    chunk.unlink(missing_ok=True)
-                chunks.append(part)
-            segments=merge_overlapping_chunks(chunks)
-            segments.sort(key=lambda s:s['start'])
+        dual=all((folder/f'{track}.wav').is_file() for track in ('system','microphone'))
+        track_inputs=[(track,folder/f'{track}.wav') for track in ('system','microphone')] if dual else [(None,audio)]
+        combined=[];track_digests={}
+        for track,track_audio in track_inputs:
+            prefix=f'{track}-' if track else ''
+            track_identity={'sha256':file_digest(track_audio),'source_track':track} if track else source_identity
+            if track:track_digests[track_audio]=track_identity['sha256']
+            reference=folder/'system.wav' if track=='microphone' else None
+            if reference:
+                track_identity.update(echo_version=ECHO_VERSION,reference_sha256=track_digests[reference])
+            if config.get('completion_mode')=='quick':
+                track_config=config
+                if track:
+                    track_config={**config,'live_snapshot':[
+                        {**row,'segments':[part for part in row['segments'] if part.get('source_track')==track]}
+                        for row in config.get('live_snapshot',[])
+                        if is_dual_identity(row.get('identity'))
+                    ]}
+                segments,meta=self.fast_transcription(track_config,duration,track_audio,work,provider,run,jid,checkpoints,track_identity,prefix,reference)
+                if track:reuse_meta.setdefault('tracks',{})[track]=meta
+                else:reuse_meta=meta
+            else:
+                # Fixed chunks with context overlap; merge using both timing and text.
+                chunk_seconds=config.get('chunk_seconds',provider.chunk_seconds); count=math.ceil(duration/chunk_seconds); chunks=[]
+                overlap=config.get('chunk_overlap',2)
+                for i in range(count):
+                    self.update(jid,f'识别与对齐片段 {i+1}/{count}' if provider.engine_id=='qwen' else f'转写片段 {i+1}/{count}',.08+.78*i/count)
+                    start=max(0,i*chunk_seconds-overlap); end=min(duration,(i+1)*chunk_seconds+overlap)
+                    inputs=[track_identity,provider.identity(),start,end]
+                    part=checkpoints.load(f'{prefix}chunk-{i}',inputs,lambda value:validate_segments(value,duration))
+                    if part is None:
+                        chunk=work/f'chunk-{i}.wav'
+                        run(['ffmpeg','-v','error','-y','-ss',str(start),'-i',str(track_audio),'-t',str(end-start),'-c:a','pcm_s16le',str(chunk)])
+                        if reference:self.reduce_chunk_echo(reference,start,end-start,chunk,run)
+                        with wave.open(str(chunk),'rb') as chunk_audio:
+                            silent=track and not any(chunk_audio.readframes(chunk_audio.getnframes()))
+                        part=[] if silent else provider.transcribe(chunk,work/f'{prefix}chunk-{i}',run)
+                        owned=[]
+                        for s in part:
+                            s['start']+=start; s['end']=min(duration,s['end']+start)
+                            s['id']=uid();s.setdefault('speaker','未分配');owned.append(s)
+                        part=owned
+                        checkpoints.save(f'{prefix}chunk-{i}',part,inputs,lambda value:validate_segments(value,duration))
+                        chunk.unlink(missing_ok=True)
+                    chunks.append(part)
+                segments=merge_overlapping_chunks(chunks)
+                segments.sort(key=lambda s:s['start'])
+            if track:
+                segments=[dict(segment,source_track=track) for segment in segments]
+                if config.get('completion_mode')!='quick' and config.get('diarization') and segments:
+                    diarizer=LocalDiarization()
+                    diar=work/f'{prefix}speakers.json'
+                    inputs=[track_identity,config.get('num_speakers',0),model_files([diarizer.segmentation,diarizer.embedding,Path(__file__).resolve().parents[1]/'scripts/diarize.py'])]
+                    if not checkpoints.file_valid(f'{prefix}speakers',diar,inputs):
+                        diarizer.diarize(track_audio,diar,run,config.get('num_speakers',0))
+                        checkpoints.save_file(f'{prefix}speakers',diar,inputs)
+                    segments=attach_speakers(segments,json.loads(diar.read_text()))
+                    for segment in segments:
+                        if segment['speaker']!='未分配':segment['speaker']=('电脑声 · ' if track=='system' else '麦克风 · ')+segment['speaker']
+            combined.extend(segments)
+        segments=sorted(combined,key=lambda segment:segment['start'])
+        if dual and reuse_meta:
+            tracks=reuse_meta['tracks'].values()
+            reuse_meta.update(kind='live_reuse',completion_mode='quick',timestamp_precision='draft',
+                reused_ranges=min(value['reused_ranges'] for value in tracks),
+                reused_seconds=min(value['reused_seconds'] for value in tracks),
+                patched_ranges=next(iter(tracks))['patched_ranges'],range_ids=next(iter(tracks))['range_ids'],diarization=False)
         punctuation=LocalPunctuation()
         if config.get('source_language','zh')=='zh' and config.get('completion_mode')!='quick' and config.get('punctuation',provider.needs_punctuation) and punctuation.ready() and segments:
             self.update(jid,'恢复中文标点',.87)
@@ -333,7 +376,7 @@ class Worker:
                 segments=punctuation.process(segments,work,run)
                 checkpoints.save('punctuated',segments,inputs,lambda value:validate_segments(value,duration))
             else:segments=saved
-        if config.get('completion_mode')!='quick' and config.get('diarization'):
+        if not dual and config.get('completion_mode')!='quick' and config.get('diarization'):
             self.update(jid,'分析发言人',.9)
             diar=work/'speakers.json'
             diarizer=LocalDiarization()
@@ -343,7 +386,7 @@ class Worker:
                 checkpoints.save_file('speakers',diar,inputs)
             segments=attach_speakers(segments,json.loads(diar.read_text()))
         self.check(jid)
-        if file_digest(source)!=source_identity['sha256']:raise ValueError('原音文件已变化，结果未发布；请核对音频后重试')
+        if file_digest(source)!=source_identity['sha256'] or any(file_digest(path)!=digest for path,digest in track_digests.items()):raise ValueError('原音文件已变化，结果未发布；请核对音频后重试')
         # Save a candidate artifact if the user changed the transcript during inference.
         if experimental and not segments:raise ValueError('未识别到可保存的草稿文字，请核对原始录音')
         source_meta=encode({'engine':provider.engine_id,'engine_label':provider.label,'model':Path(provider.model).name,
@@ -370,7 +413,15 @@ class Worker:
                     enqueue_after_transcription(db,mid,jid,rev,config['minutes_followup'])
             db.execute("DELETE FROM artifacts WHERE id=? AND meeting_id=? AND kind='transcript_candidate'",(hashlib.sha256(('transcription-progress:'+jid).encode()).hexdigest()[:32],mid))
 
-    def fast_transcription(self,config,duration,audio,work,provider,run,jid,checkpoints,source_identity):
+    @staticmethod
+    def reduce_chunk_echo(reference,start,duration,chunk,run):
+        ref=chunk.with_suffix('.ref.wav')
+        try:
+            run(['ffmpeg','-v','error','-y','-ss',str(start),'-i',str(reference),'-af','apad','-t',str(duration),'-c:a','pcm_s16le',str(ref)])
+            chunk.write_bytes(reduce_echo_wav(ref.read_bytes(),chunk.read_bytes()))
+        finally:ref.unlink(missing_ok=True)
+
+    def fast_transcription(self,config,duration,audio,work,provider,run,jid,checkpoints,source_identity,prefix='',reference=None):
         import wave
         reused,gaps=plan_ranges(config.get('live_snapshot',[]),duration)
         chunks=[]
@@ -386,15 +437,16 @@ class Worker:
         for index,(start,end) in enumerate(missing):
             self.update(jid,f'复用 {len(reused)} 段草稿 · 补识别缺段/尾段 {index+1}/{len(missing)}',.08+.78*index/max(1,len(missing)))
             inputs=[source_identity,provider.identity(),start,end]
-            part=checkpoints.load(f'fast-{index}',inputs,lambda value:validate_segments(value,duration))
+            part=checkpoints.load(f'{prefix}fast-{index}',inputs,lambda value:validate_segments(value,duration))
             if part is None:
                 chunk=work/f'fast-{index}.wav'
                 run(['ffmpeg','-v','error','-y','-ss',str(start),'-i',str(audio),'-af','apad','-t',str(max(.5,end-start)),'-c:a','pcm_s16le',str(chunk)])
+                if reference:self.reduce_chunk_echo(reference,start,max(.5,end-start),chunk,run)
                 with wave.open(str(chunk),'rb') as wav:silent=not any(wav.readframes(wav.getnframes()))
-                raw=[] if silent else getattr(provider,'transcribe_live',provider.transcribe)(chunk,work/f'fast-{index}',run)
+                raw=[] if silent else getattr(provider,'transcribe_live',provider.transcribe)(chunk,work/f'{prefix}fast-{index}',run)
                 part=[dict(s,id=uid(),speaker='未分配',start=min(end,start+max(0,s['start'])),end=min(end,start+max(0,s['end'])))
                       for s in raw if s['text'].strip() and s['start']<end-start]
-                checkpoints.save(f'fast-{index}',part,inputs,lambda value:validate_segments(value,duration))
+                checkpoints.save(f'{prefix}fast-{index}',part,inputs,lambda value:validate_segments(value,duration))
                 chunk.unlink(missing_ok=True)
             chunks.append(part)
         segments=sorted((s for chunk in chunks for s in chunk),key=lambda s:s['start'])

@@ -51,7 +51,7 @@ async def disposable_events(provider,audio,output,context=""):
     finally:
         with anyio.CancelScope(shield=True):await terminate(process)
 
-async def qwen_events(provider,cache,lock,payload,offset,rid,source,root,window=None,resident=None,confirmed=True,context_enabled=True,terms="",continuation=None):
+async def qwen_events(provider,cache,lock,payload,offset,rid,source,root,window=None,resident=None,confirmed=True,context_enabled=True,terms="",continuation=None,persist=True):
     duration,silent=inspect_audio(payload);started=time.monotonic();aid=None;claim=request_for(lock,'live_asr',{'asr':1},rid)
     request_id=uid();sequence=0;last_text=None;first_text_ms=None
     def event(kind,**data):
@@ -64,7 +64,7 @@ async def qwen_events(provider,cache,lock,payload,offset,rid,source,root,window=
         context=recognition_context(cache,rid,offset,terms,context_enabled,getattr(provider,'language','zh'))
         identity=provider.identity()
         if context:identity={"model":identity,"context":context,"live_version":2}
-        if rid:aid,cached=cache.begin(rid,source,'qwen',offset,duration,payload,identity)
+        if rid and persist:aid,cached=cache.begin(rid,source,'qwen',offset,duration,payload,identity)
         yield event('start',confirmed=confirmed)
         if cached is not None:segments=cached;confirmed=True
         elif silent:segments=[]
@@ -98,7 +98,7 @@ async def qwen_events(provider,cache,lock,payload,offset,rid,source,root,window=
                 segments=[dict(s,live_range_id=aid,live_segment_index=i) for i,s in enumerate(segments)]
             else:cache.preview(aid)
         result={**(window or {}),'segments':segments,'duration':duration,'engine':'qwen','confirmed':confirmed,
-                'decoder':result.get('decoder',{}) if cached is None and not silent else {},'context_used':bool(context),'processing_ms':round((time.monotonic()-started)*1000),'first_text_ms':first_text_ms,'cached':cached is not None,'persisted':bool(rid) and confirmed}
+                'decoder':result.get('decoder',{}) if cached is None and not silent else {},'context_used':bool(context),'processing_ms':round((time.monotonic()-started)*1000),'first_text_ms':first_text_ms,'cached':cached is not None,'persisted':bool(rid) and confirmed and persist}
         yield event('final',result=result)
     except asyncio.CancelledError:
         if aid:cache.fail(aid,'流式连接中断，部分文字未确认为完整覆盖')

@@ -1,6 +1,6 @@
 import type { MeetingView } from "../preferences/meetingView";
 import { useEffect, useRef, useState } from "react";
-import type { Segment } from "../types";
+import type { Segment, SourceTrack } from "../types";
 import { clock } from "../utils";
 
 interface Props {
@@ -9,7 +9,9 @@ interface Props {
   onBookmark?: (bookmark: MeetingView) => void;
   meetingId: string;
   segments: Segment[];
-  seekRef: React.MutableRefObject<((time: number) => void) | null>;
+  seekRef: React.MutableRefObject<
+    ((time: number, track?: SourceTrack | null) => void) | null
+  >;
   audioTracks?: string[];
   pauseRef?: React.MutableRefObject<(() => void) | null>;
 }
@@ -32,6 +34,7 @@ export default function Player({
   const pendingPosition = useRef(initialView.position || 0),
     ready = useRef(false),
     lastSave = useRef(0);
+  const pendingPlay = useRef(false);
   const bookmarkRef = useRef(onBookmark);
   bookmarkRef.current = onBookmark;
   const savePosition = () => {
@@ -45,9 +48,20 @@ export default function Player({
   };
   useEffect(() => {
     if (pauseRef) pauseRef.current = () => audio.current?.pause();
-    seekRef.current = (value) => {
+    seekRef.current = (value, targetTrack) => {
       if (!audio.current) return;
       pendingPosition.current = value;
+      if (
+        targetTrack &&
+        audioTracks.includes(targetTrack) &&
+        track !== targetTrack
+      ) {
+        ready.current = false;
+        pendingPlay.current = true;
+        setTrack(targetTrack);
+        setTime(value);
+        return;
+      }
       if (ready.current) audio.current.currentTime = value;
       setTime(value);
       void audio.current.play().catch(() => setPlaying(false));
@@ -56,9 +70,12 @@ export default function Player({
       seekRef.current = null;
       if (pauseRef) pauseRef.current = null;
     };
-  }, [seekRef, pauseRef]);
+  }, [seekRef, pauseRef, audioTracks, track]);
   const activeSegment = segments.find(
-    (segment) => segment.start <= time && segment.end > time,
+    (segment) =>
+      (!track || !segment.source_track || segment.source_track === track) &&
+      segment.start <= time &&
+      segment.end > time,
   )?.id;
   useEffect(() => {
     onActiveSegment?.(activeSegment);
@@ -99,6 +116,7 @@ export default function Player({
           onChange={(e) => {
             pendingPosition.current = audio.current?.currentTime || time;
             ready.current = false;
+            pendingPlay.current = false;
             setTrack(e.target.value);
           }}
         >
@@ -156,6 +174,10 @@ export default function Player({
           a.playbackRate = rate;
           setTime(a.currentTime);
           ready.current = true;
+          if (pendingPlay.current) {
+            pendingPlay.current = false;
+            void a.play().catch(() => setPlaying(false));
+          }
           savePosition();
         }}
       />

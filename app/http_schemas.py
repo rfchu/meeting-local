@@ -13,6 +13,7 @@ class RecordingQualityReviewInput(BaseModel):
 
 
 class Segment(BaseModel):
+    source_track: Literal['system','microphone'] | None=None
     id: str=Field(min_length=1,max_length=100)
     start: float=Field(ge=0,allow_inf_nan=False)
     end: float=Field(ge=0,allow_inf_nan=False)

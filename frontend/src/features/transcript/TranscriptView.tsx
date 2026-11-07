@@ -17,7 +17,7 @@ interface Props {
   jumpSegmentId?: string;
   onChange: (segments: Segment[]) => void;
   activeSegment?: string;
-  onSeek: (time: number) => void;
+  onSeek: (time: number, track?: Segment["source_track"]) => void;
   onSave: () => Promise<void>;
   onRefresh: () => Promise<void>;
   toast: (text: string) => void;
@@ -195,7 +195,11 @@ export default function TranscriptView({
       ),
     [],
   );
-  const seek = useCallback((time: number) => latest.current.onSeek(time), []);
+  const seek = useCallback(
+    (time: number, track?: Segment["source_track"]) =>
+      latest.current.onSeek(time, track),
+    [],
+  );
   useEffect(() => {
     if (jumpSegmentId) setSearch("");
   }, [jumpSegmentId]);
@@ -216,6 +220,7 @@ export default function TranscriptView({
         !previous.speaker_locked &&
         !item.speaker_locked &&
         previous.speaker === item.speaker &&
+        (previous.source_track ?? null) === (item.source_track ?? null) &&
         gap <= 1.5 &&
         short &&
         previous.text.length + item.text.length <= 140
@@ -269,7 +274,7 @@ export default function TranscriptView({
           }}
           onLocate={(id) => {
             const item = meeting.segments.find((s) => s.id === id);
-            if (item) onSeek(item.start);
+            if (item) onSeek(item.start, item.source_track);
           }}
         />
       )}

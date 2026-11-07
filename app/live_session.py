@@ -198,6 +198,48 @@ class LiveSessions:
         return {'continuation_id':last['continuation_id'] if linked else rid+':'+str(start),
                 'continues_previous':linked,'continues_next':window.get('boundary_reason')=='hard_limit',
                 'boundary_reason':window.get('boundary_reason','standard')}
+    async def recognize_tracks(self,rid,config,window):
+        """Publish both tracks atomically as one window on the shared timeline."""
+        payloads=window.pop('track_payloads')
+        engine=config['engine']
+        factory=self.batch_provider if engine=='whisper' else self.provider
+        if not factory:raise ValueError('实时识别引擎尚未配置')
+        provider=configure_asr(factory(),config['source_language'])
+        from .track_audio import ECHO_VERSION, reduce_echo_wav
+        identity={'model':provider.identity(),'track_mode':'dual-v1','echo_version':ECHO_VERSION}
+        duration=window['next_offset']-window['offset']
+        aid,cached=self.cache.begin(rid,'native',engine,window['offset'],duration,
+                                   b''.join(payloads.values()),identity)
+        started=time.monotonic()
+        try:
+            if cached is None:
+                segments=[]
+                payloads['microphone']=await asyncio.to_thread(reduce_echo_wav,payloads['system'],payloads['microphone'])
+                for track,payload in payloads.items():
+                    common=(provider,self.cache,self.asr_lock,payload,window['offset'],rid,'native',self.store.root,window)
+                    iterator=(whisper_events(*common,persist=False) if engine=='whisper'
+                              else qwen_events(*common,resident=self.resident,context_enabled=False,persist=False))
+                    async with aclosing(iterator):
+                        async for line in iterator:
+                            event=json.loads(line)
+                            if event['type']=='error':raise RuntimeError(event['message'])
+                            if event['type']=='final':
+                                segments.extend(dict(part,source_track=track) for part in event['result']['segments'])
+                                break
+                        else:raise RuntimeError('独立音轨未返回识别结果')
+                segments.sort(key=lambda item:item['start'])
+                self.cache.complete(aid,segments)
+                cached=[dict(part,live_range_id=aid,live_segment_index=i) for i,part in enumerate(segments)]
+            return {**window,'engine':engine,'segments':cached,'duration':duration,'confirmed':True,
+                    'processing_ms':round((time.monotonic()-started)*1000),'first_text_ms':None,
+                    'persisted':True,'decoder':{}},None
+        except asyncio.CancelledError:
+            if aid:self.cache.fail(aid,'双轨识别中断，原音已保留')
+            raise
+        except (RuntimeError,OSError,ValueError) as error:
+            if aid:self.cache.fail(aid,str(error))
+            return None,str(error)
+
     async def run(self,rid):
         previous='';stable='';preview_end=0;preview_start=None;next_target=3;errors=0
         saved_metrics=json.loads(self.row(rid)['metrics']);totals=dict(saved_metrics.get('decoder_totals',{}))
@@ -228,7 +270,10 @@ class LiveSessions:
                     if capture.get('state') in ('stopped','interrupted','failed'):draining=True
                     available=max(0,capture.get('duration',0)-cursor/RATE)
                     target=min(HARD_SECONDS,max(next_target,math.floor(available))) if config['responsive'] else 15
-                    window=await asyncio.to_thread(self.native.draft_window,rid,cursor/RATE,target,config['responsive'],True,**({'sentence_end':hint} if hint is not None else {}))
+                    dual=self.recordings.read(rid).get('include_microphone',False)
+                    window=await asyncio.to_thread(self.native.draft_window,rid,cursor/RATE,15 if dual else target,
+                        config['responsive'],True,
+                        **({'split_tracks':True} if dual else {'sentence_end':hint} if hint is not None else {}))
                     paused=capture.get('state')=='paused'
                 else:
                     if not draining and row['status']=='running' and self.input_end(rid)<=preview_end:
@@ -251,23 +296,26 @@ class LiveSessions:
                 if draining:
                     window['confirmed']=True
                     if window.get('boundary_reason')=='preview':window.update(boundary_reason='stop',extending=False)
-                if config.get('engine','qwen')=='qwen':window.update(self.continuation(rid,window,break_at))
-                payload=window.pop('payload');window.pop('silent',None);result=None;failure=None;last_sent=0
-                iterator=None if config.get('engine')=='whisper' else qwen_events(configure_asr(self.provider(),config.get('source_language')),self.cache,self.asr_lock,payload,window['offset'],rid,row['source'],self.store.root,window,
-                    resident=self.resident,confirmed=window['confirmed'],context_enabled=config['context_enabled'],terms=config['terms'],continuation={'key':rid+':'+str(round(window['offset']*RATE)),'enabled':config.get('prefix_enabled',True) and config['responsive'],
-                    'confirmed':window['confirmed'],'previous_text':previous,'stable_text':stable})
-                if config.get('engine')=='whisper':
-                    if not self.batch_provider:raise ValueError('Whisper 托管识别尚未配置')
-                    iterator=whisper_events(configure_asr(self.batch_provider(),config.get('source_language')),self.cache,self.asr_lock,payload,window['offset'],rid,row['source'],self.store.root,window)
-                async with aclosing(iterator):
-                    async for line in iterator:
-                        event=json.loads(line)
-                        if event['type']=='partial' and time.monotonic()-last_sent>=.15:
-                            text=event['text'];prefix=stable if text.startswith(stable) else ''
-                            self.emit(rid,'partial',partial={'start':event['start'],'end':event['end'],'text':text,'stable_text':prefix,**{k:window[k] for k in ('continuation_id','continues_previous','continues_next','boundary_reason')}})
-                            last_sent=time.monotonic()
-                        elif event['type']=='final':result=event['result']
-                        elif event['type']=='error':failure=event['message']
+                if 'track_payloads' in window:
+                    result,failure=await self.recognize_tracks(rid,config,window)
+                else:
+                    if config.get('engine','qwen')=='qwen':window.update(self.continuation(rid,window,break_at))
+                    payload=window.pop('payload');window.pop('silent',None);result=None;failure=None;last_sent=0
+                    iterator=None if config.get('engine')=='whisper' else qwen_events(configure_asr(self.provider(),config.get('source_language')),self.cache,self.asr_lock,payload,window['offset'],rid,row['source'],self.store.root,window,
+                        resident=self.resident,confirmed=window['confirmed'],context_enabled=config['context_enabled'],terms=config['terms'],continuation={'key':rid+':'+str(round(window['offset']*RATE)),'enabled':config.get('prefix_enabled',True) and config['responsive'],
+                        'confirmed':window['confirmed'],'previous_text':previous,'stable_text':stable})
+                    if config.get('engine')=='whisper':
+                        if not self.batch_provider:raise ValueError('Whisper 托管识别尚未配置')
+                        iterator=whisper_events(configure_asr(self.batch_provider(),config.get('source_language')),self.cache,self.asr_lock,payload,window['offset'],rid,row['source'],self.store.root,window)
+                    async with aclosing(iterator):
+                        async for line in iterator:
+                            event=json.loads(line)
+                            if event['type']=='partial' and time.monotonic()-last_sent>=.15:
+                                text=event['text'];prefix=stable if text.startswith(stable) else ''
+                                self.emit(rid,'partial',partial={'start':event['start'],'end':event['end'],'text':text,'stable_text':prefix,**{k:window[k] for k in ('continuation_id','continues_previous','continues_next','boundary_reason')}})
+                                last_sent=time.monotonic()
+                            elif event['type']=='final':result=event['result']
+                            elif event['type']=='error':failure=event['message']
                 if result is None:
                     errors+=1;self.emit(rid,'status',message=failure or '实时识别未完成，原音已保留')
                     if draining:break

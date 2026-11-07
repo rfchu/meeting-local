@@ -152,3 +152,25 @@ def test_pending_attempt_is_failed_after_service_restart(setup):
         overview=restarted.get(f'/api/recordings/{rid}/live-results').json()
         assert overview['attempts']['failed']==1 and overview['covered_seconds']==0
         assert '服务重启' in overview['recent_failures'][0]['error']
+
+
+def test_dual_quick_completion_reuses_each_track_and_patches_both_tails(setup):
+    client,rid,provider=setup
+    services=client.app.state.services
+    recordings=services.recordings
+    folder=recordings.folder(rid)
+    recordings.write(folder/'session.json',recordings.read(rid)|{'source':'macos','include_microphone':True})
+    aid,_=services.live_results.begin(rid,'native','whisper',0,15,audio(),{'track_mode':'dual-v1'})
+    services.live_results.complete(aid,[
+        {'start':0,'end':15,'text':'线上原话','source_track':'system'},
+        {'start':0,'end':15,'text':'现场原话','source_track':'microphone'}])
+    recordings.write(folder/'session.json',recordings.read(rid)|{'source':'browser'})
+    finish(client,rid)
+    target=services.store.directory(rid)
+    for track in ('system','microphone'):(target/(track+'.wav')).write_bytes(audio(18))
+    process(client,rid)
+    segments=client.get(f'/api/meetings/{rid}').json()['segments']
+    assert [(s['start'],s['text'],s['source_track']) for s in segments]==[
+        (0,'线上原话','system'),(0,'现场原话','microphone'),
+        (15,'补齐尾段','system'),(15,'补齐尾段','microphone')]
+    assert provider.calls==['draft','draft']

@@ -5,6 +5,13 @@ from .languages import identity_language, source_language
 
 RATE=16000
 
+def is_dual_identity(identity):
+    if isinstance(identity,str):
+        try:identity=json.loads(identity)
+        except ValueError:return False
+    return isinstance(identity,dict) and identity.get('track_mode')=='dual-v1'
+
+
 def plan_ranges(rows,duration):
     end=round(duration*RATE);cursor=0;reused=[];gaps=[]
     for row in sorted(rows,key=lambda r:(r['start_frame'],-r['end_frame'])):
@@ -56,8 +63,10 @@ class LiveResults:
         for correction in self.store.all("SELECT * FROM live_corrections WHERE recording_id=? AND state='accepted'",(rid,)):
             accepted.setdefault(correction['range_id'],[]).append(correction)
         seen=set();result=[]
+        if language is not None:rows=[row for row in rows if identity_language(row['identity'])==source_language(language)]
+        dual=any(is_dual_identity(row['identity']) for row in rows)
         for row in rows:
-            if language is not None and identity_language(row['identity'])!=source_language(language):continue
+            if dual and not is_dual_identity(row['identity']):continue
             key=(row['start_frame'],row['end_frame'])
             if key in seen:continue
             seen.add(key);row['segments']=json.loads(row['segments'])

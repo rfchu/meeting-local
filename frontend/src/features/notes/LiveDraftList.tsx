@@ -4,7 +4,7 @@ import { draftSourceId } from "../overview/notes";
 import { useLayoutEffect, useRef, useState } from "react";
 import type { LiveDraftSegment, SourceLanguage } from "../../types";
 import { paragraphs } from "../transcript/paragraphs";
-import { clock } from "../../utils";
+import { clock, trackLabel } from "../../utils";
 
 export default function LiveDraftList({
   drafts,
@@ -88,6 +88,10 @@ export default function LiveDraftList({
       list.current.scrollTop = list.current.scrollHeight;
   }, [translation.entries, bilingual, active]);
   const groups = paragraphs(drafts);
+  const located =
+    active && jump
+      ? drafts.find((part) => draftSourceId(part) === jump.id)
+      : undefined;
   const captionTranslation =
     latest && !partial
       ? translation.entries[
@@ -198,10 +202,11 @@ export default function LiveDraftList({
         {groups.map((draft, index) => (
           <article
             key={`${draft.start}-${index}`}
-            data-live-ids={draft.parts
-              .map(draftSourceId)
-              .filter(Boolean)
-              .join(",")}
+            data-live-ids={
+              bilingual
+                ? undefined
+                : draft.parts.map(draftSourceId).filter(Boolean).join(",")
+            }
             className={[
               index === groups.length - 1 && !partial
                 ? "live-draft-latest"
@@ -213,7 +218,14 @@ export default function LiveDraftList({
               .filter(Boolean)
               .join(" ")}
           >
-            <b>{clock(draft.start)}</b>
+            <b>
+              {clock(draft.start)}
+              {draft.source_track && (
+                <small className="source-track-label">
+                  {trackLabel(draft.source_track)}
+                </small>
+              )}
+            </b>
             {bilingual && recordingId ? (
               <div>
                 {draft.parts.map((part, partIndex) => {
@@ -225,7 +237,15 @@ export default function LiveDraftList({
                   );
                   const entry = translation.entries[key];
                   return (
-                    <div key={partIndex} className="live-bilingual-part">
+                    <div
+                      key={partIndex}
+                      data-live-ids={draftSourceId(part) ?? undefined}
+                      className={
+                        part === located
+                          ? "live-bilingual-part live-source-selected"
+                          : "live-bilingual-part"
+                      }
+                    >
                       <p>
                         {part.text}{" "}
                         {entry?.result?.status === "unknown" && (
@@ -275,6 +295,22 @@ export default function LiveDraftList({
                 )}
               </p>
             )}
+            {recordingId &&
+              located?.source_track &&
+              located.live_range_id &&
+              located.live_segment_index != null &&
+              draft.parts.includes(located) && (
+                <div className="live-source-player">
+                  <small>回听 · {trackLabel(located.source_track)}</small>
+                  <audio
+                    key={jump?.nonce}
+                    controls
+                    preload="metadata"
+                    aria-label={`回听 ${trackLabel(located.source_track)}`}
+                    src={`/api/recordings/${recordingId}/live-audio/${located.live_range_id}/${located.live_segment_index}`}
+                  />
+                </div>
+              )}
             <button
               className="text-btn"
               disabled={!canAddNote}

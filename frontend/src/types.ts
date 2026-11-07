@@ -1,3 +1,4 @@
+export type SourceTrack = "system" | "microphone";
 export type SourceLanguage = "auto" | "zh" | "en" | "ja";
 export type TranscriptionLanguage = SourceLanguage;
 export type OutputLanguage = "zh" | "en";
@@ -8,6 +9,7 @@ export type JobState =
 export type MinutesStyle = "formal" | "brief" | "internal" | "ai";
 
 export interface Segment {
+  source_track?: SourceTrack | null;
   continuation_id?: string;
   continues_previous?: boolean;
   continues_next?: boolean;
@@ -194,6 +196,7 @@ export interface LiveCorrection {
   state: "suggested" | "accepted" | "rejected" | "unchanged";
 }
 export interface LiveDraftSegment {
+  source_track?: SourceTrack | null;
   continuation_id?: string;
   continues_previous?: boolean;
   continues_next?: boolean;

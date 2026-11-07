@@ -9,8 +9,8 @@ import {
   type RefObject,
 } from "react";
 import { defaultRangeExtractor, useVirtualizer } from "@tanstack/react-virtual";
-import type { Segment } from "../../types";
-import { clock } from "../../utils";
+import type { Segment, SourceTrack } from "../../types";
+import { clock, trackLabel } from "../../utils";
 function fitText(element: HTMLTextAreaElement | null) {
   if (!element) return;
   element.style.height = "auto";
@@ -28,7 +28,7 @@ const Row = memo(function Row({
   readOnly?: boolean;
   segment: Segment & { reading_parts?: Segment[] };
   onUpdate: (segment: Segment) => void;
-  onSeek: (time: number) => void;
+  onSeek: (time: number, track?: SourceTrack) => void;
 }) {
   const textRef = useRef<HTMLTextAreaElement>(null);
   useLayoutEffect(() => fitText(textRef.current), [segment.text]);
@@ -57,12 +57,17 @@ const Row = memo(function Row({
             ? "分段交界处，请回听确认重复或漏字"
             : "回听这一段"
         }
-        onClick={() => onSeek(segment.start)}
+        onClick={() => onSeek(segment.start, segment.source_track ?? undefined)}
       >
         {clock(segment.start)}
         {segment.boundary_review ? " · 核对" : ""}
       </button>
       <div>
+        {segment.source_track && (
+          <small className="source-track-label">
+            {trackLabel(segment.source_track)}
+          </small>
+        )}
         <input
           readOnly={readOnly}
           className="speaker"
@@ -97,7 +102,9 @@ const Row = memo(function Row({
                     key={part.id}
                     className="text-btn"
                     aria-label={`回听片段 ${clock(part.start)}`}
-                    onClick={() => onSeek(part.start)}
+                    onClick={() =>
+                      onSeek(part.start, part.source_track ?? undefined)
+                    }
                   >
                     {clock(part.start)}
                   </button>
@@ -137,7 +144,7 @@ export default function TranscriptList({
   segments: (Segment & { reading_parts?: Segment[] })[];
   total: number;
   onUpdate: (segment: Segment) => void;
-  onSeek: (time: number) => void;
+  onSeek: (time: number, track?: SourceTrack) => void;
   jumpSegmentId?: string;
   onEditingChange: (id: string | null) => void;
 }) {

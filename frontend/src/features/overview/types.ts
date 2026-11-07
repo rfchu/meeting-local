@@ -1,4 +1,7 @@
+import type { SourceTrack } from "../../types";
+
 export interface OverviewEvidence {
+  source_track?: SourceTrack | null;
   segment_id: string;
   quote: string;
   start: number;

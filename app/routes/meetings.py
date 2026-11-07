@@ -520,6 +520,8 @@ def register_routes(app,services:ApplicationServices):
     def save(mid:str,body:RevisionInput):
         row=meeting(mid)
         values=[x.model_dump() for x in body.segments]
+        for segment in values:
+            if segment["source_track"] is None:segment.pop("source_track")
         for value in values:
             for key in ('timestamp_precision','alignment_warning','continuation_id','continues_previous','continues_next','boundary_reason'):
                 if not value.get(key):value.pop(key,None)

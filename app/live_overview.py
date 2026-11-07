@@ -124,7 +124,8 @@ def numbered_input(data):
     model['current_items']=current
     model['dismissed_items']=[{k:i[k] for k in ('kind','content')} for i in data['dismissed_items']]
     model['evidence']=[{'id':eid,'text':e['quote'],'start':sources[e['segment_id']]['start'],
-        'new':e['segment_id'] in new_ids} for eid,e in quotes.items()]
+        'new':e['segment_id'] in new_ids,
+        **({'source_track':sources[e['segment_id']]['source_track']} if sources[e['segment_id']].get('source_track') else {})} for eid,e in quotes.items()]
     return model,quotes
 
 
@@ -284,7 +285,8 @@ def approved_context(db,mid,segments):
                 if part['text']==correction['original_text']:part=dict(part,text=apply_edits(part['text'],json.loads(correction['edits'])))
             if evidence['quote'] not in part['text']:matched=[];break
             start,end=part['start'],part['end']
-            candidates=[s for s in segments if s['start']<end+.2 and s['end']>start-.2 and evidence['quote'] in s['text']]
+            candidates=[s for s in segments if s['start']<end+.2 and s['end']>start-.2 and evidence['quote'] in s['text']
+                        and (not evidence.get('source_track') or s.get('source_track')==evidence['source_track'])]
             if len(candidates)!=1:matched=[];break
             matched.append({'segment_id':candidates[0]['id'],'quote':evidence['quote']})
         if matched:result.append({'item_id':item['id'],'kind':item['kind'],'content':item['content'],
@@ -312,7 +314,7 @@ class LiveOverview:
             for index,segment in enumerate(row['segments']):
                 if not segment['text'].strip():continue
                 parts.append({'id':row['id']+':'+str(index),'text':segment['text'],'start':segment['start'],'end':segment['end'],
-                    'range_id':row['id'],'segment_index':index})
+                    'range_id':row['id'],'segment_index':index,**({'source_track':segment['source_track']} if segment.get('source_track') else {})})
         return parts,gaps
 
     def meta(self,rid,session):
@@ -383,7 +385,8 @@ class LiveOverview:
             for entry in item['evidence']:
                 source=sources.get(entry['segment_id'])
                 evidence.append({**entry,'start':source['start'] if source else entry.get('start',0),
-                                 'stale':not source or entry['quote'] not in source['text']})
+                                 'stale':not source or entry['quote'] not in source['text'],
+                                 **({'source_track':source['source_track']} if source and source.get('source_track') else {})})
             stale_sources=not evidence or any(entry['stale'] for entry in evidence)
             value={**item,'decision':item.get('decision','pending') if version else row['state'] if row else 'pending',
                    'review_version':row['version'] if row else 0,'stale':stale_sources or stale_notes,
@@ -604,7 +607,8 @@ class LiveOverview:
             value['topic_ref']=None if item.kind=='topic' else resolved or (old.get(key) or {}).get('topic_ref')
             if not value['topic_ref']:value.pop('topic_ref')
             value['evidence']=[{**e,'start':allowed[e['segment_id']]['start'],'range_id':allowed[e['segment_id']]['range_id'],
-                'segment_index':allowed[e['segment_id']]['segment_index']} for e in value['evidence']]
+                'segment_index':allowed[e['segment_id']]['segment_index'],
+                **({'source_track':allowed[e['segment_id']]['source_track']} if allowed[e['segment_id']].get('source_track') else {})} for e in value['evidence']]
             value['note_fingerprints']={n['id']:digest(n) for n in plan['input']['focus_notes'] if n['id'] in value['note_ids']}
             values.append(value)
         if matched_topic and not fresh_topics:

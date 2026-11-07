@@ -6,7 +6,7 @@ from .live_stream import inspect_audio,terminate
 from .resources import request_for
 from .db import uid
 
-async def whisper_events(provider,cache,lock,payload,offset,rid,source,root,window):
+async def whisper_events(provider,cache,lock,payload,offset,rid,source,root,window,persist=True):
     duration,silent=inspect_audio(payload);started=time.monotonic();aid=None;process=None;claim=request_for(lock,'live_asr',{'asr':1},rid)
     request_id=uid();seq=0
     def event(kind,**data):
@@ -15,7 +15,8 @@ async def whisper_events(provider,cache,lock,payload,offset,rid,source,root,wind
             'engine':'whisper','start':offset,'end':offset+duration,**data},ensure_ascii=False)+'\n'
         seq+=1;return result
     try:
-        aid,cached=cache.begin(rid,source,'whisper',offset,duration,payload,provider.identity())
+        cached=None
+        if persist:aid,cached=cache.begin(rid,source,'whisper',offset,duration,payload,provider.identity())
         yield event('start',confirmed=True)
         if cached is not None:segments=cached
         elif silent:segments=[]
@@ -45,7 +46,7 @@ async def whisper_events(provider,cache,lock,payload,offset,rid,source,root,wind
             segments=[dict(s,live_range_id=aid,live_segment_index=i) for i,s in enumerate(segments)]
         yield event('final',result={**window,'engine':'whisper','segments':segments,'duration':duration,
             'confirmed':True,'processing_ms':round((time.monotonic()-started)*1000),'first_text_ms':None,
-            'persisted':True,'cached':cached is not None,'decoder':{}})
+            'persisted':persist,'cached':cached is not None,'decoder':{}})
     except asyncio.CancelledError:
         if aid:cache.fail(aid,'实时会话中断，原音保留')
         raise

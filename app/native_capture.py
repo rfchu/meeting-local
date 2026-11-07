@@ -256,7 +256,7 @@ class NativeCapture:
                            'file_age_seconds':round(write_age,1) if write_age is not None else None})
         return {'stalled':stalled,'heartbeat_age_seconds':round(heartbeat_age,1) if heartbeat_age is not None else None,'tracks':tracks}
 
-    def draft_window(self,rid,offset,window_seconds=15,responsive=False,allow_stopped=False,sentence_end=None):
+    def draft_window(self,rid,offset,window_seconds=15,responsive=False,allow_stopped=False,sentence_end=None,split_tracks=False):
         """Read a bounded snapshot from original PCM; never advance shared cursors."""
         if not math.isfinite(offset) or offset<0 or offset>86400:raise ValueError('草稿时间无效')
         with self.lock:
@@ -271,7 +271,7 @@ class NativeCapture:
             begin=round(offset*16000);end=int(horizon*16000);skipped=0
             elastic=responsive and allow_stopped
             limit=HARD_SECONDS if elastic else 15
-            if end-begin>2*limit*16000:
+            if not split_tracks and end-begin>2*limit*16000:
                 latest=max(begin,end-limit*16000);skipped=(latest-begin)/16000;begin=latest
             if skipped:sentence_end=None
             names=('system','microphone') if session.get('include_microphone') else ('system',)
@@ -294,11 +294,24 @@ class NativeCapture:
                 samples.extend([0]*(count-len(samples)));tracks.append(samples)
             mixed=tracks[0] if len(tracks)==1 else array('h',(max(-32768,min(32767,a+b)) for a,b in zip(*tracks)))
             boundary={}
+            if split_tracks and len(tracks)==2 and elastic:
+                mixed=array('h',(a if abs(a)>=abs(b) else b for a,b in zip(*tracks)))
             if elastic:
                 forced='pause' if status['state']=='paused' else 'stop' if status['state'] in ('stopped','interrupted','failed') else None
                 plan=elastic_plan(mixed.tobytes(),window_seconds,forced,sentence_end)
                 if plan is None:return {'ready':False,'next_offset':offset,'skipped_seconds':0}
                 count=plan.pop('count');confirmed=plan['confirmed'];mixed=mixed[:count];boundary=plan
+            if split_tracks and len(tracks)==2:
+                if not confirmed:return {'ready':False,'next_offset':offset,'skipped_seconds':0}
+                payloads={}
+                for name,samples in zip(names,tracks):
+                    output=io.BytesIO()
+                    with wave.open(output,'wb') as wav:
+                        wav.setnchannels(1);wav.setsampwidth(2);wav.setframerate(16000)
+                        wav.writeframes(samples[:count].tobytes())
+                    payloads[name]=output.getvalue()
+                return {'ready':True,'offset':begin/16000,'next_offset':(begin+count)/16000,
+                        'skipped_seconds':skipped,'confirmed':True,'track_payloads':payloads,**boundary}
             output=io.BytesIO()
             with wave.open(output,'wb') as wav:
                 wav.setnchannels(1);wav.setsampwidth(2);wav.setframerate(16000);wav.writeframes(mixed.tobytes())

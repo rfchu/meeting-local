@@ -213,7 +213,10 @@ export default function App() {
     [numSpeakers, setNumSpeakers] = useState(0);
   const transcriptionEngine = experimentalTranscription ? "qwen" : engine;
   const pausePlaybackRef = useRef<(() => void) | null>(null);
-  const seekRef = useRef<((time: number) => void) | null>(null),
+  const seekRef = useRef<
+      | ((time: number, track?: import("./types").SourceTrack | null) => void)
+      | null
+    >(null),
     toastTimer = useRef<number | undefined>(undefined),
     meetingRef = useRef<Meeting | null>(null);
   const transcriptGeneration = useRef(0),
@@ -1116,7 +1119,30 @@ export default function App() {
                 onOpened={() => setOverviewFocus(false)}
                 key={meeting.id}
                 meeting={meeting}
-                onSeek={(time) => seekRef.current?.(time)}
+                onSeek={(evidence) => {
+                  const source = meeting.segments.find(
+                    (segment) =>
+                      (segment.source_track ?? null) ===
+                        (evidence.source_track ?? null) &&
+                      segment.start <= evidence.start &&
+                      segment.end > evidence.start &&
+                      segment.text.includes(evidence.quote),
+                  );
+                  if (
+                    !source &&
+                    evidence.source_track &&
+                    evidence.range_id &&
+                    evidence.segment_index != null
+                  )
+                    return false;
+                  setWorkspace("transcript");
+                  if (source) setRestoredSegment(source.id);
+                  seekRef.current?.(
+                    source?.start ?? evidence.start,
+                    evidence.source_track,
+                  );
+                  return true;
+                }}
               />
               <select
                 value=""
@@ -1466,7 +1492,7 @@ export default function App() {
                         : restoredSegment
                     }
                     onChange={updateSegments}
-                    onSeek={(time) => seekRef.current?.(time)}
+                    onSeek={(time, track) => seekRef.current?.(time, track)}
                     onSave={saveTranscript}
                     onRefresh={async () => {
                       const fresh = await api.meeting(meeting.id);
