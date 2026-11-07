@@ -84,6 +84,7 @@ def test_delivery_frozen_after_draft_task_transcript_changes_and_restart(setup,t
     c,store,mid,other,aid,doc=setup;tid=track(c,mid,aid)
     response=deliver(c,mid,aid);assert response.status_code==201,response.text
     snapshot=response.json();did=snapshot['id']
+    assert snapshot['sent_status']=='unknown'
     assert snapshot['task_status'][0]['status']=='pending'
     assert deliver(c,mid,aid).json()['id']==did
     path=f'/api/meetings/{mid}/minutes/export/md?delivery_id={did}'
@@ -163,11 +164,15 @@ def test_audience_exports_follow_preview_and_sending_is_explicit(setup, audience
     pdf=export('pdf')
     assert pdf.status_code==200 and pdf.content.startswith(b'%PDF')
     sent=f'{base}/deliveries/{did}/sent'
-    assert c.get(f'/api/meetings/{mid}').json()['deliveries'][0]['sent_at'] is None
+    latest=c.get(f'/api/meetings/{mid}').json()['deliveries'][0]
+    assert latest['sent_at'] is None and latest['sent_status']=='unmarked'
     assert c.put(sent.replace(mid,other),json={'sent':True}).status_code==404
-    first=c.put(sent,json={'sent':True}).json()['sent_at']
+    marked=c.put(sent,json={'sent':True}).json()
+    first=marked['sent_at']
+    assert marked['sent_status']=='sent'
     assert first and c.put(sent,json={'sent':True}).json()['sent_at']==first
     assert export('md').text==preview['markdown']
-    assert c.put(sent,json={'sent':False}).json()['sent_at'] is None
+    cleared=c.put(sent,json={'sent':False}).json()
+    assert cleared['sent_at'] is None and cleared['sent_status']=='unmarked'
     store.save_revision(mid,[],'manual')
     assert export('md').text==preview['markdown']

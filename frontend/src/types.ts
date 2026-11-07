@@ -140,6 +140,7 @@ export interface NoteExpansion {
   evidence: { segment_id: string; quote: string }[];
 }
 export interface MinutesDelivery {
+  sent_status?: "sent" | "unmarked" | "unknown";
   template_version?: number;
   sent_at?: string | null;
   audience?: "internal" | "external";

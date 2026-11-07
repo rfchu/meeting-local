@@ -191,6 +191,23 @@ export default function MinutesDeliveryPanel({
                   }
                 />
               </label>{" "}
+              <label>
+                发送状态{" "}
+                <select
+                  value={filters.sent}
+                  onChange={(event) =>
+                    setFilters({
+                      ...filters,
+                      sent: event.target.value as DeliveryFilters["sent"],
+                    })
+                  }
+                >
+                  <option value="">全部状态</option>
+                  <option value="unmarked">未标记发送</option>
+                  <option value="sent">已标记发送</option>
+                  <option value="unknown">未知（旧交付）</option>
+                </select>
+              </label>{" "}
               <button
                 type="button"
                 onClick={() => setFilters(defaultDeliveryFilters)}

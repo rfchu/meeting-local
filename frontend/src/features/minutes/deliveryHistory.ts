@@ -14,13 +14,19 @@ export type DeliveryFilters = {
   audience: "" | "internal" | "external";
   from: string;
   through: string;
+  sent: "" | "sent" | "unmarked" | "unknown";
 };
 
 export const defaultDeliveryFilters: DeliveryFilters = {
   audience: "",
   from: "",
   through: "",
+  sent: "",
 };
+
+export function deliverySentStatus(delivery: MinutesDelivery) {
+  return delivery.sent_status ?? (delivery.sent_at ? "sent" : "unknown");
+}
 
 export function matchesDelivery(
   delivery: MinutesDelivery,
@@ -30,6 +36,8 @@ export function matchesDelivery(
     filters.audience &&
     (delivery.audience || "internal") !== filters.audience
   )
+    return false;
+  if (filters.sent && deliverySentStatus(delivery) !== filters.sent)
     return false;
   if (!filters.from && !filters.through) return true;
   const date = deliveryLocalDate(delivery.created);

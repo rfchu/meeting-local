@@ -97,10 +97,11 @@ def create(store,mid,aid,include_citations,confirmed):
 
 def public(row):
     payload=json.loads(row['payload'])
+    sent_status = 'sent' if payload.get('sent_at') else 'unmarked' if 'audience' in payload or 'sent_at' in payload else 'unknown'
     return {'id':row['id'],'artifact_id':row['artifact_id'],'created':row['created'],
             'title':payload['document']['title'],'revision':payload['revision'],
             'audience':payload.get('audience','internal'),'sent_at':payload.get('sent_at'),
-            'template_version':payload.get('template_version',0),
+            'template_version':payload.get('template_version',0),'sent_status':sent_status,
             'include_citations':payload['include_citations'],'task_status':payload['task_status']}
 
 
@@ -196,8 +197,8 @@ def set_sent(store, mid, delivery_id, sent):
             """, (mid, delivery_id))
         else:
             db.execute("""
-                UPDATE minutes_deliveries SET payload=json_remove(payload,'$.sent_at')
-                WHERE meeting_id=? AND id=? AND json_type(payload,'$.sent_at') IS NOT NULL
+                UPDATE minutes_deliveries SET payload=json_set(payload,'$.sent_at',NULL)
+                WHERE meeting_id=? AND id=? AND (json_type(payload,'$.sent_at') IS NULL OR json_type(payload,'$.sent_at')!='null')
             """, (mid, delivery_id))
         saved = db.execute('SELECT * FROM minutes_deliveries WHERE meeting_id=? AND id=?',
                            (mid, delivery_id)).fetchone()

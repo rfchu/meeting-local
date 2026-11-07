@@ -1,4 +1,4 @@
-import { deliveryLocalDate } from "./deliveryHistory";
+import { deliveryLocalDate, deliverySentStatus } from "./deliveryHistory";
 import { useState } from "react";
 import { api, downloadDelivery, downloadUrl } from "../../api";
 import type { MinutesDelivery } from "../../types";
@@ -48,7 +48,9 @@ export default function DeliveryHistoryRow({
         <small>
           {delivery.sent_at
             ? `已记录发送 · ${delivery.sent_at} UTC`
-            : "发送状态 · 未记录"}
+            : deliverySentStatus(delivery) === "unknown"
+              ? "发送状态 · 未知"
+              : "发送状态 · 未标记发送"}
         </small>
         {downloadStatus && <small role="status">{downloadStatus}</small>}
         {downloadError && <small role="alert">{downloadError}</small>}
