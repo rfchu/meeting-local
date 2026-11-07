@@ -39,7 +39,7 @@ def apply_edits(text,edits):
 class LiveCorrections:
     def __init__(self,store):self.store=store;self.lock=threading.Lock();self.resources=None
     def range(self,rid,aid,index):
-        row=self.store.one("SELECT * FROM live_asr_ranges WHERE id=? AND recording_id=? AND engine='qwen' AND state='completed'",(aid,rid))
+        row=self.store.one("SELECT * FROM live_asr_ranges WHERE id=? AND recording_id=? AND engine='qwen' AND state IN ('completed','partial')",(aid,rid))
         if not row:raise ValueError('只能校对已确认并保存的千问结果')
         segments=json.loads(row['segments'])
         if not 0<=index<len(segments):raise ValueError('识别片段不存在')
@@ -53,7 +53,7 @@ class LiveCorrections:
         if existing:return dict(existing,edits=json.loads(existing['edits']))
         if not self.lock.acquire(blocking=False):raise ValueError('上一句仍在校对，本段原始文字已保存，可稍后重试')
         try:
-            previous=self.store.all("SELECT segments FROM live_asr_ranges WHERE recording_id=? AND engine='qwen' AND state='completed' AND end_frame<=? ORDER BY end_frame DESC LIMIT 4",(rid,row['start_frame']))
+            previous=self.store.all("SELECT segments FROM live_asr_ranges WHERE recording_id=? AND engine='qwen' AND state IN ('completed','partial') AND end_frame<=? ORDER BY end_frame DESC LIMIT 4",(rid,row['start_frame']))
             context='\n'.join(''.join(s['text'] for s in json.loads(r['segments'])) for r in reversed(previous))[-1500:]
             provider=OpenAICompatibleProvider(profile)
             schema={'type':'object','additionalProperties':False,'required':['edits'],'properties':{'edits':{'type':'array','maxItems':6,'items':{'type':'object','additionalProperties':False,'required':['original','replacement','reason'],'properties':{k:{'type':'string'} for k in ('original','replacement','reason')}}}}}
@@ -68,7 +68,7 @@ class LiveCorrections:
             cid=uid()
             with self.store.connect() as db:
                 db.execute('BEGIN IMMEDIATE')
-                if not db.execute("SELECT id FROM live_asr_ranges WHERE id=? AND recording_id=? AND state='completed'",(aid,rid)).fetchone():raise ValueError('原始识别记录已移除，纠错结果未保存')
+                if not db.execute("SELECT id FROM live_asr_ranges WHERE id=? AND recording_id=? AND state IN ('completed','partial')",(aid,rid)).fetchone():raise ValueError('原始识别记录已移除，纠错结果未保存')
                 db.execute("INSERT OR IGNORE INTO live_corrections(id,recording_id,range_id,segment_index,profile_id,model,original_text,edits,state) VALUES(?,?,?,?,?,?,?,?,?)",(cid,rid,aid,index,profile['id'],profile['model'],segment['text'],encode(edits),'suggested' if edits else 'unchanged'))
             return next(r for r in self.list(rid) if r['range_id']==aid and r['segment_index']==index and r['profile_id']==profile['id'])
         finally:self.lock.release()

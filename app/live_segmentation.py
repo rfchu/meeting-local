@@ -27,8 +27,8 @@ def acoustic_pause(raw,minimum=3,sentence_end=None):
         else:quiet=0;seen_voice=True
     return cut,leading/RATE
 
-def elastic_plan(raw,target,forced=None,sentence_end=None):
-    raw=raw[:HARD_SECONDS*RATE*2]
+def elastic_plan(raw,target,forced=None,sentence_end=None,*,hard_seconds=HARD_SECONDS):
+    raw=raw[:hard_seconds*RATE*2]
     available=len(raw)//2
     minimum=.5 if forced else 3
     if available<round(minimum*RATE):return None
@@ -36,8 +36,8 @@ def elastic_plan(raw,target,forced=None,sentence_end=None):
     if cut is not None:
         count=cut;reason='sentence_pause' if sentence_end is not None and acoustic_pause(raw[:cut*2],minimum)[0] is None else 'silence';confirmed=True
     elif forced:count=available;reason=forced;confirmed=True
-    elif available>=HARD_SECONDS*RATE:count=HARD_SECONDS*RATE;reason='hard_limit';confirmed=True
+    elif available>=hard_seconds*RATE:count=hard_seconds*RATE;reason='hard_limit';confirmed=True
     elif available>=round(target*RATE):count=available;reason='preview';confirmed=False
     else:return None
-    return {'count':min(count,HARD_SECONDS*RATE),'confirmed':confirmed,'boundary_reason':reason,
+    return {'count':min(count,hard_seconds*RATE),'confirmed':confirmed,'boundary_reason':reason,
             'leading_silence_seconds':leading,'extending':not confirmed and available>=SOFT_SECONDS*RATE}

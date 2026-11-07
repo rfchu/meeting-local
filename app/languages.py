@@ -9,13 +9,16 @@ ASR_NAMES = {'auto': None, 'zh': 'Chinese', 'en': 'English', 'ja': 'Japanese'}
 AUTO_LANGUAGES = frozenset(('zh', 'en', 'Chinese', 'English'))
 
 
+AUTO_LANGUAGE_ERROR = '自动识别仅支持中英文。日语会议请选择「日语（Beta）」后重新识别。'
+
+
 class UnsupportedAutoLanguage(ValueError):
     pass
 
 
 def check_auto_languages(languages):
     if not languages or any(name not in AUTO_LANGUAGES for name in languages):
-        raise UnsupportedAutoLanguage('自动识别仅支持中英文。日语会议请选择「日语（Beta）」后重新识别。')
+        raise UnsupportedAutoLanguage(AUTO_LANGUAGE_ERROR)
 
 
 def source_language(value=None):

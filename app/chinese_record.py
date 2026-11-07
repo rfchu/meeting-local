@@ -41,7 +41,7 @@ def segment_language(text, hint):
 def live_source(services, rid, aid, index):
     hint = recording_language(services.recordings, rid)
     row = services.store.one(
-        "SELECT engine FROM live_asr_ranges WHERE id=? AND recording_id=? AND state='completed'", (aid, rid)
+        "SELECT engine FROM live_asr_ranges WHERE id=? AND recording_id=? AND state IN ('completed','partial')", (aid, rid)
     )
     if row:
         for candidate in services.live_results.snapshot(rid, row['engine'], hint):

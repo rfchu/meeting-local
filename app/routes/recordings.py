@@ -266,7 +266,7 @@ def register_routes(app,services:ApplicationServices):
 
     @app.get('/api/recordings/{rid}/live-audio/{aid}/{index}')
     def live_track_audio(rid:str,aid:str,index:int):
-        row=store.one("SELECT segments,start_frame,end_frame FROM live_asr_ranges WHERE id=? AND recording_id=? AND state='completed'",(aid,rid))
+        row=store.one("SELECT segments,start_frame,end_frame FROM live_asr_ranges WHERE id=? AND recording_id=? AND state IN ('completed','partial')",(aid,rid))
         parts=json.loads(row['segments']) if row else []
         if not 0<=index<len(parts):raise HTTPException(404,'找不到这句原音')
         part=parts[index];track=part.get('source_track')

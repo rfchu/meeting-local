@@ -270,7 +270,7 @@ class NativeCapture:
             horizon=min(status.get('duration',0),available_frames/16000)
             begin=round(offset*16000);end=int(horizon*16000);skipped=0
             elastic=responsive and allow_stopped
-            limit=HARD_SECONDS if elastic else 15
+            limit=(8 if split_tracks else HARD_SECONDS) if elastic else 15
             if not split_tracks and end-begin>2*limit*16000:
                 latest=max(begin,end-limit*16000);skipped=(latest-begin)/16000;begin=latest
             if skipped:sentence_end=None
@@ -298,11 +298,12 @@ class NativeCapture:
                 mixed=array('h',(a if abs(a)>=abs(b) else b for a,b in zip(*tracks)))
             if elastic:
                 forced='pause' if status['state']=='paused' else 'stop' if status['state'] in ('stopped','interrupted','failed') else None
-                plan=elastic_plan(mixed.tobytes(),window_seconds,forced,sentence_end)
+                plan=elastic_plan(mixed.tobytes(),window_seconds,forced,sentence_end,hard_seconds=limit)
                 if plan is None:return {'ready':False,'next_offset':offset,'skipped_seconds':0}
                 count=plan.pop('count');confirmed=plan['confirmed'];mixed=mixed[:count];boundary=plan
             if split_tracks and len(tracks)==2:
                 if not confirmed:return {'ready':False,'next_offset':offset,'skipped_seconds':0}
+                if boundary.get('boundary_reason')=='hard_limit':boundary['boundary_reason']='dual_limit'
                 payloads={}
                 for name,samples in zip(names,tracks):
                     output=io.BytesIO()

@@ -50,6 +50,9 @@ class LiveResults:
         return aid,None
     def complete(self,aid,segments):
         self.store.execute("UPDATE live_asr_ranges SET state='completed',segments=?,error='',updated=CURRENT_TIMESTAMP WHERE id=?",(encode(segments),aid))
+    def partial(self,aid,segments,failed_tracks):
+        self.store.execute("UPDATE live_asr_ranges SET state='partial',segments=?,error=?,updated=CURRENT_TIMESTAMP WHERE id=?",
+                           (encode(segments),encode(failed_tracks),aid))
     def preview(self,aid):
         self.store.execute("UPDATE live_asr_ranges SET state='preview',error='',updated=CURRENT_TIMESTAMP WHERE id=?",(aid,))
     def fail(self,aid,error):
@@ -58,7 +61,7 @@ class LiveResults:
             row=db.execute('SELECT recording_id FROM live_asr_ranges WHERE id=?',(aid,)).fetchone() if changed else None
         if row:self.recordings.event('asr.failed',row['recording_id'])
     def snapshot(self,rid,engine,language=None):
-        rows=self.store.all("SELECT * FROM live_asr_ranges WHERE recording_id=? AND engine=? AND state='completed' ORDER BY rowid DESC",(rid,engine))
+        rows=self.store.all("SELECT * FROM live_asr_ranges WHERE recording_id=? AND engine=? AND state IN ('completed','partial') ORDER BY rowid DESC",(rid,engine))
         accepted={}
         for correction in self.store.all("SELECT * FROM live_corrections WHERE recording_id=? AND state='accepted'",(rid,)):
             accepted.setdefault(correction['range_id'],[]).append(correction)
@@ -70,6 +73,7 @@ class LiveResults:
             key=(row['start_frame'],row['end_frame'])
             if key in seen:continue
             seen.add(key);row['segments']=json.loads(row['segments'])
+            if row['state']=='partial':row['failed_tracks']=json.loads(row['error'])
             from .live_corrections import apply_edits
             for correction in accepted.get(row['id'],[]):
                 i=correction['segment_index']
@@ -87,10 +91,10 @@ class LiveResults:
         language=session.get('source_language') or (session.get('brief') or {}).get('source_language') or 'zh'
         live=self.store.one('SELECT config FROM live_sessions WHERE recording_id=?',(rid,))
         if live:language=json.loads(live['config']).get('source_language') or language
-        rows=self.snapshot(rid,engine,language);reused,gaps=plan_ranges(rows,duration)
+        rows=self.snapshot(rid,engine,language);reused,gaps=plan_ranges([row for row in rows if row['state']=='completed'],duration)
         states=self.store.all('SELECT state,COUNT(*) AS count FROM live_asr_ranges WHERE recording_id=? AND engine=? GROUP BY state',(rid,engine))
         attempts=self.store.all("SELECT id,start_frame,end_frame,state,error FROM live_asr_ranges WHERE recording_id=? AND engine=? AND state!='completed' ORDER BY rowid DESC LIMIT 50",(rid,engine))
         return {'engine':engine,'duration':duration,'covered_seconds':sum((r['end_frame']-r['start_frame'])/RATE for r in reused),
                 'completed_ranges':len(reused),'gaps':[{'start':a,'end':b} for a,b in gaps],
                 'attempts':{row['state']:row['count'] for row in states},
-                'recent_failures':[{'start':r['start_frame']/RATE,'end':r['end_frame']/RATE,'state':r['state'],'error':r['error']} for r in attempts]}
+                'recent_failures':[{'start':r['start_frame']/RATE,'end':r['end_frame']/RATE,'state':r['state'],'error':('部分音轨语言未识别，原音已保留' if r['state']=='partial' else r['error'])} for r in attempts]}

@@ -316,7 +316,7 @@ class Worker:
                     track_config={**config,'live_snapshot':[
                         {**row,'segments':[part for part in row['segments'] if part.get('source_track')==track]}
                         for row in config.get('live_snapshot',[])
-                        if is_dual_identity(row.get('identity'))
+                        if is_dual_identity(row.get('identity')) and track not in row.get('failed_tracks',[])
                     ]}
                 segments,meta=self.fast_transcription(track_config,duration,track_audio,work,provider,run,jid,checkpoints,track_identity,prefix,reference)
                 if track:reuse_meta.setdefault('tracks',{})[track]=meta

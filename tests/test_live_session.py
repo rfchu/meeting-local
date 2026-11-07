@@ -238,3 +238,31 @@ def test_dual_capture_keeps_overlapping_evidence_and_reads_the_requested_track(t
             assert wav.readframes(16000)==tracks[track]
     assert client.get(f'/api/recordings/{"0"*32}/live-audio/{aid}/0').status_code==404
     assert client.get(f'/api/recordings/{rid}/live-audio/{aid}/-1').status_code==404
+
+
+def test_dual_language_rejection_preserves_the_other_track_and_reports_gap(tmp_path):
+    from app.languages import AUTO_LANGUAGE_ERROR
+
+    class MixedResident(Resident):
+        async def generate(self,provider,path,context=''):
+            with wave.open(str(path),'rb') as wav:
+                if wav.readframes(1)==b'\x00\x08':
+                    raise RuntimeError(AUTO_LANGUAGE_ERROR)
+            async for event in super().generate(provider,path,context):
+                yield event
+
+    manager,recordings,rid,_,_=setup(tmp_path)
+    manager.resident=MixedResident()
+    class AutoProvider(Provider):
+        def identity(self):return [{"source_language":self.language}]
+    manager.provider=AutoProvider
+    folder=recordings.folder(rid)
+    recordings.write(folder/'session.json',recordings.read(rid)|{'source':'macos','include_microphone':True})
+    result,error=asyncio.run(manager.recognize_tracks(rid,{'engine':'qwen','source_language':'auto'},{
+        'offset':0,'next_offset':3,'track_payloads':{'system':audio(3),'microphone':pcm_wav(b'\x00\x08\x00\xf8'*24000)}}))
+    assert not error
+    assert [part['source_track'] for part in result['segments']]==['system']
+    assert result['failed_tracks']==['microphone']
+    [row]=manager.cache.snapshot(rid,'qwen','auto')
+    assert row['failed_tracks']==['microphone']
+    assert manager.cache.overview(rid,'qwen',3)['covered_seconds']==0

@@ -1,5 +1,5 @@
 """Recording-bound ASR supervisor. Subscribers never own inference lifetime."""
-from .languages import configure_asr, recording_language
+from .languages import AUTO_LANGUAGE_ERROR, configure_asr, recording_language
 from .resource_policy import sync_live_demand
 import asyncio,hashlib,io,json,math,os,shutil,time,unicodedata,wave
 from contextlib import aclosing
@@ -211,6 +211,7 @@ class LiveSessions:
         aid,cached=self.cache.begin(rid,'native',engine,window['offset'],duration,
                                    b''.join(payloads.values()),identity)
         started=time.monotonic()
+        failed_tracks=[]
         try:
             if cached is None:
                 segments=[]
@@ -223,7 +224,11 @@ class LiveSessions:
                     async with aclosing(iterator):
                         async for line in iterator:
                             event=json.loads(line)
-                            if event['type']=='error':raise RuntimeError(event['message'])
+                            if event['type']=='error':
+                                if AUTO_LANGUAGE_ERROR in event['message']:
+                                    failed_tracks.append(track)
+                                    break
+                                raise RuntimeError(event['message'])
                             if event['type']=='final':
                                 segments.extend(dict(part,source_track=track) for part in event['result']['segments'])
                                 break
@@ -232,11 +237,12 @@ class LiveSessions:
                 segments=await asyncio.to_thread(remove_echo_duplicates,segments,lambda start,end:
                     wav_echo_dominated(io.BytesIO(payloads['system']),io.BytesIO(original_mic),start-offset,end-offset))
                 segments.sort(key=lambda item:item['start'])
-                self.cache.complete(aid,segments)
+                if failed_tracks:self.cache.partial(aid,segments,failed_tracks)
+                else:self.cache.complete(aid,segments)
                 cached=[dict(part,live_range_id=aid,live_segment_index=i) for i,part in enumerate(segments)]
             return {**window,'engine':engine,'segments':cached,'duration':duration,'confirmed':True,
                     'processing_ms':round((time.monotonic()-started)*1000),'first_text_ms':None,
-                    'persisted':True,'decoder':{}},None
+                    'persisted':True,'decoder':{},'failed_tracks':failed_tracks},None
         except asyncio.CancelledError:
             if aid:self.cache.fail(aid,'双轨识别中断，原音已保留')
             raise
@@ -275,7 +281,7 @@ class LiveSessions:
                     available=max(0,capture.get('duration',0)-cursor/RATE)
                     target=min(HARD_SECONDS,max(next_target,math.floor(available))) if config['responsive'] else 15
                     dual=self.recordings.read(rid).get('include_microphone',False)
-                    window=await asyncio.to_thread(self.native.draft_window,rid,cursor/RATE,15 if dual else target,
+                    window=await asyncio.to_thread(self.native.draft_window,rid,cursor/RATE,(3 if config['responsive'] else 15) if dual else target,
                         config['responsive'],True,
                         **({'split_tracks':True} if dual else {'sentence_end':hint} if hint is not None else {}))
                     paused=capture.get('state')=='paused'
@@ -347,7 +353,11 @@ class LiveSessions:
                 if result['confirmed']:
                     if recovery:metrics['recovery']['state']='resumed' if backlog<=3 else 'catching_up'
                     self.checkpoint(rid,cursor=end,partial={},metrics=metrics)
-                    self.emit(rid,'final',result=result);previous='';stable='';preview_end=0;preview_start=None;next_target=max(3,load['preview_step_seconds'])
+                    self.emit(rid,'final',result=result)
+                    if result.get('failed_tracks'):
+                        labels='、'.join('电脑声音' if track=='system' else '麦克风' for track in result['failed_tracks'])
+                        self.emit(rid,'status',message=f'{labels}有一段语言未识别，原音已保留。'+AUTO_LANGUAGE_ERROR)
+                    previous='';stable='';preview_end=0;preview_start=None;next_target=max(3,load['preview_step_seconds'])
                 else:
                     partial={'start':window['offset'],'end':window['next_offset'],'text':text,'stable_text':stable,**{k:window[k] for k in ('continuation_id','continues_previous','continues_next','boundary_reason')}}
                     self.checkpoint(rid,partial=partial,metrics=metrics)

@@ -263,7 +263,7 @@ def approved_context(db,mid,segments):
     run=db.execute('SELECT config FROM live_overview_runs WHERE recording_id=?',(mid,)).fetchone()
     if not run:return result
     engine=json.loads(run['config'])['engine'];ranges=[];seen=set()
-    for row in db.execute("SELECT * FROM live_asr_ranges WHERE recording_id=? AND engine=? AND state='completed' ORDER BY rowid DESC",(mid,engine)):
+    for row in db.execute("SELECT * FROM live_asr_ranges WHERE recording_id=? AND engine=? AND state IN ('completed','partial') ORDER BY rowid DESC",(mid,engine)):
         key=(row['start_frame'],row['end_frame'])
         if key not in seen:seen.add(key);ranges.append(dict(row))
     selected,_=plan_ranges(ranges,max((r['end_frame']/RATE for r in ranges),default=0))
@@ -275,7 +275,7 @@ def approved_context(db,mid,segments):
         if any(known.get(key)!=value for key,value in item.get('note_fingerprints',{}).items()):continue
         for evidence in item['evidence']:
             # Source timestamps come from the saved, verified raw range, never from the LLM.
-            raw=db.execute("SELECT segments FROM live_asr_ranges WHERE id=? AND recording_id=? AND state='completed'",(evidence.get('range_id'),mid)).fetchone()
+            raw=db.execute("SELECT segments FROM live_asr_ranges WHERE id=? AND recording_id=? AND state IN ('completed','partial')",(evidence.get('range_id'),mid)).fetchone()
             if not raw or evidence.get('range_id') not in selected_ids:matched=[];break
             raw_parts=json.loads(raw['segments']);index=evidence.get('segment_index',-1)
             if not 0<=index<len(raw_parts):matched=[];break

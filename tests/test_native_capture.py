@@ -246,3 +246,12 @@ def test_managed_native_sentence_hint_uses_short_pause_before_preview_target(cap
     result=capture.draft_window(rid,0,25,True,True,sentence_end=5)
     assert result['offset']==55 and result['next_offset']==80
     assert result['boundary_reason']=='hard_limit'
+
+
+def test_dual_continuous_speech_commits_while_still_recording(capture):
+    rid,folder=running_window(capture,8,microphone=True)
+    for track in ('system','microphone'):
+        (folder/(track+'.pcm')).write_bytes(b'\x70\x17'*8*16000)
+    result=capture.draft_window(rid,0,3,True,True,split_tracks=True)
+    assert result['confirmed'] and result['next_offset']==8
+    assert set(result['track_payloads'])=={'system','microphone'}
