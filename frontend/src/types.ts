@@ -196,6 +196,7 @@ export interface LiveCorrection {
   state: "suggested" | "accepted" | "rejected" | "unchanged";
 }
 export interface LiveDraftSegment {
+  tracks?: LiveDraftSegment[];
   source_track?: SourceTrack | null;
   continuation_id?: string;
   continues_previous?: boolean;

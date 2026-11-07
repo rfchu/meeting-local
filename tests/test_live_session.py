@@ -266,3 +266,30 @@ def test_dual_language_rejection_preserves_the_other_track_and_reports_gap(tmp_p
     [row]=manager.cache.snapshot(rid,'qwen','auto')
     assert row['failed_tracks']==['microphone']
     assert manager.cache.overview(rid,'qwen',3)['covered_seconds']==0
+
+
+def test_dual_preview_is_ephemeral_and_deduplicated_only_at_confirmation(tmp_path,monkeypatch):
+    manager,recordings,rid,_,_=setup(tmp_path)
+    folder=recordings.folder(rid)
+    recordings.write(folder/'session.json',recordings.read(rid)|{'source':'macos','include_microphone':True})
+    monkeypatch.setattr('app.track_audio.wav_echo_dominated',lambda *_:True)
+
+    async def run():
+        drafts=[]
+        for confirmed in (False,True):
+            result,error=await manager.recognize_tracks(rid,{'engine':'qwen','source_language':'zh'},{
+                'offset':0,'next_offset':3,'confirmed':confirmed,
+                'track_payloads':{'system':audio(3),'microphone':pcm_wav(b'\x00\x08\x00\xf8'*24000)},
+            },drafts.append)
+            assert not error
+            assert {part['source_track'] for part in drafts}=={'system','microphone'}
+            assert result['first_text_ms'] is not None
+            rows=manager.cache.snapshot(rid,'qwen')
+            if confirmed:
+                assert [part['source_track'] for part in result['segments']]==['system']
+                assert len(rows)==1 and len(rows[0]['segments'])==1
+            else:
+                assert len(result['segments'])==2 and not rows
+                assert not any('live_range_id' in part for part in result['segments'])
+            drafts.clear()
+    asyncio.run(run())

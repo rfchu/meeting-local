@@ -704,6 +704,7 @@ export function useRecordingController({
     setPartialDraft((old) => {
       // Keep the prior preview while a larger cumulative decode catches up.
       if (
+        !partial.tracks &&
         responsiveMode &&
         old &&
         Math.abs(old.start - partial.start) < 0.01 &&

@@ -302,7 +302,6 @@ class NativeCapture:
                 if plan is None:return {'ready':False,'next_offset':offset,'skipped_seconds':0}
                 count=plan.pop('count');confirmed=plan['confirmed'];mixed=mixed[:count];boundary=plan
             if split_tracks and len(tracks)==2:
-                if not confirmed:return {'ready':False,'next_offset':offset,'skipped_seconds':0}
                 if boundary.get('boundary_reason')=='hard_limit':boundary['boundary_reason']='dual_limit'
                 payloads={}
                 for name,samples in zip(names,tracks):
@@ -312,7 +311,7 @@ class NativeCapture:
                         wav.writeframes(samples[:count].tobytes())
                     payloads[name]=output.getvalue()
                 return {'ready':True,'offset':begin/16000,'next_offset':(begin+count)/16000,
-                        'skipped_seconds':skipped,'confirmed':True,'track_payloads':payloads,**boundary}
+                        'skipped_seconds':skipped,'confirmed':confirmed,'track_payloads':payloads,**boundary}
             output=io.BytesIO()
             with wave.open(output,'wb') as wav:
                 wav.setnchannels(1);wav.setsampwidth(2);wav.setframerate(16000);wav.writeframes(mixed.tobytes())

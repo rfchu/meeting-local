@@ -320,7 +320,26 @@ export default function LiveDraftList({
             </button>
           </article>
         ))}
-        {partial && (
+        {partial?.tracks?.length ? (
+          partial.tracks.map((track) => (
+            <article
+              key={track.source_track}
+              className="live-draft-latest live-draft-partial"
+              aria-label="未确认的临时文字"
+            >
+              <b>
+                {clock(track.start)}
+                {track.source_track && (
+                  <small className="source-track-label">
+                    {trackLabel(track.source_track)}
+                  </small>
+                )}
+              </b>
+              <p>{track.text}</p>
+              <small>临时文字 · 待确认</small>
+            </article>
+          ))
+        ) : partial?.text ? (
           <article
             className="live-draft-latest live-draft-partial"
             aria-label="未确认的临时文字"
@@ -351,7 +370,7 @@ export default function LiveDraftList({
               {partial.stable_text ? "前缀趋稳 · 尾部可修订" : "尾部可修订"}
             </small>
           </article>
-        )}
+        ) : null}
       </div>
     </>
   );
