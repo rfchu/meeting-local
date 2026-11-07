@@ -57,7 +57,7 @@ export default function RecordingReceipt({
         <strong>实时识别覆盖 {clock(report.coverage.covered_seconds)}</strong>
         <span>
           {report.coverage.uncovered_seconds > 0
-            ? `还有 ${clock(report.coverage.uncovered_seconds)} 待补识别，快速完成会补齐缺段与尾段。`
+            ? `还有 ${clock(report.coverage.uncovered_seconds)} 未被实时识别覆盖。快速完成可补识别已保存的音频。`
             : "已覆盖全部录音范围，快速完成可直接复用已确认结果。"}
         </span>
       </div>

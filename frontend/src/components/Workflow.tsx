@@ -1,4 +1,5 @@
 import { useState } from "react";
+import RecordingReceipt from "../features/notes/RecordingReceipt";
 import HandoffSourcesDialog from "../features/meeting/HandoffSourcesDialog";
 import type { HandoffSource } from "../features/meeting/handoffSources";
 import {
@@ -202,6 +203,9 @@ export default function Workflow(props: Props) {
   }
   const handoff =
     transcriptDirty || minutesDirty ? null : currentHandoff(meeting);
+  const liveEngine = handoff?.stages.find((stage) => stage.key === "transcript")
+    ?.source.live_engine;
+  const [coverageMeeting, setCoverageMeeting] = useState<string | null>(null);
   const guidance = handoffAction(meeting, transcriptDirty, minutesDirty);
   const openTarget = (target: string, jobId?: string) => {
     switch (target) {
@@ -250,6 +254,25 @@ export default function Workflow(props: Props) {
   return (
     <section className="workflow" aria-label="会议处理进度">
       {label !== "核对录音" && qualityNotice}
+      {meeting.recording_quality?.recorded &&
+        (liveEngine === "whisper" || liveEngine === "qwen") && (
+          <>
+            <button
+              className="text-btn"
+              aria-expanded={coverageMeeting === meeting.id}
+              onClick={() =>
+                setCoverageMeeting(
+                  coverageMeeting === meeting.id ? null : meeting.id,
+                )
+              }
+            >
+              查看实时识别覆盖与录音异常
+            </button>
+            {coverageMeeting === meeting.id && (
+              <RecordingReceipt id={meeting.id} engine={liveEngine} />
+            )}
+          </>
+        )}
       <div className="workflow-next">
         <span>{hint}</span>
         <button
