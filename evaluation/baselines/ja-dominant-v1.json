@@ -13,5 +13,30 @@
     {"engine": "Whisper large-v3-turbo", "modes": ["ja with Silero VAD"], "finding": "The VAD path also omitted the English project name."},
     {"engine": "Qwen3-ASR-1.7B 8-bit + Qwen3 ForcedAligner 0.6B 8-bit", "modes": ["ja (isolated probe)", "auto"], "finding": "Preserved the project name in katakana and Japanese facts. The aligner fell back to a single chunk spanning 0 to 13.2166875 seconds in both modes."}
   ],
-  "decision": "Keep Japanese disabled in T18b and T18c. The tested configurations did not provide both coverage and segment-level audio location. The ASR gate failed before downstream translation and real-time acceptance."
+  "decision": "Keep formal Japanese bilingual and live support disabled. The tested configurations did not provide both coverage and segment-level audio location. The ASR gate failed before downstream translation and real-time acceptance.",
+  "draft_pilot": {
+    "scope": "Experimental offline original-text draft only, using Qwen with explicit Japanese. Additional synthetic voices, not a real-meeting benchmark.",
+    "samples": [
+      {
+        "voice": "Kyoko",
+        "reference": "見積金額は二百四十万円です。山田さんが四月十日に確認します。",
+        "transcript": "見積金額は二百四十万円です。山田さんが四月十日に確認します。",
+        "duration_seconds": 6.624
+      },
+      {
+        "voice": "Reed (Japanese (Japan))",
+        "reference": "鈴木さんが六月二十三日に大阪へ出張します。会議は午後三時からです。",
+        "transcript": "鈴木さんが6月23日に大阪へ出張します。会議は午後3時からです。",
+        "duration_seconds": 7.2831875
+      },
+      {
+        "voice": "Flo (Japanese (Japan))",
+        "reference": "高橋さんは資料を八月二日に提出します。参加者は十二人です。",
+        "transcript": "坂橋さんは資料を8月2日に提出します。参加者は13人です。",
+        "duration_seconds": 6.7345625
+      }
+    ],
+    "finding": "Kyoko and Reed retained the checked facts. Flo had a surname substitution and changed 12 to 13. Each transcript retained a single audio-block time range.",
+    "decision": "Open the limited after-meeting draft path. Require separate validation before enabling bilingual workflows or real-time support."
+  }
 }

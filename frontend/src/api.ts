@@ -10,7 +10,11 @@ import { reportRecordingCommand } from "./features/notes/recordingCommandEvents"
 import { RecordingCommandClient } from "./features/notes/recordingCommands";
 import type { ObservationTimelineData } from "./features/management/ObservationTimeline";
 import type { RecordingObservation } from "./features/management/RecordingValidationPanel";
-import type { RecordingQuality, RecordingReviewStatus } from "./types";
+import type {
+  RecordingQuality,
+  RecordingReviewStatus,
+  TranscriptionLanguage,
+} from "./types";
 import type { RuntimeTasks } from "./features/management/TasksPanel";
 import type { RuntimeOverview } from "./features/management/RuntimeManagement";
 import type { OverviewStatus } from "./features/overview/types";
@@ -1013,7 +1017,7 @@ export const api = {
     id: string,
     body: {
       engine: string;
-      source_language?: "auto" | "zh" | "en";
+      source_language?: TranscriptionLanguage;
       diarization: boolean;
       num_speakers: number;
       completion_mode?: "quick" | "full";

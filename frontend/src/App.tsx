@@ -45,6 +45,7 @@ import type {
   MinutesStyle,
   Segment,
   Workspace,
+  TranscriptionLanguage,
 } from "./types";
 import {
   clone,
@@ -189,9 +190,9 @@ export default function App() {
     enabled: !recordingOpen && !recoveryOpen,
   });
   const [libraryOpen, setLibraryOpen] = useState(false);
-  const [transcriptionLanguage, setTranscriptionLanguage] = useState<
-    "auto" | "zh" | "en"
-  >("auto");
+  const [transcriptionLanguage, setTranscriptionLanguage] =
+    useState<TranscriptionLanguage>("auto");
+  const experimentalTranscription = transcriptionLanguage === "ja";
   useEffect(() => {
     if (meeting)
       setTranscriptionLanguage(
@@ -209,6 +210,7 @@ export default function App() {
   const [engine, setEngine] = useModelChoice("transcription", meeting?.id),
     [diarization, setDiarization] = useState(false),
     [numSpeakers, setNumSpeakers] = useState(0);
+  const transcriptionEngine = experimentalTranscription ? "qwen" : engine;
   const pausePlaybackRef = useRef<(() => void) | null>(null);
   const seekRef = useRef<((time: number) => void) | null>(null),
     toastTimer = useRef<number | undefined>(undefined),
@@ -702,6 +704,7 @@ export default function App() {
     try {
       await saveTranscript();
       if (
+        !experimentalTranscription &&
         meeting.revision &&
         !confirm(
           "重新转写会生成新的模型文稿版本。现有校对稿保留在历史版本中，继续吗？",
@@ -709,10 +712,10 @@ export default function App() {
       )
         return;
       await api.transcribe(meeting.id, {
-        engine,
+        engine: transcriptionEngine,
         source_language: transcriptionLanguage,
-        diarization,
-        num_speakers: numSpeakers,
+        diarization: !experimentalTranscription && diarization,
+        num_speakers: experimentalTranscription ? 0 : numSpeakers,
       });
       setMeeting(await api.meeting(meeting.id));
     } catch (error) {
@@ -895,8 +898,9 @@ export default function App() {
   const environment = envQuery.data,
     transcriptionJob = latestJob(meeting, "transcription"),
     transcriptionRunning = isRunning(transcriptionJob),
-    engineReady = !!environment?.engines.find((item) => item.id === engine)
-      ?.ready;
+    engineReady = !!environment?.engines.find(
+      (item) => item.id === transcriptionEngine,
+    )?.ready;
   const candidateArtifacts =
     meeting?.artifacts.filter((item) => item.kind === "transcript_candidate") ||
     [];
@@ -1028,13 +1032,18 @@ export default function App() {
                       <option value="auto">自动识别</option>
                       <option value="zh">中文</option>
                       <option value="en">英文</option>
+                      <optgroup label="更多语言">
+                        <option value="ja">日语 · 实验性（会后）</option>
+                      </optgroup>
                     </select>
                   </label>
                   <label className="engine-field">
                     识别引擎{" "}
                     <select
-                      value={engine}
-                      disabled={transcriptionRunning}
+                      value={transcriptionEngine}
+                      disabled={
+                        transcriptionRunning || experimentalTranscription
+                      }
                       onChange={(e) => setEngine(e.target.value)}
                     >
                       {environment?.engines.map((item) => (
@@ -1056,31 +1065,45 @@ export default function App() {
                       )}
                     </select>
                   </label>
-                  <label className="check">
-                    <input
-                      type="checkbox"
-                      checked={diarization}
-                      disabled={!environment?.diarization_ready}
-                      onChange={(e) => setDiarization(e.target.checked)}
-                    />{" "}
-                    自动区分发言人
-                  </label>
-                  <select
-                    value={numSpeakers}
-                    onChange={(e) => setNumSpeakers(Number(e.target.value))}
-                  >
-                    {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((value) => (
-                      <option value={value} key={value}>
-                        {value ? `${value} 位发言人` : "人数自动估计"}
-                      </option>
-                    ))}
-                  </select>
+                  {experimentalTranscription ? (
+                    <p className="muted">
+                      使用本机千问生成独立原文草稿，按约 30
+                      秒音频块回听。姓名、数字和外语插句请人工核对。
+                      {!engineReady && " 请先安装本机千问模型。"}
+                    </p>
+                  ) : (
+                    <>
+                      <label className="check">
+                        <input
+                          type="checkbox"
+                          checked={diarization}
+                          disabled={!environment?.diarization_ready}
+                          onChange={(e) => setDiarization(e.target.checked)}
+                        />{" "}
+                        自动区分发言人
+                      </label>
+                      <select
+                        value={numSpeakers}
+                        onChange={(e) => setNumSpeakers(Number(e.target.value))}
+                      >
+                        {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((value) => (
+                          <option value={value} key={value}>
+                            {value ? `${value} 位发言人` : "人数自动估计"}
+                          </option>
+                        ))}
+                      </select>
+                    </>
+                  )}
                   <button
                     className="primary"
                     disabled={transcriptionRunning || !engineReady}
                     onClick={() => void startTranscription()}
                   >
-                    {meeting.revision ? "重新转写" : "开始转写"}
+                    {experimentalTranscription
+                      ? "生成日语草稿"
+                      : meeting.revision
+                        ? "重新转写"
+                        : "开始转写"}
                   </button>
                 </div>
               </details>
@@ -1142,18 +1165,24 @@ export default function App() {
             )}
             {candidateArtifacts.map((item) => (
               <section className="transcription-recovery" key={item.id}>
-                {item.provenance.incomplete === true && (
-                  <strong>
-                    {item.provenance.completion_mode === "quick"
-                      ? "快速文字稿"
-                      : "精细转写"}{" "}
-                    · 未完成恢复稿
-                  </strong>
+                {item.provenance.experimental === true && (
+                  <strong>日语 · 实验性原文草稿</strong>
                 )}
+                {item.provenance.incomplete === true &&
+                  item.provenance.experimental !== true && (
+                    <strong>
+                      {item.provenance.completion_mode === "quick"
+                        ? "快速文字稿"
+                        : "精细转写"}{" "}
+                      · 未完成恢复稿
+                    </strong>
+                  )}
                 <p>
                   {item.provenance.incomplete
                     ? "转写未完成，已完成部分已保留为恢复稿，不会覆盖当前文稿。可从检查点重试。"
-                    : "重新转写期间文稿有修改，识别结果已作为候选稿保留。"}
+                    : item.provenance.experimental
+                      ? "可按音频块回听核对，也可导出文本进行校对。"
+                      : "重新转写期间文稿有修改，识别结果已作为候选稿保留。"}
                 </p>
                 {item.provenance.incomplete === true && (
                   <details>
@@ -1186,14 +1215,56 @@ export default function App() {
                     />
                   </details>
                 )}
+                {item.provenance.experimental === true &&
+                  Array.isArray(item.payload) && (
+                    <details>
+                      <summary>查看日语草稿与回听</summary>
+                      {(item.payload as Segment[]).map((segment) => (
+                        <div key={segment.id}>
+                          <button
+                            className="text-btn"
+                            onClick={() => seekRef.current?.(segment.start)}
+                          >
+                            回听音频块 {clock(segment.start)}–
+                            {clock(segment.end)}
+                          </button>
+                          <p lang="ja">{segment.text}</p>
+                        </div>
+                      ))}
+                    </details>
+                  )}
                 <button
                   onClick={() => {
+                    if (
+                      item.provenance.experimental &&
+                      Array.isArray(item.payload)
+                    ) {
+                      const text = (item.payload as Segment[])
+                        .map(
+                          (segment) =>
+                            `[${clock(segment.start)}–${clock(segment.end)}] ${segment.text}`,
+                        )
+                        .join("\n\n");
+                      const url = URL.createObjectURL(
+                        new Blob(
+                          ["日语实验性原文草稿（按音频块定位）\n\n", text],
+                          { type: "text/plain;charset=utf-8" },
+                        ),
+                      );
+                      const link = document.createElement("a");
+                      link.href = url;
+                      link.download = "日语实验草稿.txt";
+                      link.click();
+                      window.setTimeout(() => URL.revokeObjectURL(url), 30_000);
+                      return;
+                    }
                     const link = document.createElement("a");
                     link.href = URL.createObjectURL(
                       new Blob(
                         [
                           JSON.stringify(
-                            item.provenance.incomplete
+                            item.provenance.incomplete ||
+                              item.provenance.experimental
                               ? {
                                   segments: item.payload,
                                   provenance: item.provenance,
@@ -1216,7 +1287,9 @@ export default function App() {
                 >
                   {item.provenance.incomplete
                     ? "导出未完成恢复稿"
-                    : "查看候选稿"}
+                    : item.provenance.experimental
+                      ? "导出日语草稿"
+                      : "查看候选稿"}
                 </button>
               </section>
             ))}
