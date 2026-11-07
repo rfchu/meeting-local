@@ -178,3 +178,30 @@ def test_dual_quick_completion_reuses_each_track_and_patches_both_tails(setup):
         (15,'补齐尾段','system'),(15,'补齐尾段','microphone')]
     assert provider.calls==['draft','draft']
     assert [s['speaker'] for s in segments]==['线上发言','现场发言','线上发言','现场发言']
+
+
+def test_auto_language_rejected_tail_keeps_confirmed_quick_transcript(setup, monkeypatch):
+    from app.languages import AUTO_LANGUAGE_ERROR, UnsupportedAutoLanguage
+
+    client,rid,provider=setup
+    finish(client,rid)
+    store=client.app.state.store
+    response=client.post(f'/api/meetings/{rid}/jobs',json={'completion_mode':'quick','source_language':'auto'})
+    assert response.status_code==201,response.text
+    jid=response.json()['id']
+    job=store.one('SELECT * FROM jobs WHERE id=?',(jid,))
+    config=json.loads(job['config'])
+    config['live_snapshot']=[{'id':'known','start_frame':0,'end_frame':15*16000,
+                              'segments':[{'start':0,'end':15,'text':'已确认文字'}]}]
+    def reject(*args):
+        raise UnsupportedAutoLanguage(AUTO_LANGUAGE_ERROR)
+    monkeypatch.setattr(provider,'transcribe_live',reject)
+    store.execute("UPDATE jobs SET state='running',config=? WHERE id=?",(json.dumps(config),jid))
+    client.app.state.worker.process(store.one('SELECT * FROM jobs WHERE id=?',(jid,)))
+    row=store.one('SELECT state,stage FROM jobs WHERE id=?',(jid,))
+    assert row['state']=='completed' and '语言待确认' in row['stage']
+    rev=client.get(f'/api/meetings/{rid}/revisions/1').json()
+    assert [part['text'] for part in rev['segments']]==['已确认文字']
+    provenance=json.loads(rev['source'])
+    assert provenance['patched_ranges']==[]
+    assert provenance['unresolved_ranges']==[{'start':15,'end':18,'reason':'unsupported_auto_language'}]

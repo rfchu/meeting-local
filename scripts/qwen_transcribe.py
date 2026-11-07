@@ -8,7 +8,7 @@ os.environ['TRANSFORMERS_OFFLINE']='1'
 os.environ['HF_HUB_DISABLE_TELEMETRY']='1'
 os.environ['HF_HOME']=str(ROOT/'models/hf-cache')
 from app.alignment import aligned_or_chunk
-from app.languages import ASR_NAMES, check_auto_languages, qwen_text
+from app.languages import ASR_NAMES, AUTO_LANGUAGE_ERROR, QWEN_UNSUPPORTED_LANGUAGE_EXIT, UnsupportedAutoLanguage, check_auto_languages, qwen_text
 
 MAX_TOKENS=4096
 MIN_RETRY_SECONDS=2
@@ -121,4 +121,9 @@ def main():
     temp=output.with_suffix('.tmp');temp.write_text(json.dumps(payload,ensure_ascii=False,indent=2));temp.replace(output)
     print(json.dumps({'engine':'qwen','segments':len(segments),'seconds':payload['elapsed_seconds'],'peak_memory_gb':mx.get_peak_memory()/1e9}),flush=True)
 
-if __name__=='__main__':main()
+if __name__=='__main__':
+    try:
+        main()
+    except UnsupportedAutoLanguage:
+        print(AUTO_LANGUAGE_ERROR,file=sys.stderr)
+        sys.exit(QWEN_UNSUPPORTED_LANGUAGE_EXIT)

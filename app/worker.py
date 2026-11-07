@@ -1,4 +1,5 @@
-from .languages import EXPERIMENTAL_TRANSCRIPTION_LANGUAGES, configure_transcription_asr
+from .languages import (AUTO_LANGUAGE_ERROR, EXPERIMENTAL_TRANSCRIPTION_LANGUAGES,
+                        QWEN_UNSUPPORTED_LANGUAGE_EXIT, UnsupportedAutoLanguage, configure_transcription_asr)
 from .resource_policy import sync_live_demand
 from .job_checkpoints import JobCheckpoints,file_digest,validate_segments,ResourceInterrupted,model_files
 import fcntl, hashlib, json, math, os, subprocess, threading, time
@@ -51,6 +52,8 @@ class Worker:
                     if timeout is not None and time.monotonic()-started>=timeout:raise RuntimeError('模型请求超过处理时限，请缩小依据范围后重试')
                     self.check(jid); time.sleep(.2)
                 if process.returncode:
+                    if process.returncode==QWEN_UNSUPPORTED_LANGUAGE_EXIT and len(args)>1 and Path(args[1]).name=='qwen_transcribe.py':
+                        raise UnsupportedAutoLanguage(AUTO_LANGUAGE_ERROR)
                     tail=Path(log).read_text(errors='replace')[-1800:]
                     raise RuntimeError(f'处理进程失败（{process.returncode}）：{tail}')
             except BaseException:
@@ -371,6 +374,11 @@ class Worker:
                 reused_ranges=min(value['reused_ranges'] for value in tracks),
                 reused_seconds=min(value['reused_seconds'] for value in tracks),
                 patched_ranges=next(iter(tracks))['patched_ranges'],range_ids=next(iter(tracks))['range_ids'],diarization=False)
+            unresolved=[dict(gap,source_track=track) for track,meta in reuse_meta['tracks'].items()
+                        for gap in meta.get('unresolved_ranges',[])]
+            if unresolved:reuse_meta['unresolved_ranges']=unresolved
+        unresolved=reuse_meta.get('unresolved_ranges',[])
+        if unresolved and not segments:raise UnsupportedAutoLanguage(AUTO_LANGUAGE_ERROR)
         punctuation=LocalPunctuation()
         if config.get('source_language','zh')=='zh' and config.get('completion_mode')!='quick' and config.get('punctuation',provider.needs_punctuation) and punctuation.ready() and segments:
             self.update(jid,'恢复中文标点',.87)
@@ -413,6 +421,8 @@ class Worker:
                 db.execute('UPDATE meetings SET revision=?,segments=? WHERE id=?',(rev,payload,mid))
                 warning_count=sum(bool(s.get('alignment_warning')) for s in segments)
                 stage='快速文字稿完成，可再精细处理' if config.get('completion_mode')=='quick' else ('转写完成，部分时间待校准' if warning_count else '转写完成')
+                if unresolved:
+                    stage=f'快速文字稿完成，{len(unresolved)} 段语言待确认，可指定语言重新转写'
                 db.execute("UPDATE jobs SET state='completed',stage=?,progress=1 WHERE id=?",(stage,jid))
                 if config.get('minutes_followup'):
                     from .auto_minutes import enqueue_after_transcription
@@ -440,6 +450,8 @@ class Worker:
             while start<end-1/RATE/2:
                 stop=min(end,start+15);missing.append((start,stop));start=stop
         if missing and not provider.ready():raise RuntimeError(f'需要补识别缺段/尾段，但 {provider.label} 尚未就绪；请恢复模型后重试')
+        unresolved=[]
+        patched=[]
         for index,(start,end) in enumerate(missing):
             self.update(jid,f'复用 {len(reused)} 段草稿 · 补识别缺段/尾段 {index+1}/{len(missing)}',.08+.78*index/max(1,len(missing)))
             inputs=[source_identity,provider.identity(),start,end]
@@ -449,14 +461,23 @@ class Worker:
                 run(['ffmpeg','-v','error','-y','-ss',str(start),'-i',str(audio),'-af','apad','-t',str(max(.5,end-start)),'-c:a','pcm_s16le',str(chunk)])
                 if reference:self.reduce_chunk_echo(reference,start,max(.5,end-start),chunk,run)
                 with wave.open(str(chunk),'rb') as wav:silent=not any(wav.readframes(wav.getnframes()))
-                raw=[] if silent else getattr(provider,'transcribe_live',provider.transcribe)(chunk,work/f'{prefix}fast-{index}',run)
+                try:
+                    raw=[] if silent else getattr(provider,'transcribe_live',provider.transcribe)(chunk,work/f'{prefix}fast-{index}',run)
+                except UnsupportedAutoLanguage:
+                    if config.get('source_language')!='auto':
+                        raise
+                    unresolved.append({'start':start,'end':end,'reason':'unsupported_auto_language'})
+                    chunk.unlink(missing_ok=True)
+                    continue
                 part=[dict(s,id=uid(),speaker='未分配',start=min(end,start+max(0,s['start'])),end=min(end,start+max(0,s['end'])))
                       for s in raw if s['text'].strip() and s['start']<end-start]
                 checkpoints.save(f'{prefix}fast-{index}',part,inputs,lambda value:validate_segments(value,duration))
                 chunk.unlink(missing_ok=True)
             chunks.append(part)
+            patched.append({'start':start,'end':end})
         segments=sorted((s for chunk in chunks for s in chunk),key=lambda s:s['start'])
         return segments,{'kind':'live_reuse','completion_mode':'quick','reused_ranges':len(reused),
             'reused_seconds':sum((r['end_frame']-r['start_frame'])/RATE for r in reused),
-            'patched_ranges':[{'start':a,'end':b} for a,b in missing],
+            'patched_ranges':patched,
+            **({'unresolved_ranges':unresolved} if unresolved else {}),
             'range_ids':[r['id'] for r in reused],'timestamp_precision':'draft','diarization':False}

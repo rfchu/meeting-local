@@ -9,6 +9,7 @@ ASR_NAMES = {'auto': None, 'zh': 'Chinese', 'en': 'English', 'ja': 'Japanese'}
 AUTO_LANGUAGES = frozenset(('zh', 'en', 'Chinese', 'English'))
 
 
+QWEN_UNSUPPORTED_LANGUAGE_EXIT = 86
 AUTO_LANGUAGE_ERROR = '自动识别仅支持中英文。日语会议请选择「日语（Beta）」后重新识别。'
 
 
