@@ -1,6 +1,7 @@
 .venv/
 __pycache__/
 .pytest_cache/
+.DS_Store
 data/
 models/
 vendor/
@@ -11,6 +12,19 @@ vendor/
 !/docs/PROJECT_ROADMAP.md
 !/docs/engineering/
 !/docs/evaluation/
+!/docs/specs/
+/docs/specs/*
+!/docs/specs/PRD-meeting-workflow.md
+!/docs/specs/SPEC-workflow-common.md
+!/docs/specs/SPEC-meeting-intake.md
+!/docs/specs/SPEC-chinese-record.md
+!/docs/specs/SPEC-minutes-review.md
+!/docs/specs/SPEC-audience-delivery.md
+!/docs/specs/SPEC-meeting-followup.md
+!/docs/planning/
+/docs/planning/*
+!/docs/planning/plan.md
+!/docs/planning/todo.md
 /docs/engineering/*
 !/docs/engineering/CAPTURE_PROTOCOL.md
 !/docs/engineering/DEVELOPMENT.md
