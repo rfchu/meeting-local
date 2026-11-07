@@ -226,7 +226,14 @@ export default function LiveDraftList({
                 </small>
               )}
             </b>
-            {bilingual && recordingId ? (
+            {draft.possible_echo &&
+            !(located && draft.parts.includes(located)) &&
+            !bilingual ? (
+              <details>
+                <summary>疑似外放回声 · 展开核对现场文字</summary>
+                <p>{draft.text}</p>
+              </details>
+            ) : bilingual && recordingId ? (
               <div>
                 {draft.parts.map((part, partIndex) => {
                   const key = liveChineseKey(

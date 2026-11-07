@@ -205,7 +205,7 @@ class LiveSessions:
         factory=self.batch_provider if engine=='whisper' else self.provider
         if not factory:raise ValueError('实时识别引擎尚未配置')
         provider=configure_asr(factory(),config['source_language'])
-        from .track_audio import ECHO_VERSION, reduce_echo_wav, remove_echo_duplicates, wav_echo_dominated
+        from .track_audio import ECHO_VERSION, reduce_echo_wav, remove_echo_duplicates, wav_echo_evidence, limit_asr_repetition
         identity={'model':provider.identity(),'track_mode':'dual-v1','echo_version':ECHO_VERSION}
         duration=window['next_offset']-window['offset']
         confirmed=window.get('confirmed',True)
@@ -239,10 +239,10 @@ class LiveSessions:
                                     break
                                 raise RuntimeError(event['message'])
                             if event['type']=='partial' and event['text'] and time.monotonic()-last_sent>=.15:
-                                publish_partial({'source_track':track,'start':event['start'],'end':event['end'],'text':event['text']})
+                                publish_partial({'source_track':track,'start':event['start'],'end':event['end'],'text':limit_asr_repetition(event['text'])})
                                 last_sent=time.monotonic()
                             if event['type']=='final':
-                                parts=event['result']['segments']
+                                parts=[dict(part,text=limit_asr_repetition(part['text'])) for part in event['result']['segments']]
                                 segments.extend(dict(part,source_track=track) for part in parts)
                                 if parts:
                                     publish_partial({'source_track':track,'start':parts[0]['start'],
@@ -252,7 +252,7 @@ class LiveSessions:
                 if confirmed:
                     offset=window['offset']
                     segments=await asyncio.to_thread(remove_echo_duplicates,segments,lambda start,end:
-                        wav_echo_dominated(io.BytesIO(payloads['system']),io.BytesIO(original_mic),start-offset,end-offset))
+                        wav_echo_evidence(io.BytesIO(payloads['system']),io.BytesIO(original_mic),start-offset,end-offset),mark_mixed=True)
                     segments.sort(key=lambda item:item['start'])
                     if failed_tracks:self.cache.partial(aid,segments,failed_tracks)
                     else:self.cache.complete(aid,segments)

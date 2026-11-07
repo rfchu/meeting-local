@@ -36,3 +36,18 @@ def test_duplicate_requires_timing_and_acoustic_evidence():
         online, separate, edited, independent,
     ]
     assert remove_echo_duplicates(segments, lambda *_: echo_dominated(system, echo + voice)) == segments
+
+
+def test_near_duplicate_with_mixed_audio_is_marked_without_erasing_interjection():
+    from app.track_audio import limit_asr_repetition, remove_echo_duplicates
+
+    online = {'start': 0, 'end': 8, 'source_track': 'system',
+              'text': '并把我们拿到的数据第一时间分享给各位。挑三拣四，昨天。'}
+    mic = dict(online, source_track='microphone',
+               text='并把我们拿到的数据第一时间分享给各位。测的都不对，都不对。挑三拣四。昨天。')
+    assert remove_echo_duplicates([online, mic], lambda *_:'mixed', mark_mixed=True) == [
+        online, dict(mic, possible_echo=True),
+    ]
+    assert remove_echo_duplicates([online, mic], lambda *_:'none', mark_mixed=True) == [online, mic]
+    loop = '错的都不对，' + '都不对，' * 30 + '我说明天'
+    assert limit_asr_repetition(loop) == '错的都不对，都不对，我说明天'

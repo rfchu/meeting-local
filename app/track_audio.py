@@ -1,12 +1,14 @@
 """Reference-based echo reduction for recognition; never modifies source audio."""
+from difflib import SequenceMatcher
 import io
+import re
 import unicodedata
 import wave
 
 import numpy as np
 
 RATE = 16000
-ECHO_VERSION = 2
+ECHO_VERSION = 3
 
 
 def _reduce_echo(system, microphone, fitted_blocks=None):
@@ -77,47 +79,72 @@ def reduce_echo_wav(system, microphone):
     return output.getvalue()
 
 
-def echo_dominated(system, mic):
+def echo_evidence(system, mic):
     fitted = []
     residual = _reduce_echo(system, mic, fitted)
+    if not fitted:
+        return 'none'
     energy = np.square(mic.astype(np.float64))
-    total = energy.sum()
-    return bool(
-        total
-        and sum(energy[start:end].sum() for start, end in fitted) >= 0.85 * total
-        and peak_frame_rms(residual) < 450
-    )
+    coverage = sum(energy[start:end].sum() for start, end in fitted) / energy.sum()
+    if coverage >= 0.85 and peak_frame_rms(residual) < 450:
+        return 'dominant'
+    if sum(end-start for start,end in fitted) >= RATE:
+        return 'mixed'
+    return 'none'
 
 
-def remove_echo_duplicates(segments, corroborate):
-    """Remove a mic row only when text, time and the original audio all agree."""
+def echo_dominated(system, mic):
+    return echo_evidence(system, mic) == 'dominant'
+
+
+# Limit conspicuous ASR loops while preserving ordinary spoken repetition.
+_ASR_LOOP = re.compile(r'(.{2,40}?)(?:[，、。,.!?！？\s]+\1){4,}', re.DOTALL)
+
+
+def limit_asr_repetition(text):
+    return _ASR_LOOP.sub(lambda match: match[1] + '，' + match[1], text)
+
+
+def remove_echo_duplicates(segments, corroborate, *, mark_mixed=False):
+    """Compare overlapping text, then use audio evidence to decide whether to keep it."""
     def normalized(text):
         return ''.join(c for c in unicodedata.normalize('NFKC', text).casefold() if c.isalnum())
 
-    system_by_text = {}
-    for segment in segments:
-        if segment.get('source_track') == 'system':
-            system_by_text.setdefault(normalized(segment['text']), []).append(segment)
+    online = [(part, normalized(part['text'])) for part in segments if part.get('source_track') == 'system']
     kept = []
-    for segment in segments:
-        if segment.get('source_track') == 'microphone' and not (segment.get('live_correction_id') or segment.get('speaker_locked')):
-            text = normalized(segment['text'])
-            start, end = segment['start'], segment['end']
-            for online in system_by_text.get(text, ()) if len(text) >= 4 and end > start else ():
-                overlap = min(end, online['end']) - max(start, online['start'])
-                if overlap >= 0.8 * (end - start) and corroborate(start, end):
-                    break
-            else:
-                kept.append(segment)
+    for part in segments:
+        if part.get('source_track') != 'microphone' or part.get('live_correction_id') or part.get('speaker_locked'):
+            kept.append(part)
             continue
-        kept.append(segment)
+        text = normalized(part['text'])
+        start, end = part['start'], part['end']
+        evidence = 'none'
+        for source, source_text in online:
+            overlap = min(end, source['end']) - max(start, source['start'])
+            if overlap <= 0 or overlap < 0.8 * (end - start):
+                continue
+            similar = len(text) >= 4 and text == source_text
+            if not similar and min(len(text), len(source_text)) >= 16:
+                similar = SequenceMatcher(None, text, source_text, autojunk=False).ratio() >= 0.72
+            if similar:
+                evidence = corroborate(start, end)
+                if evidence is True:  # Existing exact-audio callers.
+                    evidence = 'dominant'
+                break
+        if evidence == 'dominant':
+            continue
+        kept.append(dict(part, possible_echo=True) if mark_mixed and evidence == 'mixed' else part)
     return kept
 
 
-def wav_echo_dominated(system, mic, start, end):
+def wav_echo_evidence(system, mic, start, end):
     def read(source):
         with wave.open(source, 'rb') as wav:
             first = min(wav.getnframes(), max(0, round(start * RATE)))
             wav.setpos(first)
             return np.frombuffer(wav.readframes(max(0, round(end * RATE) - first)), dtype='<i2')
-    return echo_dominated(read(system), read(mic))
+    return echo_evidence(read(system), read(mic))
+
+
+def wav_echo_dominated(system, mic, start, end):
+    return wav_echo_evidence(system, mic, start, end) == 'dominant'

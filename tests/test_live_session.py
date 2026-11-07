@@ -272,7 +272,7 @@ def test_dual_preview_is_ephemeral_and_deduplicated_only_at_confirmation(tmp_pat
     manager,recordings,rid,_,_=setup(tmp_path)
     folder=recordings.folder(rid)
     recordings.write(folder/'session.json',recordings.read(rid)|{'source':'macos','include_microphone':True})
-    monkeypatch.setattr('app.track_audio.wav_echo_dominated',lambda *_:True)
+    monkeypatch.setattr('app.track_audio.wav_echo_evidence',lambda *_:'dominant')
 
     async def run():
         drafts=[]
