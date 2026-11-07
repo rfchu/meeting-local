@@ -304,7 +304,13 @@ class LMStudioProvider:
             instruction+=f'\n输出内容应便于后续组织为这些章节：{section_titles}。'
         if template.get('id')=='online-interview':
             from .interview import INSTRUCTION
-            instruction=INSTRUCTION
+            from .interview import require_speaker_roles
+            roles=require_speaker_roles(metadata,segments)
+            for item in data:
+                item['interview_role']=roles.get(originals[item['id']],'unknown')
+            instruction=INSTRUCTION+('\n以 interview_role 为准。background 和 qa 的 evidence 仅引用 candidate；'
+                                     'qa 的 question_evidence 必须独立引用 interviewer 的问题原话。'
+                                     '缺少任一角色的原话就省略该条，unknown 不可作为问答依据。')
         if 'chinese_record_coverage' in metadata:
             instruction+='\ntranslation_zh 是对应原文的中文辅助译文。优先用可用中文记录理解内容，缺译文时保留原文供核对；原文 text 和 id 是唯一引用依据。原文与译文不一致时，以原文为准。不得补造负责人、日期或承诺。'
         if any(segment.get('source_track') for segment in segments):
@@ -337,7 +343,7 @@ class LMStudioProvider:
         result=AIMinutesResult.model_validate(json.loads(output_path.read_text()))
         if template.get('id')=='online-interview':
             if not result.interview:raise ValueError('模型未返回结构化面试纪要')
-            result.interview.validate_sources(data)
+            result.interview.validate_sources(data,{item['id']:item['interview_role'] for item in data})
         for item in result.all_items():
             if not set(item.source_segment_ids).issubset(valid_ids):raise ValueError('AI 会议纪要包含不存在的原文引用')
         if not set(result.basic_info.source_segment_ids).issubset(valid_ids):raise ValueError('AI 会议纪要基本信息包含不存在的原文引用')

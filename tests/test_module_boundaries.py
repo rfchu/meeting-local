@@ -63,6 +63,10 @@ def test_http_contract_matches_pre_split_v22(tmp_path):
     assert set(schema['paths'].pop('/api/audience-templates/{audience}'))=={'get','put'}
     assert schema['components']['schemas'].pop('AudienceTemplateUpdate')
     assert set(schema['paths'].pop('/api/runtime/companion'))=={'get'}
+    assert schema['components']['schemas']['InterviewPreparation']['properties'].pop('speaker_roles')
+    assert schema['components']['schemas']['InterviewQA']['properties'].pop('question_evidence')
+    assert schema['components']['schemas'].pop('InterviewSpeakerRoles')
+    assert schema['components']['schemas']['ComposeInput']['properties'].pop('expected_analysis_id')
     payload=json.dumps(schema,sort_keys=True,separators=(',',':'),ensure_ascii=False)
     # Captured from the running v22 service before splitting: 116 paths, 135 operations.
     assert hashlib.sha256(payload.encode()).hexdigest()=='fac4d2387540dd6ea2f8f29205390b870e6d7a8695f1f743831ce1f2ec026b90'

@@ -3,6 +3,28 @@ from typing import Literal
 from pydantic import BaseModel,Field
 
 TEMPLATE_ID='online-interview'
+class InterviewSpeakerRoles(BaseModel):
+    revision:int=Field(ge=1)
+    candidate:str=Field(min_length=1,max_length=200)
+    interviewers:list[str]=Field(min_length=1,max_length=20)
+
+    def segment_roles(self,segments):
+        from .speaker_labels import with_track_speaker
+        speakers={s['id']:with_track_speaker(s).get('speaker') for s in segments}
+        interviewers=set(self.interviewers)
+        if (self.candidate in interviewers or '未分配' in interviewers|{self.candidate}
+                or not (interviewers|{self.candidate}) <= set(speakers.values())):
+            raise ValueError('面试角色与当前文字稿不匹配，请重新确认')
+        return {sid:'candidate' if name==self.candidate else 'interviewer'
+                for sid,name in speakers.items() if name==self.candidate or name in interviewers}
+
+
+def require_speaker_roles(context,segments):
+    value=context.get('interview_speaker_roles')
+    if not value:raise ValueError('请先确认当前文字稿的候选人和面试官，再生成面试纪要')
+    return InterviewSpeakerRoles.model_validate(value).segment_roles(segments)
+
+
 class InterviewPreparation(BaseModel):
     candidate:str=Field(default='',max_length=200)
     role:str=Field(default='',max_length=300)
@@ -11,6 +33,7 @@ class InterviewPreparation(BaseModel):
     focus:str=Field(default='',max_length=3000)
     questions:str=Field(default='',max_length=3000)
     job_description:str=Field(default='',max_length=6000)
+    speaker_roles:InterviewSpeakerRoles|None=None
 class Evidence(BaseModel):
     segment_id:str=Field(min_length=1,max_length=100)
     quote:str=Field(min_length=1,max_length=1000)
@@ -19,6 +42,7 @@ class InterviewItem(BaseModel):
     evidence:list[Evidence]=Field(min_length=1,max_length=8)
 class InterviewQA(InterviewItem):
     question:str=Field(min_length=1,max_length=1000)
+    question_evidence:list[Evidence]=Field(default_factory=list,max_length=8)
 class Competency(BaseModel):
     dimension:str=Field(min_length=1,max_length=200)
     coverage:Literal['covered','needs_examples','not_discussed','unclear']
@@ -40,13 +64,22 @@ class InterviewResult(BaseModel):
     def items(self):
         for field in ('background','qa','competencies','concerns','followups','summary'):yield from getattr(self,field)
     def evidence(self):
-        for item in self.items():yield from item.evidence
-    def validate_sources(self,segments):
+        for item in self.items():
+            yield from item.evidence
+            if isinstance(item,InterviewQA):yield from item.question_evidence
+    def validate_sources(self,segments,roles=None):
         by_id={s['id']:s['text'] for s in segments}
         for item in self.items():
             if isinstance(item,Competency) and item.coverage!='not_discussed' and not item.evidence:raise ValueError('能力证据缺少原文依据')
         for evidence in self.evidence():
             if evidence.segment_id not in by_id or evidence.quote not in by_id[evidence.segment_id]:raise ValueError('面试结果引用或原文摘录不匹配，请重新生成或核对')
+        if roles is not None:
+            for item in [*self.background,*self.qa]:
+                if any(roles.get(source.segment_id)!='candidate' for source in item.evidence):
+                    raise ValueError('候选人自述或回答引用了非候选人片段，请核对后重新生成')
+            for item in self.qa:
+                if not item.question_evidence or any(roles.get(source.segment_id)!='interviewer' for source in item.question_evidence):
+                    raise ValueError('面试问题缺少已确认面试官的原文依据，请核对后重新生成')
         if not self.qa and not self.summary:raise ValueError('模型未返回有效的面试问答或总结')
     def analysis_items(self):
         from .analysis import AnalysisItem
@@ -78,7 +111,7 @@ def project(document):
     data=document.interview
     english=document.output_language=='en'
     if not document.interviewer_evaluation.strip():document.interview_evaluation_needs_review=False
-    def item(value,text=None):return MinutesItem(content=(text or value.content),source_segment_ids=list(dict.fromkeys(e.segment_id for e in value.evidence)),owner=getattr(value,'owner',None),due_date=getattr(value,'due_date',None))
+    def item(value,text=None):return MinutesItem(content=(text or value.content),source_segment_ids=list(dict.fromkeys(e.segment_id for e in [*getattr(value,'question_evidence',[]),*value.evidence])),owner=getattr(value,'owner',None),due_date=getattr(value,'due_date',None))
     document.overview=[item(x) for x in data.background]
     context=document.interview_context
     if context:

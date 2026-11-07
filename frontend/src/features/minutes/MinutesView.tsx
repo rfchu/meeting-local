@@ -1,3 +1,4 @@
+import InterviewRolesForm from "./InterviewRolesForm";
 import InterviewMinutesBody from "./InterviewMinutesBody";
 import {
   hasMinutesFollowup,
@@ -89,14 +90,15 @@ interface Props {
   transcriptDirty: boolean;
   options: MinutesOptions;
   templates: MinutesTemplate[];
-  withAnalysis: boolean;
   selectedId: string | null;
   model: string;
   showCitations: boolean;
   referenceMode?: boolean;
   generating: boolean;
   onOptions: (value: MinutesOptions) => void;
-  onWithAnalysis: (value: boolean) => void;
+  onConfirmInterviewRoles: (
+    roles: import("../../types").InterviewSpeakerRoles,
+  ) => Promise<void>;
   onPreparation: () => void;
   onSelect: (id: string) => void;
   onAdopt: () => void;
@@ -109,7 +111,10 @@ interface Props {
   onSave: () => void;
   onJobAction: (id: string, action: "cancel" | "retry") => void;
   onPreview: () => void;
-  onSeek: (time: number) => void;
+  onSeek: (
+    time: number,
+    track?: import("../../types").Segment["source_track"],
+  ) => void;
 }
 
 export default function MinutesView(props: Props) {
@@ -121,7 +126,6 @@ export default function MinutesView(props: Props) {
     transcriptDirty,
     options,
     templates,
-    withAnalysis,
     selectedId,
     model,
     showCitations,
@@ -230,7 +234,7 @@ export default function MinutesView(props: Props) {
       return first ? (
         <button
           className="citation minutes-table-citations"
-          onClick={() => props.onSeek(first.start)}
+          onClick={() => props.onSeek(first.start, first.source_track)}
         >
           回听原话 {clock(first.start)}
         </button>
@@ -252,7 +256,9 @@ export default function MinutesView(props: Props) {
             <div className="minutes-source-link" key={sid}>
               <button
                 className="citation"
-                onClick={() => props.onSeek(segment.start)}
+                onClick={() =>
+                  props.onSeek(segment.start, segment.source_track)
+                }
               >
                 回听原话 {clock(segment.start)}
               </button>
@@ -369,8 +375,6 @@ export default function MinutesView(props: Props) {
                     ? { method: "ai", audience: "internal" }
                     : {}),
                 });
-                if (e.target.value === "online-interview")
-                  props.onWithAnalysis(false);
               }}
             >
               {templates.map((item) => (
@@ -380,39 +384,31 @@ export default function MinutesView(props: Props) {
               ))}
             </select>
           </label>
-          {options.method !== "analysis" && (
-            <label>
-              纪要输出语言
-              <select
-                aria-label="纪要输出语言"
-                disabled={options.method === "current"}
-                value={
-                  options.output_language ||
-                  meeting.flow?.brief.output_language ||
-                  "zh"
-                }
-                onChange={(event) =>
-                  props.onOptions({
-                    ...options,
-                    output_language: event.target.value as "zh" | "en",
-                  })
-                }
-              >
-                <option value="zh">中文</option>
-                <option value="en">英文</option>
-              </select>
-            </label>
-          )}
-          {options.method === "analysis" && (
-            <p className="muted">
-              沿用会议分析的文字；需要转换语言时选择 AI 整理。
-            </p>
-          )}
+          <label>
+            纪要输出语言
+            <select
+              aria-label="纪要输出语言"
+              disabled={options.method === "current"}
+              value={
+                options.output_language ||
+                meeting.flow?.brief.output_language ||
+                "zh"
+              }
+              onChange={(event) =>
+                props.onOptions({
+                  ...options,
+                  output_language: event.target.value as "zh" | "en",
+                })
+              }
+            >
+              <option value="zh">中文</option>
+              <option value="en">英文</option>
+            </select>
+          </label>
           <label>
             内容详略
             <select
               aria-label="内容详略"
-              disabled={options.method === "analysis"}
               value={options.detail_level}
               onChange={(e) =>
                 props.onOptions({
@@ -431,7 +427,6 @@ export default function MinutesView(props: Props) {
             发送用途
             <select
               aria-label="发送用途"
-              disabled={options.method === "analysis"}
               value={options.audience}
               onChange={(e) =>
                 props.onOptions({
@@ -449,20 +444,26 @@ export default function MinutesView(props: Props) {
             disabled={
               generating ||
               !meeting.segments.length ||
-              ((options.method !== "analysis" || !analysis) && !model) ||
+              !model ||
+              (options.template_id === "online-interview" &&
+                (transcriptDirty ||
+                  meeting.flow?.brief.interview?.speaker_roles?.revision !==
+                    meeting.revision)) ||
               (options.method === "current" && !current)
             }
             onClick={props.onGenerate}
           >
-            {generating
-              ? "正在生成…"
-              : options.method === "analysis" && !analysis
-                ? "分析并生成纪要"
-                : draft
-                  ? "生成新草稿"
-                  : "生成会议纪要"}
+            {generating ? "正在生成…" : draft ? "生成新草稿" : "生成会议纪要"}
           </button>
         </div>
+        {options.template_id === "online-interview" && (
+          <InterviewRolesForm
+            key={`${meeting.id}:${meeting.revision}`}
+            meeting={meeting}
+            disabled={transcriptDirty || generating}
+            onConfirm={props.onConfirmInterviewRoles}
+          />
+        )}
         {options.template_id === "online-interview" && (
           <p>
             <button onClick={props.onPreparation}>填写面试准备</button>
@@ -473,12 +474,7 @@ export default function MinutesView(props: Props) {
         <details className="minutes-advanced">
           <summary>
             高级设置 ·{" "}
-            {options.method === "ai"
-              ? "AI 整理全文"
-              : options.method === "analysis"
-                ? "根据分析成稿"
-                : "从当前纪要派生"}{" "}
-            ·{" "}
+            {options.method === "ai" ? "AI 整理全文" : "从当前纪要派生"} ·{" "}
             {profiles.find((p) => p.id === model)?.name ||
               model ||
               "尚未配置模型"}
@@ -499,12 +495,6 @@ export default function MinutesView(props: Props) {
               }
             >
               <option value="ai">AI 整理全文（推荐）</option>
-              <option
-                value="analysis"
-                disabled={options.template_id === "online-interview"}
-              >
-                根据会议分析快速成稿
-              </option>
               <option
                 value="current"
                 disabled={
@@ -536,25 +526,10 @@ export default function MinutesView(props: Props) {
               )}
             </select>
           </label>
-          {options.method === "ai" &&
-            options.template_id !== "online-interview" && (
-              <label>
-                <input
-                  type="checkbox"
-                  checked={withAnalysis}
-                  onChange={(e) => props.onWithAnalysis(e.target.checked)}
-                />
-                同时生成会议分析，作为独立复盘资料
-              </label>
-            )}
           <p>
-            {options.method === "analysis"
-              ? analysis
-                ? "将复用当前文字稿的分析，不再次调用模型。只按模板编排，详略和用途设置仅对 AI 整理生效；可成稿后再从本稿整理精简版。"
-                : "尚无当前版本分析。点击主按钮后先分析，再自动保存纪要草稿，无需跳转。"
-              : options.method === "current"
-                ? "以当前纪要为唯一内容范围整理叙述，保留全部决策、待办、负责人、期限和人工补充；篇幅过长时允许多页。"
-                : "使用完整文字稿、会议准备和已核对关注点；个人保留或暂不处理的简记不进入模型。"}
+            {options.method === "current"
+              ? "以当前纪要为唯一内容范围整理叙述，保留决策、待办和人工补充。"
+              : "使用完整文字稿、会议准备和已核对关注点。"}
           </p>
           <p>
             云端模型会接收本次整理资料，操作前会确认。对外发送前仍需人工核对事实及个人信息。

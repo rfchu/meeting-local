@@ -22,6 +22,8 @@ interface Props {
   model: string;
   onModel: (value: string) => void;
   onGenerate: () => void;
+  onCompose: () => void;
+  composing: boolean;
   onConfigure: () => void;
   onJobAction: (id: string, action: "cancel" | "retry") => void;
   onSeek: (time: number) => void;
@@ -34,6 +36,8 @@ export default function AnalysisView({
   model,
   onModel,
   onGenerate,
+  onCompose,
+  composing,
   onConfigure,
   onJobAction,
   onSeek,
@@ -50,6 +54,9 @@ export default function AnalysisView({
   const byId = new Map(meeting.segments.map((item) => [item.id, item]));
   return (
     <div id="analysisView">
+      <p className="muted">
+        内部复盘 · 对照原文核对讨论、决定、待办和未决问题。
+      </p>
       <div className="analysis-toolbar">
         <label>
           分析模型
@@ -81,6 +88,12 @@ export default function AnalysisView({
           onClick={onGenerate}
         >
           {current ? "重新生成会议分析" : "生成会议分析"}
+        </button>
+        <button
+          disabled={!current || transcriptDirty || composing || running}
+          onClick={onCompose}
+        >
+          用这份分析生成纪要草稿
         </button>
         <button onClick={onConfigure}>配置模型</button>
         <select

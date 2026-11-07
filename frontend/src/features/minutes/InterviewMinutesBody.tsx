@@ -59,7 +59,10 @@ export function projectInterview(doc: MeetingMinutes): MeetingMinutes {
     ...doc,
     overview,
     conclusions: data.qa.map((x) =>
-      row(x, `问题：${x.question}\n回答摘要：${x.content}`),
+      row(
+        { ...x, evidence: [...(x.question_evidence || []), ...x.evidence] },
+        `问题：${x.question}\n回答摘要：${x.content}`,
+      ),
     ),
     decisions: data.competencies.map((x) =>
       row(x, `${x.dimension}｜${coverageLabels[x.coverage]}：${x.content}`),
@@ -88,7 +91,7 @@ export default function InterviewMinutesBody({
   segments: Segment[];
   translations?: Record<string, string>;
   onChange: (d: MeetingMinutes) => void;
-  onSeek: (t: number) => void;
+  onSeek: (t: number, track?: Segment["source_track"]) => void;
   onPreparation: () => void;
 }) {
   const data = doc.interview!;
@@ -264,13 +267,33 @@ export default function InterviewMinutesBody({
                   </label>
                 </div>
               )}
-              {item.evidence.length > 0 && (
+              {(item.evidence.length > 0 ||
+                ("question_evidence" in item &&
+                  !!item.question_evidence?.length)) && (
                 <details className="interview-evidence">
-                  <summary>原文依据 · {item.evidence.length} 条</summary>
-                  {item.evidence.map((e, i) => {
+                  <summary>原文依据</summary>
+                  {[
+                    ...("question_evidence" in item
+                      ? (item.question_evidence || []).map((e) => ({
+                          ...e,
+                          label: "问题依据",
+                        }))
+                      : []),
+                    ...item.evidence.map((e) => ({
+                      ...e,
+                      label:
+                        "question" in item && item.question_evidence?.length
+                          ? "回答依据"
+                          : "原文依据",
+                    })),
+                  ].map((e, i) => {
                     const segment = segments.find((s) => s.id === e.segment_id);
                     return (
                       <blockquote key={i}>
+                        <small>
+                          {e.label}
+                          {segment?.speaker ? ` · ${segment.speaker}` : ""}
+                        </small>
                         <p>{e.quote}</p>
                         {translations?.[e.segment_id] && (
                           <p>生成时的中文译文：{translations[e.segment_id]}</p>
@@ -278,7 +301,10 @@ export default function InterviewMinutesBody({
                         {!segment && <small>原文依据待核对</small>}
                         <button
                           disabled={!segment}
-                          onClick={() => segment && onSeek(segment.start)}
+                          onClick={() =>
+                            segment &&
+                            onSeek(segment.start, segment.source_track)
+                          }
                         >
                           定位并回听原文
                         </button>

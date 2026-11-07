@@ -48,6 +48,10 @@ def prepare(store,body):
 
 
 def enqueue_after_transcription(db,mid,jid,revision,plan):
+    # A newly published transcript needs a human role assignment before interview generation.
+    if (plan.get('template') or {}).get('id')=='online-interview':
+        db.execute("UPDATE jobs SET stage=stage||'，请确认面试发言人后生成纪要' WHERE id=?",(jid,))
+        return None
     # Called in the same transaction as publishing the transcript and completing ASR.
     aid=hashlib.sha256(('auto-minutes:'+jid).encode()).hexdigest()[:32]
     config={**plan,'revision':revision,'transcription_job_id':jid}
@@ -75,6 +79,9 @@ def process(worker,job):
             if provider.base_url!=snapshot['base_url']:raise ValueError('本地纪要服务地址已改变，请重新选择')
         settings=CompositionSettings.model_validate(config['settings']);template=MinutesTemplate.model_validate(config['template'])
         with store.connect() as db:context,context_hash=meeting_flow.ai_context(db,mid)
+        if template.id=='online-interview':
+            from .interview import require_speaker_roles
+            require_speaker_roles(context,segments)
         context['composition']=settings.model_dump()
         work=store.directory(mid)/jid;work.mkdir(exist_ok=True)
         worker.update(jid,'基于完整文字稿整理 AI 纪要',.1)
@@ -85,7 +92,7 @@ def process(worker,job):
             if not any(result.all_items()):raise ValueError('模型没有返回有效纪要内容，请检查模型后重试纪要步骤')
             document=build_from_ai(row['created'],result,settings,template=template)
             validate_minutes_citations(document,{s['id'] for s in segments})
-            if document.interview:document.interview.validate_sources(segments)
+            if document.interview:document.interview.validate_sources(segments,require_speaker_roles(context,segments))
             return result
         result=checkpoints.load('minutes',identity,validate_result)
         if result is None:

@@ -64,6 +64,9 @@ class MinutesJobs:
             settings.output_language=body.output_language or (document.output_language if body.operation=='polish' else meeting_languages(store,mid)['output_language'])
             if settings.method=='current' and body.operation!='polish' and source and settings.output_language!=MeetingMinutes.model_validate(json.loads(source['payload'])).output_language:raise ValueError('转换纪要语言请使用 AI 基于全文生成')
             if template.id=='online-interview' and (body.operation!='compose' or settings.method!='ai'):raise ValueError('面试纪要仅支持 AI 整理全文')
+            if template.id=='online-interview':
+                from .interview import require_speaker_roles
+                require_speaker_roles(context,json.loads(row['segments']))
             profile=resolve_profile(store,'minutes',body.profile_id)
             provider=OpenAICompatibleProvider(profile) if profile else self.providers.llm()
             model=provider.resolve_model(body.model);snapshot=provider_snapshot(profile,provider,model)
@@ -148,8 +151,8 @@ class MinutesJobs:
                 if not any(result.all_items()):raise ValueError('模型未返回有效纪要')
                 document=build_from_ai(row['created'],result,settings,source_document if settings.method=='current' else None,template)
                 if document.interview:
-                    from .interview import InterviewPreparation,project
-                    document.interview.validate_sources(segments)
+                    from .interview import InterviewPreparation,project,require_speaker_roles
+                    document.interview.validate_sources(segments,require_speaker_roles(context,segments))
                     document.interview_context=InterviewPreparation.model_validate(context['preparation']['interview']) if context['preparation'].get('interview') else None
                     from .minutes import set_output_language
                     document=set_output_language(project(document),settings.output_language or 'zh')

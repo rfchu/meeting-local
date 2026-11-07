@@ -14,6 +14,7 @@ class CompositionSettings(BaseModel):
     method:Literal['ai','analysis','current']='ai'
 
 class ComposeInput(CompositionSettings):
+    expected_analysis_id:str|None=Field(default=None,max_length=100)
     also_analyze:bool=False
     profile_id:str|None=Field(default=None,max_length=100)
     model:str|None=Field(default=None,max_length=500)

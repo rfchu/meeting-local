@@ -28,7 +28,7 @@ export function readMinutesOptions(): MinutesOptions {
         ? raw.detail_level
         : "standard",
       audience: raw.audience === "internal" ? "internal" : "external",
-      method: raw.method === "analysis" ? "analysis" : "ai",
+      method: "ai",
     };
   } catch {
     return { ...defaultMinutesOptions };

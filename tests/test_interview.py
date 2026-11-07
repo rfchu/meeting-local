@@ -14,7 +14,7 @@ def result():
  e=[{'segment_id':'a','quote':'我负责接口实现'}]
  return AIMinutesResult(basic_info=AIMinutesBasicInfo(topic='后端岗位面试',source_segment_ids=['q']),interview=InterviewResult.model_validate({
   'background':[{'content':'候选人自述负责支付接口实现。','evidence':e}],
-  'qa':[{'question':'本人负责什么工作？','content':'候选人表示负责接口实现，团队降低了延迟，但基线需补充。','evidence':e}],
+  'qa':[{'question':'本人负责什么工作？','question_evidence':[{'segment_id':'q','quote':'请介绍你本人在支付改造项目中的职责'}],'content':'候选人表示负责接口实现，团队降低了延迟，但基线需补充。','evidence':e}],
   'competencies':[{'dimension':'项目贡献','coverage':'covered','content':'已获得本人承担接口实现的回答，其他职责边界待核对。','evidence':e},{'dimension':'团队管理','coverage':'not_discussed','content':'本轮未找到相关回答。','evidence':[]}],
   'concerns':[{'content':'延迟改善的测量基线尚不明确。','reason':'候选人明确表示具体基线需补充。','followup':'请补充改造前后的测量基线及测试方法。','evidence':[{'segment_id':'a','quote':'具体基线我需要补充'}]}],
   'followups':[], 'summary':[{'content':'候选人陈述了接口实现经历，量化结果的测量方法仍待核对。','evidence':e}]}))
@@ -32,6 +32,10 @@ def setup(tmp_path,monkeypatch):
   yield c,store,mid,seen
 
 def generate(c,mid):
+ meeting=c.get(f'/api/meetings/{mid}').json()
+ brief=meeting['flow']['brief'];interview=brief.get('interview') or {}
+ interview['speaker_roles']={'revision':meeting['revision'],'candidate':'候选人','interviewers':['面试官']}
+ assert c.put(f'/api/meetings/{mid}/brief',json={**brief,'interview':interview}).status_code==200
  response=c.post(f'/api/meetings/{mid}/minutes/compose',json={'template_id':'online-interview','method':'ai','audience':'internal'})
  assert response.status_code==201,response.text
  return response.json()['artifact']
@@ -121,8 +125,9 @@ def test_provider_uses_dedicated_schema_exact_quotes_and_aliases(tmp_path):
   for e in value['interview'].values():
    for item in e:
     for ev in item['evidence']:ev['segment_id']='s2'
+    for ev in item.get('question_evidence',[]):ev['segment_id']='s1'
   (tmp_path/'result.response.json').write_text(encode(value))
- actual=provider.generate_ai_minutes('synthetic',SEGMENTS,{'minutes_template':semantic_template('online-interview').model_dump(),'preparation':{'interview':{'role':'后端'}}},tmp_path/'result',run)
+ actual=provider.generate_ai_minutes('synthetic',SEGMENTS,{'minutes_template':semantic_template('online-interview').model_dump(),'preparation':{'interview':{'role':'后端'}},'interview_speaker_roles':{'revision':1,'candidate':'候选人','interviewers':['面试官']}},tmp_path/'result',run)
  assert actual.interview.qa[0].evidence[0].segment_id=='a'
  schema=seen['response_format']['json_schema'];assert schema['name']=='interview_minutes'
  assert schema['schema']['$defs']['Evidence']['properties']['segment_id']['enum']==['s1','s2']
@@ -130,3 +135,19 @@ def test_provider_uses_dedicated_schema_exact_quotes_and_aliases(tmp_path):
  assert '评分、排名、录用或淘汰建议' in seen['messages'][0]['content']
  bad=result();bad.interview.qa[0].evidence[0].quote='不存在的摘录'
  with pytest.raises(ValueError):bad.interview.validate_sources(SEGMENTS)
+
+
+def test_interview_generation_requires_current_roles_and_rejects_wrong_speaker(setup):
+ c,store,mid,_=setup
+ body={'template_id':'online-interview','method':'ai','audience':'internal'}
+ assert c.post(f'/api/meetings/{mid}/minutes/compose',json=body).status_code==409
+ artifact=generate(c,mid)
+ qa=artifact['payload']['interview']['qa'][0]
+ assert qa['question_evidence'][0]['segment_id']=='q' and qa['evidence'][0]['segment_id']=='a'
+ from app.interview import InterviewSpeakerRoles
+ roles=InterviewSpeakerRoles(revision=1,candidate='候选人',interviewers=['面试官']).segment_roles(SEGMENTS)
+ bad=result().interview
+ bad.qa[0].evidence=bad.qa[0].question_evidence
+ with pytest.raises(ValueError,match='非候选人'):bad.validate_sources(SEGMENTS,roles)
+ store.save_revision(mid,SEGMENTS,'manual')
+ assert c.post(f'/api/meetings/{mid}/minutes/compose',json=body).status_code==409

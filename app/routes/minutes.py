@@ -75,7 +75,10 @@ def register_routes(app,services:ApplicationServices):
             if body.document.template_id=='online-interview':
                 from ..interview import project
                 if not body.document.interview:raise ValueError('面试纪要缺少结构化结果')
-                body.document.interview.validate_sources(segments)
+                roles=body.document.interview_context.speaker_roles if body.document.interview_context else None
+                if roles and roles.revision!=row['revision']:
+                    raise ValueError('发言人确认所用的文字稿已变化，请重新确认并生成面试纪要')
+                body.document.interview.validate_sources(segments,roles.segment_roles(segments) if roles else None)
                 body.document=project(body.document)
             validate_minutes_citations(body.document,valid_ids)
         except ValueError as error:raise HTTPException(400,str(error))
@@ -133,6 +136,8 @@ def register_routes(app,services:ApplicationServices):
         if settings.method=='analysis':
             if settings.output_language=='en':raise HTTPException(409,'规则纪要沿用分析原文，转换输出语言请使用 AI 整理')
             analysis=store.one("SELECT * FROM artifacts WHERE meeting_id=? AND revision=? AND kind='meeting_analysis' ORDER BY created DESC,rowid DESC LIMIT 1",(mid,row['revision']))
+            if body.expected_analysis_id and (not analysis or analysis['id']!=body.expected_analysis_id):
+                raise HTTPException(409,'当前文字稿的分析已变化，请返回深入分析核对后再成稿')
             if not analysis:
                 plan=enqueue_analysis(mid,AnalysisJobInput(profile_id=body.profile_id,model=body.model,minutes_followup={'settings':settings.model_dump(),'parent_minutes_id':body.source_minutes_id,'template':template.model_dump()}))
                 return {'job_id':plan['id']}
@@ -191,6 +196,10 @@ def register_routes(app,services:ApplicationServices):
         try:
             with store.connect() as db:context,context_hash=meeting_flow.ai_context(db,mid)
         except ValueError as error:raise HTTPException(409,str(error))
+        if template.id=='online-interview':
+            from ..interview import require_speaker_roles
+            try:require_speaker_roles(context,segments)
+            except ValueError as error:raise HTTPException(409,str(error))
         source_document=None;source_ids=None
         if body.composition:
             context['composition']=body.composition.model_dump()
@@ -235,7 +244,7 @@ def register_routes(app,services:ApplicationServices):
             document=build_from_ai(row['created'],result,body.composition,source_document,template) if body.composition else build_ai_minutes(row['created'],result,template)
             document=set_output_language(document,output_language)
             if template.id=='online-interview':
-                document.interview.validate_sources(segments)
+                document.interview.validate_sources(segments,require_speaker_roles(context,segments))
                 document.interview_context=InterviewPreparation.model_validate(context['preparation']['interview']) if context['preparation'].get('interview') else None
                 from ..interview import project
                 document=project(document)

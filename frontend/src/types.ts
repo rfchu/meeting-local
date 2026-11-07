@@ -47,7 +47,13 @@ export interface Revision {
 }
 export type MeetingNoteType =
   "note" | "highlight" | "question" | "decision" | "action";
+export interface InterviewSpeakerRoles {
+  revision: number;
+  candidate: string;
+  interviewers: string[];
+}
 export interface InterviewPreparation {
+  speaker_roles?: InterviewSpeakerRoles | null;
   candidate: string;
   role: string;
   round: string;
@@ -66,7 +72,10 @@ export interface InterviewItem {
 }
 export interface InterviewResult {
   background: InterviewItem[];
-  qa: (InterviewItem & { question: string })[];
+  qa: (InterviewItem & {
+    question: string;
+    question_evidence?: InterviewEvidence[];
+  })[];
   competencies: (InterviewItem & {
     dimension: string;
     coverage: "covered" | "needs_examples" | "not_discussed" | "unclear";

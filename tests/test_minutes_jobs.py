@@ -275,8 +275,11 @@ def test_chinese_record_minutes_preserve_original_sources(setup,template,section
     write_translation(translation_path(services,m,original,'en',provider_for(services,pid)),'周五交付')
     if template=='online-interview':
         from app.interview import InterviewResult
+        revision=s.one('SELECT revision FROM meetings WHERE id=?',(m,))['revision']
+        assert c.put(f'/api/meetings/{m}/brief',json={'interview':{'speaker_roles':{'revision':revision,'candidate':'甲','interviewers':['乙']}}}).status_code==200
         result=AIMinutesResult(basic_info=AIMinutesBasicInfo(topic='合成面试'),interview=InterviewResult(qa=[
-            {'question':'何时交付？','content':'周五','evidence':[{'segment_id':'s1','quote':'Delivery on Friday'}]}]))
+            {'question':'预算情况？','content':'周五','evidence':[{'segment_id':'s1','quote':'Delivery on Friday'}],
+             'question_evidence':[{'segment_id':'s2','quote':'Budget still open'}]}]))
         # Supply a structured result from the same fake inference path.
         hooks['result']=result
     from app.analysis import OpenAICompatibleProvider

@@ -139,7 +139,6 @@ export default function App() {
   const restoredMeeting = useRef(false);
   const openingMeeting = useRef(0);
   const [restoredSegment, setRestoredSegment] = useState<string>();
-  const [withAnalysis, setWithAnalysis] = useState(false);
   const [selectedMinutesId, setSelectedMinutesId] = useState<string | null>(
     null,
   );
@@ -628,7 +627,14 @@ export default function App() {
           const profile = envQuery.data?.analysis.profiles.find(
             (p) => p.id === minutesModel,
           );
-          const requested = options.goal === "minutes";
+          const interviewNeedsRoles =
+            options.goal === "minutes" &&
+            minutesOptions.template_id === "online-interview";
+          const requested = options.goal === "minutes" && !interviewNeedsRoles;
+          if (interviewNeedsRoles)
+            followUpErrors.push(
+              "面试文字稿完成后，请先确认候选人和面试官，再生成纪要",
+            );
           const consent =
             !requested ||
             profile?.provider_type !== "cloud" ||
@@ -759,7 +765,7 @@ export default function App() {
     revision: number;
     profileId: string;
   }>();
-  const startMinutes = async () => {
+  const startMinutes = async (fromAnalysis = false) => {
     const target = meetingRef.current;
     if (!target || generating) return;
     const existingRecord = target.artifacts.find(
@@ -772,13 +778,29 @@ export default function App() {
         : existingRecord?.profile_id;
     const options = {
       ...minutesOptions,
-      output_language:
-        minutesOptions.method === "analysis"
-          ? undefined
-          : minutesOptions.output_language ||
-            target.flow?.brief.output_language ||
-            "zh",
+      ...(fromAnalysis
+        ? {
+            method: "analysis" as const,
+            template_id: "general-meeting",
+            audience: "internal" as const,
+          }
+        : {}),
+      output_language: fromAnalysis
+        ? undefined
+        : minutesOptions.output_language ||
+          target.flow?.brief.output_language ||
+          "zh",
     };
+    if (fromAnalysis && (!currentAnalysis(target) || transcriptDirty))
+      return toast("请先生成当前文字稿的分析");
+    if (
+      !fromAnalysis &&
+      options.template_id === "online-interview" &&
+      (transcriptDirty ||
+        target.flow?.brief.interview?.speaker_roles?.revision !==
+          target.revision)
+    )
+      return toast("请先保存文字稿并确认候选人与面试官");
     if (
       !minutesModel &&
       !(options.method === "analysis" && currentAnalysis(target))
@@ -803,7 +825,9 @@ export default function App() {
       setGenerating(true);
       const response = await api.composeMinutes(target.id, {
         ...options,
-        also_analyze: withAnalysis && options.method === "ai",
+        expected_analysis_id: fromAnalysis
+          ? currentAnalysis(target)?.id
+          : undefined,
         chinese_record_profile_id:
           options.method === "ai" ? recordProfile : undefined,
         ...(profile?.provider_type === "cloud" && options.method !== "analysis"
@@ -825,7 +849,7 @@ export default function App() {
       const fresh = await api.meeting(target.id);
       if (meetingRef.current?.id === target.id) {
         setMeeting(fresh);
-        if (!selectedMinutesRef.current && response.artifact)
+        if ((fromAnalysis || !selectedMinutesRef.current) && response.artifact)
           displayMinutes(response.artifact);
       }
       toast(
@@ -838,8 +862,8 @@ export default function App() {
             : "新草稿已保存；当前采用稿保持不变，可查看、对比后采用",
       );
       if (response.warning) toast(response.warning);
-      else if (response.analysis_job_id)
-        toast("纪要已保存，独立会议分析已排队；可在原文与分析中查看");
+      if (fromAnalysis && meetingRef.current?.id === target.id)
+        setWorkspace("minutes");
     } catch (error) {
       toast((error as Error).message);
     } finally {
@@ -1511,6 +1535,8 @@ export default function App() {
                     model={analysisModel}
                     onModel={setAnalysisModel}
                     onGenerate={() => void generateAnalysis()}
+                    onCompose={() => void startMinutes(true)}
+                    composing={generating}
                     onConfigure={() => setManagementPage("models")}
                     onJobAction={(id, action) => void jobAction(id, action)}
                     onSeek={(time) => seekRef.current?.(time)}
@@ -1602,7 +1628,6 @@ export default function App() {
                         dirty={minutesDirty}
                         transcriptDirty={transcriptDirty}
                         options={minutesOptions}
-                        withAnalysis={withAnalysis}
                         selectedId={selectedMinutesId}
                         templates={
                           (templatesQuery.data || []) as MinutesTemplate[]
@@ -1612,7 +1637,34 @@ export default function App() {
                         showCitations={showCitations}
                         generating={generating}
                         onOptions={changeMinutesOptions}
-                        onWithAnalysis={setWithAnalysis}
+                        onConfirmInterviewRoles={async (roles) => {
+                          const target = meetingRef.current;
+                          const brief = target?.flow?.brief;
+                          if (
+                            !target ||
+                            !brief ||
+                            transcriptDirty ||
+                            target.revision !== roles.revision
+                          )
+                            throw new Error("请先保存并刷新文字稿");
+                          const flow = await api.saveBrief(target.id, {
+                            ...brief,
+                            interview: {
+                              candidate: "",
+                              role: "",
+                              round: "",
+                              interviewers: "",
+                              focus: "",
+                              questions: "",
+                              job_description: "",
+                              ...brief.interview,
+                              speaker_roles: roles,
+                            },
+                          });
+                          setMeeting((old) =>
+                            old?.id === target.id ? { ...old, flow } : old,
+                          );
+                        }}
                         onPreparation={() => setWorkspace("prepare")}
                         onSelect={(id) => void selectMinutes(id)}
                         onAdopt={() => void adoptMinutes()}
@@ -1635,10 +1687,10 @@ export default function App() {
                         onJobAction={(id, action) => void jobAction(id, action)}
                         onSave={() => void saveMinutes()}
                         onPreview={() => void openMinutesPreview()}
-                        onSeek={(time) => {
+                        onSeek={(time, track) => {
                           locateReview(time);
                           setReviewSourceOpen(true);
-                          seekRef.current?.(time);
+                          seekRef.current?.(time, track);
                         }}
                       />
                       <MeetingOutcomes
