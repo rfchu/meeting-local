@@ -54,7 +54,7 @@ def provider_for(services, profile_id):
 
 
 def translation_path(services, owner, source, language, provider):
-    identity = [1, 'zh', language, source['start'], source['end'], source['text'],
+    identity = [1, 'zh', language, float(source['start']), float(source['end']), source['text'],
                 provider.profile['id'], provider.base_url, provider.resolve_model()]
     key = hashlib.sha256(encode(identity).encode()).hexdigest()
     return services.store.directory(owner) / 'chinese-record' / f'{key}.json'
@@ -124,3 +124,51 @@ def translate_segment(services, owner, read_source, body, workload):
                 raise ValueError('原文或模型已变化，请刷新后再试')
             write_translation(path, translated)
     return dict(result, status='translated', text=translated)
+
+
+class MeetingTranslationInput(TranslationInput):
+    revision: int = Field(ge=1)
+
+
+def meeting_record(services, mid):
+    row = services.store.one(
+        """SELECT m.revision,m.segments,r.source FROM meetings m
+           LEFT JOIN revisions r ON r.meeting_id=m.id AND r.revision=m.revision WHERE m.id=?""",
+        (mid,),
+    )
+    if not row:
+        raise FileNotFoundError('会议不存在')
+    try:
+        source = json.loads(row['source']) if row['source'] else None
+    except ValueError:
+        source = None
+    hint = source.get('language', 'auto') if isinstance(source, dict) else 'auto'
+    return row['revision'], json.loads(row['segments']), hint
+
+
+def meeting_source(services, mid, segment_id, revision):
+    current, segments, hint = meeting_record(services, mid)
+    if revision != current:
+        raise ValueError('文字稿版本已变化，请刷新后再试')
+    segment = next((segment for segment in segments if segment['id'] == segment_id), None)
+    if segment is None:
+        raise ValueError('原文片段已移除')
+    return segment, hint
+
+
+def read_meeting_record(services, mid, profile_id, offset, limit):
+    revision, segments, hint = meeting_record(services, mid)
+    provider = provider_for(services, profile_id) if profile_id else None
+    counts = {'original': 0, 'translated': 0, 'pending': 0, 'unknown': 0}
+    items = []
+    for position, source in enumerate(segments):
+        text = source['text']
+        language = segment_language(text, hint)
+        translation = (saved_translation(translation_path(services, mid, source, language, provider))
+                       if language == 'en' and provider else None)
+        status = 'original' if language == 'zh' else 'unknown' if language == 'unknown' else 'translated' if translation else 'pending'
+        counts[status] += 1
+        if offset <= position < offset + limit:
+            items.append({'id': source['id'], 'status': status, 'original': text,
+                          'text': translation or text, 'start': source['start'], 'end': source['end']})
+    return {'revision': revision, 'counts': counts, 'total': len(segments), 'items': items}

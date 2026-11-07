@@ -819,6 +819,34 @@ export const api = {
     request<MeetingReview>(`/meetings/${id}/review/${step}`, {
       method: "DELETE",
     }),
+  chineseMeetingRecord: (id: string, profile: string, offset: number) =>
+    request<{
+      revision: number;
+      counts: Record<ChineseResult["status"] | "pending", number>;
+      total: number;
+      items: (Omit<ChineseResult, "status"> & {
+        id: string;
+        original: string;
+        status: ChineseResult["status"] | "pending";
+      })[];
+    }>(
+      `/meetings/${id}/chinese-record?${new URLSearchParams({ profile_id: profile, offset: String(offset) })}`,
+    ),
+  translateMeetingSegment: (
+    id: string,
+    segment: string,
+    revision: number,
+    profile: string,
+    text: string,
+    signal: AbortSignal,
+  ) =>
+    request<ChineseResult>(
+      `/meetings/${id}/chinese-record/${encodeURIComponent(segment)}`,
+      {
+        ...json("POST", { revision, profile_id: profile, expected_text: text }),
+        signal: AbortSignal.any([signal, AbortSignal.timeout(30000)]),
+      },
+    ),
   translateLiveSegment: (
     id: string,
     range: string,

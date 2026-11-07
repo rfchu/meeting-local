@@ -26,6 +26,7 @@ import {
 import MinutesCompare from "./features/minutes/MinutesCompare";
 import { useModelChoice } from "./preferences/useModelChoice";
 import FollowupsDialog from "./features/meeting/FollowupsDialog";
+import ChineseMeetingRecord from "./features/meeting/ChineseMeetingRecord";
 import MeetingPreparation from "./features/meeting/MeetingPreparation";
 import MeetingOutcomes from "./features/meeting/MeetingOutcomes";
 import {
@@ -1309,6 +1310,21 @@ export default function App() {
                     }}
                     onOpen={(id) => void openMeeting(id)}
                     toast={toast}
+                  />
+                )}
+                {workspace === "transcript" && (
+                  <ChineseMeetingRecord
+                    key={`${meeting.id}-${meeting.revision}`}
+                    id={meeting.id}
+                    revision={meeting.revision}
+                    dirty={transcriptDirty}
+                    profiles={
+                      environment?.analysis.profiles.filter(
+                        (item) => item.provider_type === "local",
+                      ) || []
+                    }
+                    onSeek={(time) => seekRef.current?.(time)}
+                    onContinue={() => setWorkspace("minutes")}
                   />
                 )}
                 {workspace === "transcript" && (

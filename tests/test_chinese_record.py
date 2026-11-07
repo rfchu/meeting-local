@@ -86,3 +86,44 @@ def test_failure_and_late_result_are_not_published(live, monkeypatch):
     monkeypatch.setattr('app.chinese_record.request_once', stale)
     assert client.post(url, json=body).status_code == 409
     assert not list(store.directory(rid).glob('chinese-record/*.json'))
+
+
+def test_formal_record_reuses_live_translation_and_reports_missing(live):
+    client, store, rid, aid, texts, calls = live
+    assert client.post(f'/api/recordings/{rid}/chinese-record/{aid}/1',
+                       json={'profile_id': 'local', 'expected_text': texts[1]}).status_code == 200
+    store.execute('INSERT INTO meetings(id,title,filename) VALUES(?,?,?)', (rid, '中文记录', 'test.wav'))
+    segments = [
+        {'id': 'zh', 'start': 0., 'end': 2., 'text': texts[0]},
+        {'id': 'en', 'start': 2., 'end': 4., 'text': texts[1]},
+        {'id': 'unknown', 'start': 4., 'end': 6., 'text': texts[2]},
+        {'id': 'pending', 'start': 6., 'end': 8., 'text': 'We will review this.'},
+    ]
+    revision = store.save_revision(rid, segments, 'manual')
+    root = f'/api/meetings/{rid}/chinese-record'
+    data = client.get(root, params={'profile_id': 'local', 'limit': 2}).json()
+    assert data['counts'] == {'original': 1, 'translated': 1, 'pending': 1, 'unknown': 1}
+    assert data['items'][1]['original'] == texts[1]
+    assert data['items'][1]['text'] == '我们星期五交付。'
+    assert data['items'][1]['start'] == 2
+    assert len(calls) == 1
+    page = client.get(root, params={'profile_id': 'local', 'offset': 2}).json()
+    assert [row['status'] for row in page['items']] == ['unknown', 'pending']
+    body = {'profile_id': 'local', 'expected_text': segments[3]['text'], 'revision': revision}
+    assert client.post(root + '/pending', json=body).status_code == 200
+    assert client.get(root, params={'profile_id': 'local'}).json()['counts']['pending'] == 0
+    segments[3]['text'] = 'We will review this next week.'
+    store.save_revision(rid, segments, 'manual')
+    assert client.post(root + '/pending', json=body).status_code == 409
+    assert client.get(root, params={'profile_id': 'local'}).json()['counts']['pending'] == 1
+
+
+def test_legacy_meeting_is_readable_without_translation_model(live):
+    client, store, rid, _, _, calls = live
+    store.execute('INSERT INTO meetings(id,title,filename) VALUES(?,?,?)', (rid, '旧会议', 'test.wav'))
+    path = f'/api/meetings/{rid}/chinese-record'
+    assert client.get(path).json()['items'] == []
+    store.save_revision(rid, [{'id': 'old', 'text': '原有中文。', 'start': 0, 'end': 2}], 'manual')
+    result = client.get(path).json()
+    assert result['items'][0]['status'] == 'original'
+    assert not calls

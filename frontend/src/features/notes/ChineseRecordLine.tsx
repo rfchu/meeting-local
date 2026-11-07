@@ -9,12 +9,17 @@ export type ChineseResult = {
 
 export default function ChineseRecordLine({
   original,
+  initial,
+  missing,
   translate,
 }: {
   original: string;
+  initial?: ChineseResult;
+  missing?: boolean;
   translate?: (signal: AbortSignal) => Promise<ChineseResult>;
 }) {
-  const [result, setResult] = useState<ChineseResult>();
+  const [latest, setResult] = useState<ChineseResult>();
+  const result = latest || initial;
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
   const request = useRef<AbortController | null>(null);
@@ -24,6 +29,7 @@ export default function ChineseRecordLine({
       <span>{result?.text ?? original}</span>{" "}
       {result?.status === "translated" && <small>中文译文</small>}
       {result?.status === "unknown" && <small>语言待确认</small>}
+      {missing && !result && <small>待翻译</small>}
       {error && <small role="alert">{error}</small>}
       {pending && (
         <button
@@ -61,7 +67,13 @@ export default function ChineseRecordLine({
             }
           }}
         >
-          {pending ? "正在处理译文…" : error ? "重试本段" : "查看中文"}
+          {pending
+            ? "正在处理译文…"
+            : error
+              ? "重试本段"
+              : missing
+                ? "补译本段"
+                : "查看中文"}
         </button>
       )}
     </div>
