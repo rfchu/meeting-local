@@ -153,10 +153,12 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, 
     @objc private func showCompanion() {
         guard !loaded.problem else { return }
         if companion == nil { companion = CompanionController(configuration: configuration, client: client) }
+        companion?.returnToRecording = { [weak self] id in self?.openVerifiedWorkspace(recording: id) }
         companion?.show()
     }
-    @objc private func openWorkspace() {
-        guard state.canOpen, !loaded.problem, !starting, !opening, settings?.isPresented != true else { return }
+    @objc private func openWorkspace() { openVerifiedWorkspace(recording: nil) }
+    private func openVerifiedWorkspace(recording: String?) {
+        guard (recording != nil || state.canOpen), !loaded.problem, !starting, !opening, settings?.isPresented != true else { return }
         // Verify again at the click; a stale green indicator cannot open a different workspace.
         opening = true; probing = true; let token = generation.next(); render()
         client.probe(configuration) { [weak self] result in
@@ -164,12 +166,12 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, 
                 guard let self, self.generation.accepts(token) else { return }
                 self.opening = false; self.probing = false; self.state = result; self.render()
                 if result.canOpen {
-                    if let existing = self.workspace { existing.updateConnection(true); existing.show() }
+                    if let existing = self.workspace { existing.updateConnection(true); existing.show(); if let recording { existing.showRecording(recording) } }
                     else {
                         let controller = WorkspaceController(configuration: self.configuration)
                         controller.openBrowser = { [weak self] in self?.openBrowserWorkspace() }
                         controller.showHost = { [weak self] in self?.showWindow() }
-                        self.workspace = controller; controller.prepareAndLoad()
+                        self.workspace = controller; if let recording { controller.showRecording(recording) }; controller.prepareAndLoad()
                     }
                     self.feedback.stringValue = "已打开内嵌工作区；关闭窗口会保留页面。"
                 } else { self.feedback.stringValue = "连接状态已变化，未打开工作台；请重新检查。" }

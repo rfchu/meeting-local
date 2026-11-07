@@ -97,6 +97,23 @@ struct CompanionSnapshot: Decodable {
     }
 }
 
+struct CompanionObservation {
+    private(set) var latest: CompanionSnapshot?
+    private(set) var reachable = false
+
+    mutating func receive(_ snapshot: CompanionSnapshot?) {
+        reachable = snapshot != nil
+        if let snapshot { latest = snapshot }
+    }
+    func isCurrent(at now: Date) -> Bool {
+        guard reachable, let latest else { return false }
+        return abs(now.timeIntervalSince1970 - latest.observed_at) <= 8
+    }
+    func target(at now: Date) -> String? {
+        isCurrent(at: now) ? latest?.recording_id : nil
+    }
+}
+
 // Starts only the existing guarded service manager. There is deliberately no stop/restart/capture command.
 struct ServiceStartPlan {
     let executable: URL

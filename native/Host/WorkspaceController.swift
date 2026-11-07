@@ -15,6 +15,7 @@ final class WorkspaceController: NSObject, NSWindowDelegate, WKNavigationDelegat
     private var preparing = false
     private var contentFailed = false
     private var disposed = false
+    private var pendingRecording: String?
     private var choosingFile = false
     private var openPanel: NSOpenPanel?
     private let previewOnly: Bool
@@ -89,6 +90,23 @@ final class WorkspaceController: NSObject, NSWindowDelegate, WKNavigationDelegat
         previews.forEach { $0.updateConnection(verified) }
     }
     func show() { window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true) }
+    func showRecording(_ id: String) {
+        guard !previewOnly, id.range(of: #"^[0-9a-f]{32}$"#, options: .regularExpression) != nil else { return }
+        pendingRecording = id
+        deliverRecordingTarget()
+    }
+    private func deliverRecordingTarget() {
+        guard let id = pendingRecording, valid, prepared, !contentFailed, !webView.isLoading,
+              let url = webView.url, policy.allows(url), url.path == "/" else { return }
+        pendingRecording = nil
+        webView.callAsyncJavaScript("""
+            if (location.origin === origin && location.pathname === "/") {
+                location.hash = "companion-recording=" + recording;
+            }
+            """, arguments: ["origin": "http://127.0.0.1:\(policy.configuration.port)", "recording": id],
+            in: nil, in: .page) { _ in }
+    }
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { deliverRecordingTarget() }
     func windowShouldClose(_ sender: NSWindow) -> Bool {
         if previewOnly { return true }
         window.orderOut(nil); return false

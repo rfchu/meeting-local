@@ -25,7 +25,8 @@ def snapshot(services, mode, rid=None):
                 active.append(value)
             if len(active) == 2:
                 break
-    result = {'observed_at': time.time(), 'phase': 'multiple' if len(active) > 1 else 'idle', 'lines': []}
+    phase = 'multiple' if len(active) > 1 else 'missing' if rid and not active else 'idle'
+    result = {'observed_at': time.time(), 'phase': phase, 'lines': []}
     if len(active) != 1:
         return result
     value = active[0]

@@ -31,6 +31,28 @@ check(ConnectionState.unavailable.canStart && !ConnectionState.unavailable.canOp
 var generation = ProbeGeneration(); let old = generation.next(); let current = generation.next()
 check(!generation.accepts(old) && generation.accepts(current), "late response ignored")
 
+let companionID = String(repeating: "a", count: 32)
+let observed = Date(timeIntervalSince1970: 1_000)
+func companionPayload(_ identity: Data) -> Data {
+    let host = try! JSONSerialization.jsonObject(with: identity)
+    return try! JSONSerialization.data(withJSONObject: ["host": host, "snapshot": [
+        "observed_at": observed.timeIntervalSince1970, "recording_id": companionID,
+        "phase": "recording", "lines": [] as [String]
+    ]])
+}
+let recordingSnapshot = CompanionSnapshot.verified(companionPayload(payload()), code: 200, configuration: configuration, recording: companionID)
+check(recordingSnapshot?.recording_id == companionID, "companion verifies identity and bound recording")
+check(CompanionSnapshot.verified(companionPayload(payload(["data_fingerprint":"other"])), code: 200, configuration: configuration, recording: companionID) == nil, "companion refuses other workspace content")
+check(CompanionSnapshot.verified(companionPayload(payload()), code: 200, configuration: configuration, recording: String(repeating: "b", count: 32)) == nil, "companion refuses other recording content")
+var observation = CompanionObservation()
+observation.receive(recordingSnapshot)
+check(observation.target(at: observed) == companionID, "only current bound recording is a return target")
+check(observation.target(at: observed.addingTimeInterval(9)) == nil, "expired status cannot route")
+observation.receive(nil)
+check(observation.latest?.observed_at == observed.timeIntervalSince1970 && observation.target(at: observed) == nil, "disconnect retains timestamp, not navigation")
+observation.receive(recordingSnapshot)
+check(observation.target(at: observed) == companionID, "reconnection restores the same navigation target")
+
 // A test-only URLProtocol provides synthetic responses without network, models or devices.
 final class SyntheticProtocol: URLProtocol {
     static var body = Data()

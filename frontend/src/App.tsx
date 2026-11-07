@@ -67,10 +67,32 @@ import TranscriptView from "./features/transcript/TranscriptView";
 import AnalysisView from "./features/analysis/AnalysisView";
 import MinutesView from "./features/minutes/MinutesView";
 import NotesView from "./features/notes/NotesView";
+import CompanionRecordingStatus, {
+  companionRecording,
+} from "./features/notes/CompanionRecordingStatus";
 import RecordingDialog from "./features/notes/RecordingDialog";
 import { recoverableRecordings } from "./features/notes/recordingBuffer";
 
 export default function App() {
+  const [companionId, setCompanionId] = useState(() =>
+    companionRecording(window.location.hash),
+  );
+  useEffect(() => {
+    const readTarget = () =>
+      setCompanionId(companionRecording(window.location.hash));
+    window.addEventListener("hashchange", readTarget);
+    return () => window.removeEventListener("hashchange", readTarget);
+  }, []);
+  const closeCompanionStatus = () => {
+    if (companionRecording(window.location.hash)) {
+      window.history.replaceState(
+        window.history.state,
+        "",
+        window.location.pathname + window.location.search,
+      );
+    }
+    setCompanionId(undefined);
+  };
   const client = useQueryClient();
   const listQuery = useQuery({
     queryKey: ["meetings"],
@@ -1786,6 +1808,21 @@ export default function App() {
           onComplete={completeRecording}
           onModels={() => setManagementPage("models")}
           toast={toast}
+        />
+      )}
+      {companionId && (
+        <CompanionRecordingStatus
+          key={companionId}
+          id={companionId}
+          onClose={closeCompanionStatus}
+          onMeeting={
+            !recordingOpen && !managementPage
+              ? (id) => {
+                  closeCompanionStatus();
+                  void openMeeting(id);
+                }
+              : undefined
+          }
         />
       )}
     </>

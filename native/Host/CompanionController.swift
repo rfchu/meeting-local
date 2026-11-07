@@ -6,6 +6,9 @@ final class CompanionController: NSObject, NSWindowDelegate {
     private let content = NSTextField(wrappingLabelWithString: "")
     private let modes = NSSegmentedControl(labels: CompanionMode.allCases.map(\.title), trackingMode: .selectOne, target: nil, action: nil)
     private let client: ServiceClient
+    private let returnButton = NSButton(title: "查看本场状态", target: nil, action: nil)
+    private var observation = CompanionObservation()
+    var returnToRecording: (String) -> Void = { _ in }
     private let configuration: HostConfiguration
     private var timer: Timer?
     private var generation = ProbeGeneration()
@@ -26,7 +29,9 @@ final class CompanionController: NSObject, NSWindowDelegate {
         modes.target = self; modes.action = #selector(changeMode)
         status.font = .systemFont(ofSize: 13, weight: .semibold)
         content.textColor = .secondaryLabelColor; content.maximumNumberOfLines = 8
-        let stack = NSStackView(views: [modes, status, content])
+        returnButton.target = self; returnButton.action = #selector(openRecording)
+        returnButton.bezelStyle = .rounded; returnButton.isHidden = true
+        let stack = NSStackView(views: [modes, status, content, returnButton])
         stack.orientation = .vertical; stack.alignment = .leading; stack.spacing = 8
         stack.translatesAutoresizingMaskIntoConstraints = false
         let view = NSView(); panel.contentView = view; view.addSubview(stack)
@@ -41,7 +46,7 @@ final class CompanionController: NSObject, NSWindowDelegate {
 
     func show() {
         guard !panel.isVisible else { panel.orderFrontRegardless(); return }
-        recording = nil; modes.selectedSegment = 0
+        recording = nil; observation = CompanionObservation(); returnButton.isHidden = true; modes.selectedSegment = 0
         status.stringValue = "正在查看录音状态…"; content.stringValue = ""; content.isHidden = true
         panel.setContentSize(NSSize(width: 370, height: 78))
         if let screen = NSScreen.screens.first(where: { $0.frame.contains(NSEvent.mouseLocation) }) ?? NSScreen.main {
@@ -64,38 +69,54 @@ final class CompanionController: NSObject, NSWindowDelegate {
     }
 
     private func poll() {
-        guard panel.isVisible, !pending else { return }
+        guard panel.isVisible else { return }
+        if observation.latest != nil && !observation.isCurrent(at: Date()) { showUnavailable() }
+        guard !pending else { return }
         let token = generation.next(); pending = true
         client.companion(configuration, mode: mode, recording: recording) { [weak self] snapshot in
             DispatchQueue.main.async {
                 guard let self, self.generation.accepts(token), self.panel.isVisible else { return }
-                self.pending = false; self.render(snapshot)
+                self.pending = false; self.observation.receive(snapshot)
+                if self.observation.isCurrent(at: Date()), let snapshot { self.render(snapshot) }
+                else { self.showUnavailable() }
             }
         }
     }
 
-    private func render(_ snapshot: CompanionSnapshot?) {
-        let labels = ["idle":"当前没有录音", "multiple":"有多个录音，请在工作台查看", "recording":"正在录音",
-                      "paused":"录音已暂停", "starting":"正在准备录音", "unknown":"录音状态待确认",
-                      "interrupted":"录音已中断", "saved":"录音已保存", "saving":"正在保存录音"]
-        if let snapshot {
-            recording = recording ?? snapshot.recording_id
-            let issues = [snapshot.storage == "failed" ? "保存失败" : nil,
-                          snapshot.asr == "failed" ? "识别失败" : nil].compactMap { $0 }
-            status.stringValue = ([labels[snapshot.phase] ?? "录音状态待确认"] + issues).joined(separator: " · ")
-            let empty = mode == .bilingual ? "等待已确认文字" : "暂无可显示的会中重点"
-            content.stringValue = mode == .status || snapshot.recording_id == nil ? "" :
-                snapshot.lines.isEmpty ? empty : snapshot.lines.joined(separator: "\n\n")
-        } else {
-            status.stringValue = "暂时无法读取录音状态"; content.stringValue = ""
+    @objc private func openRecording() {
+        guard let rid = observation.target(at: Date()) else { showUnavailable(); poll(); return }
+        returnToRecording(rid)
+    }
+
+    private func showUnavailable() {
+        status.stringValue = "暂时无法确认录音状态"
+        if let last = observation.latest {
+            let time = Date(timeIntervalSince1970: last.observed_at).formatted(date: .omitted, time: .standard)
+        status.stringValue += " · 最近核对 " + time
         }
+        content.stringValue = ""; returnButton.isHidden = true
+        resize()
+    }
+
+    private func render(_ snapshot: CompanionSnapshot) {
+        let labels = ["idle":"当前没有录音", "multiple":"有多个录音，请在工作台查看", "recording":"正在录音",
+                      "missing":"找不到原录音会话", "paused":"录音已暂停", "starting":"正在准备录音", "unknown":"录音状态待确认",
+                      "interrupted":"录音已中断", "saved":"录音已保存", "saving":"正在保存录音"]
+        recording = recording ?? snapshot.recording_id
+        let issues = [snapshot.storage == "failed" ? "保存失败" : nil,
+                          snapshot.asr == "failed" ? "识别失败" : nil].compactMap { $0 }
+        status.stringValue = ([labels[snapshot.phase] ?? "录音状态待确认"] + issues).joined(separator: " · ")
+        let empty = mode == .bilingual ? "等待已确认文字" : "暂无可显示的会中重点"
+        content.stringValue = mode == .status || snapshot.recording_id == nil ? "" :
+                snapshot.lines.isEmpty ? empty : snapshot.lines.joined(separator: "\n\n")
+        returnButton.isHidden = snapshot.recording_id == nil
         resize()
     }
 
     private func resize() {
         content.isHidden = content.stringValue.isEmpty
         let frame = panel.frame
-        panel.setContentSize(NSSize(width: 370, height: content.isHidden ? 78 : 218))
+        panel.setContentSize(NSSize(width: 370, height: (content.isHidden ? 78 : 218) + (returnButton.isHidden ? 0 : 30)))
         panel.setFrameTopLeftPoint(NSPoint(x: frame.minX, y: frame.maxY))
     }
 }
