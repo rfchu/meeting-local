@@ -224,3 +224,11 @@ def test_late_audience_confirmation_rejects_changed_adoption(setup):
         minutes_versions.adopt(db,m,new)
     assert confirm_audience(setup,preview['fingerprint']).status_code==409
     assert not s.all('SELECT * FROM minutes_deliveries')
+
+
+def test_external_action_requires_confirmed_matching_wording(setup):
+    tid=track(setup)
+    selection=['action_items:0']
+    assert audience_preview(setup,selection=selection).status_code==200
+    setup[1].execute("UPDATE note_todos SET content=? WHERE id=?",('另有已核对措辞',tid))
+    assert audience_preview(setup,selection=selection).status_code==409

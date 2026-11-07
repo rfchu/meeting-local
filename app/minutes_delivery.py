@@ -86,7 +86,7 @@ def public(row):
     payload=json.loads(row['payload'])
     return {'id':row['id'],'artifact_id':row['artifact_id'],'created':row['created'],
             'title':payload['document']['title'],'revision':payload['revision'],
-            'audience':payload.get('audience','internal'),
+            'audience':payload.get('audience','internal'),'sent_at':payload.get('sent_at'),
             'include_citations':payload['include_citations'],'task_status':payload['task_status']}
 
 
@@ -118,16 +118,18 @@ def external_projection(db, mid, payload, selection):
     private = [normalized(value) for value in private_text if isinstance(value, str) and value.strip()]
     active_tasks = {task['id'] for task in meeting_flow.tasks(db, mid)
                     if not task['stale'] and task['note_scope'] == 'meeting'}
-    confirmed_actions = {item['action_index'] for item in payload['task_status'] if item['task_id'] in active_tasks}
+    confirmed_actions = {item['action_index']: item['content'].strip() for item in payload['task_status']
+                         if item['task_id'] in active_tasks}
     candidates = []
     selected = set(selection)
     for section, label in EXTERNAL_SECTIONS.items():
         if source.interview and section == 'decisions':
             continue  # Interview decisions represent internal competency assessments.
         for index, item in enumerate(getattr(source, section)):
-            if not item.source_segment_ids or any(secret in normalized(item.content) for secret in private):
+            content = normalized(item.content)
+            if not item.source_segment_ids or any(secret in content for secret in private):
                 continue
-            if section == 'action_items' and index not in confirmed_actions:
+            if section == 'action_items' and confirmed_actions.get(index) != item.content.strip():
                 continue
             key = f'{section}:{index}'
             candidates.append({'id': key, 'label': label, 'content': item.content})
@@ -140,3 +142,24 @@ def external_projection(db, mid, payload, selection):
         'segments': [], 'revision': payload['revision'],
         'include_citations': False, 'task_status': [],
     }, candidates
+
+
+def set_sent(store, mid, delivery_id, sent):
+    """Record a manual sending status without changing the delivered content."""
+    with store.connect() as db:
+        db.execute('BEGIN IMMEDIATE')
+        if sent:
+            db.execute("""
+                UPDATE minutes_deliveries SET payload=json_set(payload,'$.sent_at',CURRENT_TIMESTAMP)
+                WHERE meeting_id=? AND id=? AND json_extract(payload,'$.sent_at') IS NULL
+            """, (mid, delivery_id))
+        else:
+            db.execute("""
+                UPDATE minutes_deliveries SET payload=json_remove(payload,'$.sent_at')
+                WHERE meeting_id=? AND id=? AND json_type(payload,'$.sent_at') IS NOT NULL
+            """, (mid, delivery_id))
+        saved = db.execute('SELECT * FROM minutes_deliveries WHERE meeting_id=? AND id=?',
+                           (mid, delivery_id)).fetchone()
+        if not saved:
+            raise KeyError(delivery_id)
+        return public(saved)

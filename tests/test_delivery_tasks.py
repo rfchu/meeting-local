@@ -123,3 +123,51 @@ def test_task_bound_confirmation_does_not_overwrite_existing_execution(setup):
     assert result.json()=={'id':tid,'reused':True}
     task=c.get(f'/api/meetings/{mid}').json()['note_todos'][0]
     assert task['status']=='done' and task['owner']=='乙'
+
+
+@pytest.mark.parametrize('audience', ['internal', 'external'])
+def test_audience_exports_follow_preview_and_sending_is_explicit(setup, audience, monkeypatch):
+    from io import BytesIO
+    from zipfile import ZipFile
+    from app.meeting_review import MeetingReview
+    from app.routes import minutes
+
+    c,store,mid,other,aid,doc=setup
+    doc.title='INTERNAL-TITLE'
+    doc.purpose='INTERNAL-PURPOSE'
+    doc.overview=[MinutesItem(content='共享议题',source_segment_ids=['s1'])]
+    store.execute('UPDATE artifacts SET payload=? WHERE id=?',(encode(doc.model_dump()),aid))
+    review=MeetingReview(store)
+    for step in ('transcript','speakers'):
+        review.set(mid,step,review.read(mid)['steps'][step]['fingerprint'],'confirmed')
+    base=f'/api/meetings/{mid}/minutes'
+    options={'artifact_id':aid,'audience':audience,'include_citations':True,
+             'selection':['overview:0'] if audience=='external' else []}
+    preview=c.post(base+'/audience-preview',json=options).json()
+    response=c.post(base+'/audience-finalize',json={**options,'fingerprint':preview['fingerprint'],'confirmed':True})
+    assert response.status_code==201,response.text
+    snapshot=response.json()
+    did=snapshot['id']
+    export=lambda fmt:c.get(f'{base}/export/{fmt}?delivery_id={did}')
+    assert export('md').text==preview['markdown']
+    with ZipFile(BytesIO(export('docx').content)) as word:
+        text=word.read('word/document.xml').decode()
+    assert '共享议题' in text
+    for marker in ('INTERNAL-TITLE','INTERNAL-PURPOSE','周五交付。'):
+        assert (marker in text)==(audience=='internal')
+        assert (marker in preview['markdown'])==(audience=='internal')
+    with monkeypatch.context() as patch:
+        def unavailable(*args):raise RuntimeError('合成导出失败')
+        patch.setattr(minutes,'minutes_pdf',unavailable)
+        assert export('pdf').status_code==503
+    pdf=export('pdf')
+    assert pdf.status_code==200 and pdf.content.startswith(b'%PDF')
+    sent=f'{base}/deliveries/{did}/sent'
+    assert c.get(f'/api/meetings/{mid}').json()['deliveries'][0]['sent_at'] is None
+    assert c.put(sent.replace(mid,other),json={'sent':True}).status_code==404
+    first=c.put(sent,json={'sent':True}).json()['sent_at']
+    assert first and c.put(sent,json={'sent':True}).json()['sent_at']==first
+    assert export('md').text==preview['markdown']
+    assert c.put(sent,json={'sent':False}).json()['sent_at'] is None
+    store.save_revision(mid,[],'manual')
+    assert export('md').text==preview['markdown']

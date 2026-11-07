@@ -93,7 +93,7 @@ def audience_preview(store, mid, body):
         return {
             'candidates': candidates,
             'markdown': minutes_markdown(MeetingMinutes.model_validate(payload['document']),
-                                         payload['segments'], payload['include_citations']),
+                                         payload['segments'], payload['include_citations'], citation_appendix=True),
             'fingerprint': fingerprint,
             'can_finalize': checks['can_finalize'] and (body.audience == 'internal' or bool(body.selection)),
         }
@@ -125,9 +125,10 @@ def finalize_audience(store, mid, body):
         confirmation = {step: review['steps'][step]['fingerprint'] for step in ('transcript','speakers','minutes')}
         payload.update(task_sources=minutes_delivery.task_sources(db,mid), review_confirmation=confirmation)
         existing = minutes_delivery.matching(db, mid, body.artifact_id, payload, review=review)
-        if existing:
-            saved = db.execute('SELECT * FROM minutes_deliveries WHERE id=?', (existing[0],)).fetchone()
-            return {**minutes_delivery.public(saved), 'reused': True}
+        for delivery_id in existing:
+            saved = db.execute('SELECT * FROM minutes_deliveries WHERE id=?', (delivery_id,)).fetchone()
+            if 'audience' in json.loads(saved['payload']):
+                return {**minutes_delivery.public(saved), 'reused': True}
         db.execute("""
             INSERT INTO meeting_reviews(meeting_id,step,fingerprint,decision) VALUES(?,'minutes',?,'confirmed')
             ON CONFLICT(meeting_id,step) DO UPDATE SET fingerprint=excluded.fingerprint,

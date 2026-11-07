@@ -61,7 +61,7 @@ export class APIError extends Error {
     super(message);
   }
 }
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+async function checkedResponse(path: string, init?: RequestInit) {
   const response = await fetch(`/api${path}`, init);
   if (!response.ok) {
     let detail = response.statusText;
@@ -86,6 +86,11 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     }
     throw new APIError(detail, response.status, code);
   }
+  return response;
+}
+
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const response = await checkedResponse(path, init);
   return response.status === 204
     ? (undefined as T)
     : ((await response.json()) as T);
@@ -767,6 +772,11 @@ export const api = {
       `/meetings/${mid}/minutes/audience-finalize`,
       json("POST", { ...body, fingerprint, confirmed: true }),
     ),
+  setDeliverySent: (mid: string, id: string, sent: boolean) =>
+    request<import("./types").MinutesDelivery>(
+      `/meetings/${mid}/minutes/deliveries/${id}/sent`,
+      json("PUT", { sent }),
+    ),
   deliveryReadiness: (mid: string, includeCitations: boolean) =>
     request<DeliveryReadiness>(
       `/meetings/${mid}/minutes/delivery-readiness?include_citations=${includeCitations}`,
@@ -1160,12 +1170,22 @@ export const api = {
 };
 
 export const downloadUrl = (path: string) => `/api${path}`;
-export const download = (path: string) => {
+export const download = (path: string, filename = "") => {
   const link = document.createElement("a");
-  link.href = path.startsWith("/api/") ? path : downloadUrl(path);
-  link.download = "";
+  link.href =
+    path.startsWith("/api/") || path.startsWith("blob:")
+      ? path
+      : downloadUrl(path);
+  link.download = filename;
   link.hidden = true;
   document.body.appendChild(link);
   link.click();
   link.remove();
 };
+
+export async function downloadDelivery(path: string, filename: string) {
+  const response = await checkedResponse(path);
+  const url = URL.createObjectURL(await response.blob());
+  download(url, filename);
+  window.setTimeout(() => URL.revokeObjectURL(url), 30_000);
+}

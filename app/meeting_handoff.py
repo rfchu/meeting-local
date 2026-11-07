@@ -72,9 +72,8 @@ def snapshot(db,mid,quality=None):
     try:delivery_payload=minutes_delivery.prepare(db,mid,chosen['id'],False) if valid else None
     except ValueError:delivery_payload=None
     matching=minutes_delivery.matching(db,mid,chosen['id'],delivery_payload,exact_citations=False,review=review) if valid else []
-    if valid and not matching:
-        external=minutes_delivery.current_external(db,mid,chosen['id'],delivery_payload,review)
-        if external:matching=[external]
+    external=minutes_delivery.current_external(db,mid,chosen['id'],delivery_payload,review) if valid else None
+    if external and not matching:matching=[external]
     delivered=bool(matching and all(review['steps'][step]['state']=='done' for step in ('transcript','speakers','minutes')))
     stages=[]
     def stage(key,label,state,summary,counts,**source):
@@ -97,7 +96,7 @@ def snapshot(db,mid,quality=None):
     stage('actions','行动与跟进','stale' if stale_tasks else 'review' if candidates else 'ready' if meeting_todos else 'optional',f'{candidates} 项纪要候选待确认；{stale_tasks} 项待办来源需复核'+(f'；{historical_stale} 项已完成事项仅保留历史提醒' if historical_stale else ''),
         {'candidates':candidates,'tracked':len(meeting_todos),'stale':stale_tasks+historical_stale,'active_stale':stale_tasks,'historical_stale':historical_stale,'pending':sum(item['status']=='pending' for item in meeting_todos)},artifact_id=chosen['id'] if valid else None)
     stage('delivery','交付版本','ready' if delivered else 'review' if valid else 'missing','当前采用稿已有交付快照，导出不等于已发送' if delivered else '核对后确认交付版本；旧交付快照保留',
-        {'snapshots':len(deliveries),'current':int(delivered)},artifact_id=chosen['id'] if chosen else None,current_delivery_id=matching[0] if delivered else None)
+        {'snapshots':len(deliveries),'current':int(delivered)},artifact_id=chosen['id'] if chosen else None,current_delivery_id=matching[0] if delivered else None,current_external_delivery_id=external)
     def action(code,target,label,summary,job_id=None):return {'code':code,'target':target,'label':label,'summary':summary,**({'job_id':job_id} if job_id else {})}
     if jobs:
         job=jobs[0];primary=action('processing','minutes' if job['kind']=='minutes' else 'tasks','查看纪要进度' if job['kind']=='minutes' else '查看处理进度',job['stage'] or '后台任务处理中，已有资料保留',job['id'])

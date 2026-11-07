@@ -1,9 +1,10 @@
+import DeliveryHistoryRow from "./DeliveryHistoryRow";
 import AudienceDeliveryPreview from "./AudienceDeliveryPreview";
 import { recordingQualityAttention } from "../notes/recordingQuality";
 import { useState, useEffect, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { deliveryReadyForView, type DeliveryIssue } from "./deliveryReadiness";
-import { api, download, downloadUrl } from "../../api";
+import { api } from "../../api";
 import type { Meeting } from "../../types";
 import { currentMinutes } from "../../utils";
 export default function MinutesDeliveryPanel({
@@ -59,9 +60,10 @@ export default function MinutesDeliveryPanel({
   const adopted = currentMinutes(meeting);
   const qualityAttention = recordingQualityAttention(meeting.recording_quality);
   const eligible = !!adopted && selectedId === adopted.id && !dirty;
+  const handoffDelivery = meeting.handoff?.stages.find(
+    (stage) => stage.key === "delivery",
+  )?.source;
   const deliveries = meeting.deliveries || [];
-  const link = (id: string, format: string) =>
-    `/meetings/${meeting.id}/minutes/export/${format}?delivery_id=${id}`;
   return (
     <section className="minutes-delivery" aria-label="纪要交付">
       <details
@@ -141,38 +143,18 @@ export default function MinutesDeliveryPanel({
         )}
         {deliveries.length > 0 && <h4>已保存版本 · 历史快照保持不变</h4>}
         {deliveries.map((d, i) => (
-          <article className="delivery-row" key={d.id}>
-            <div>
-              <strong>
-                {d.title} · {d.audience === "external" ? "对外版" : "内部版"}{" "}
-                {currentDeliveryId === d.id ? "· 当前交付" : "· 历史快照"}
-              </strong>
-              <small>
-                交付 {deliveries.length - i} · {d.created} ·{" "}
-                {d.include_citations ? "含原文引用" : "不含原文引用"}
-              </small>
-            </div>
-            <a
-              target="_blank"
-              rel="noreferrer"
-              href={downloadUrl(link(d.id, "pdf") + "&inline=true")}
-            >
-              预览
-            </a>
-            <button onClick={() => download(link(d.id, "docx"))}>Word</button>
-            <button onClick={() => download(link(d.id, "pdf"))}>PDF</button>
-            <details>
-              <summary>更多</summary>
-              <button onClick={() => download(link(d.id, "md"))}>
-                Markdown
-              </button>
-              <p>
-                文字稿 v{d.revision} · 交付时已完成{" "}
-                {d.task_status.filter((t) => t.status === "done").length} /{" "}
-                {d.task_status.length} 项已关联行动
-              </p>
-            </details>
-          </article>
+          <DeliveryHistoryRow
+            key={d.id}
+            delivery={d}
+            meetingId={meeting.id}
+            current={
+              currentDeliveryId === d.id ||
+              handoffDelivery?.current_delivery_id === d.id ||
+              handoffDelivery?.current_external_delivery_id === d.id
+            }
+            onRefresh={onRefresh}
+            number={deliveries.length - i}
+          />
         ))}
       </details>
     </section>

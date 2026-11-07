@@ -295,6 +295,10 @@ class SourceReviewInput(BaseModel):
     confirmed: bool=False
 
 
+class DeliverySentInput(BaseModel):
+    sent: bool
+
+
 class AudiencePreviewInput(BaseModel):
     artifact_id: str = Field(min_length=1,max_length=100)
     audience: Literal['internal','external']

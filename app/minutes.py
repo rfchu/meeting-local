@@ -230,7 +230,7 @@ def _citation_text(item: MinutesItem, segments: dict[str, dict]):
     return "、".join(stamp(segments[sid]["start"]) for sid in item.source_segment_ids if sid in segments)
 
 
-def minutes_markdown(document: MeetingMinutes, segments: list[dict], include_citations=False):
+def minutes_markdown(document: MeetingMinutes, segments: list[dict], include_citations=False, *, citation_appendix=False):
     by_id = {segment["id"]: segment for segment in segments}
     lines = [f"# {document.title}", ""]
     metadata = ((minute_label(document, "日期"), document.meeting_date), (minute_label(document, "地点"), document.location),
@@ -267,6 +267,14 @@ def minutes_markdown(document: MeetingMinutes, segments: list[dict], include_cit
                 if refs: details.append(minute_label(document, "原文：") + refs)
             lines.append(f"- {item.content}" + (f"（{'；'.join(details)}）" if details else ""))
         lines.append("")
+    if include_citations and citation_appendix:
+        _, numbers, ordered = _citation_index(document, segments)
+        if ordered:
+            lines.extend([f"## {minute_label(document, '原文依据')}", ""])
+            for sid in ordered:
+                segment = by_id[sid]
+                speaker = segment.get("speaker") or minute_label(document, "未分配")
+                lines.append(f"- [{numbers[sid]}] {stamp(segment.get('start'))} {speaker}：{_excerpt(segment.get('text'))}")
     return "\n".join(lines).rstrip() + "\n"
 
 
@@ -609,10 +617,11 @@ def minutes_pdf(document: MeetingMinutes, segments: list[dict], include_citation
     for label,value in metadata:
         marks=_reference_marks(document.basic_info_source_segment_ids,reference_numbers) if label==minute_label(document, "会议目的") else ""
         meta_data.append([_pdf_paragraph(minute_label(document,label),styles["head"]),_pdf_paragraph(value,styles["cell"],marks)])
-    meta=LongTable(meta_data,colWidths=[28*mm,142*mm],splitByRow=1)
-    meta.setStyle(TableStyle([("BACKGROUND",(0,0),(0,-1),colors.HexColor("#253A5B")),("GRID",(0,0),(-1,-1),0.5,colors.HexColor("#D9E0E8")),
-        ("VALIGN",(0,0),(-1,-1),"MIDDLE"),("LEFTPADDING",(0,0),(-1,-1),7),("RIGHTPADDING",(0,0),(-1,-1),7),
-        ("TOPPADDING",(0,0),(-1,-1),6),("BOTTOMPADDING",(0,0),(-1,-1),6)]));story.append(meta)
+    if meta_data:
+        meta=LongTable(meta_data,colWidths=[28*mm,142*mm],splitByRow=1)
+        meta.setStyle(TableStyle([("BACKGROUND",(0,0),(0,-1),colors.HexColor("#253A5B")),("GRID",(0,0),(-1,-1),0.5,colors.HexColor("#D9E0E8")),
+            ("VALIGN",(0,0),(-1,-1),"MIDDLE"),("LEFTPADDING",(0,0),(-1,-1),7),("RIGHTPADDING",(0,0),(-1,-1),7),
+            ("TOPPADDING",(0,0),(-1,-1),6),("BOTTOMPADDING",(0,0),(-1,-1),6)]));story.append(meta)
     labels,sections=_style_layout(document)
     for section_name in sections:
         items=getattr(document,section_name)

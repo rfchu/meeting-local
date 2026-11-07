@@ -13,9 +13,9 @@ from ..db import uid, encode
 from ..analysis import OpenAICompatibleProvider, MeetingAnalysis
 from ..minutes import MeetingMinutes, build_minutes, build_ai_minutes, apply_polished_minutes, validate_minutes_citations, minutes_markdown, minutes_docx, minutes_pdf, MINUTES_VERSION
 from ..minutes_composition import ComposeInput, CompositionSettings, build_from_ai, publish_analysis, canonical_source
-from .. import minutes_versions
+from .. import minutes_versions,minutes_delivery
 from .. import meeting_flow
-from ..http_schemas import AIMinutesGenerateInput, AnalysisJobInput, MinutesGenerateInput, MinutesPolishInput, MinutesSaveInput
+from ..http_schemas import DeliverySentInput, AIMinutesGenerateInput, AnalysisJobInput, MinutesGenerateInput, MinutesPolishInput, MinutesSaveInput
 from ..application_services import ApplicationServices
 
 def register_routes(app,services:ApplicationServices):
@@ -314,15 +314,22 @@ def register_routes(app,services:ApplicationServices):
         return public_artifact(store.one('SELECT * FROM artifacts WHERE id=?',(aid,)))
 
 
+    @app.put('/api/meetings/{mid}/minutes/deliveries/{delivery_id}/sent')
+    def set_delivery_sent(mid:str,delivery_id:str,body:DeliverySentInput):
+        try:return minutes_delivery.set_sent(store,mid,delivery_id,body.sent)
+        except KeyError:raise HTTPException(404,'交付版本不存在')
+
     @app.get('/api/meetings/{mid}/minutes/export/{format}')
     def export_minutes(mid:str,format:str,include_citations:bool=False,inline:bool=False,artifact_id:str|None=None,delivery_id:str|None=None):
         if format not in ('md','docx','pdf'):raise HTTPException(400,'会议纪要仅支持 Markdown、Word 或 PDF')
         row=meeting(mid)
+        citation_appendix=False
         if delivery_id:
             delivery=store.one('SELECT payload FROM minutes_deliveries WHERE id=? AND meeting_id=?',(delivery_id,mid))
             if not delivery:raise HTTPException(404,'交付版本不存在')
             frozen=json.loads(delivery['payload']);document=MeetingMinutes.model_validate(frozen['document'])
             segments=frozen['segments'];include_citations=frozen['include_citations']
+            citation_appendix='audience' in frozen
         else:
             with store.connect() as db:
                 artifact=db.execute("SELECT * FROM artifacts WHERE id=? AND meeting_id=? AND kind='meeting_minutes'",(artifact_id,mid)).fetchone() if artifact_id else minutes_versions.selected(db,mid,row['revision'])
@@ -331,7 +338,7 @@ def register_routes(app,services:ApplicationServices):
             segments=json.loads(source['segments']) if source else []
         validate_minutes_citations(document,{segment['id'] for segment in segments})
         if format=='md':
-            content=minutes_markdown(document,segments,include_citations)
+            content=minutes_markdown(document,segments,include_citations,citation_appendix=citation_appendix)
             media_type='text/markdown; charset=utf-8'
         elif format=='docx':
             content=minutes_docx(document,segments,include_citations)
