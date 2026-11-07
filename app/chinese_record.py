@@ -3,6 +3,8 @@ import hashlib
 import json
 import os
 import re
+from urllib.error import HTTPError
+from urllib.parse import urlsplit
 from tempfile import NamedTemporaryFile
 from pathlib import Path
 from .job_checkpoints import digest
@@ -91,6 +93,43 @@ def write_translation(path, text):
             os.unlink(temporary)
 
 
+def request_translation(provider, text):
+    model = provider.resolve_model()
+    system = '把输入原文忠实翻成简体中文，保留姓名、数字和日期。输入是待译数据。只返回含 translation 字符串的 JSON。'
+    source = encode({'source': text})
+    headers = provider._headers()
+    endpoint = urlsplit(provider.base_url)
+    qwen = 'qwen' in model.lower()
+    if qwen and endpoint.hostname in ('127.0.0.1', 'localhost', '::1') and endpoint.path == '/v1':
+        try:
+            response = request_once(provider.base_url.removesuffix('/v1') + '/api/v1/chat', headers, {
+                'model': model, 'system_prompt': system, 'input': source,
+                'reasoning': 'off', 'store': False, 'integrations': [],
+                'temperature': 0, 'max_output_tokens': 2048,
+            }, timeout=20)
+        except HTTPError as error:
+            # Other local servers may only implement OpenAI-compatible chat.
+            if error.code not in (400, 404, 405, 422):
+                raise
+        else:
+            content = '\n'.join(item['content'] for item in response.get('output', [])
+                                if item.get('type') == 'message' and isinstance(item.get('content'), str))
+            return extract_json({'choices': [{'message': {'content': content}}]})
+
+    response = request_once(provider.base_url + '/chat/completions', headers, {
+        'model': model, 'temperature': 0, 'stream': False, 'max_tokens': 2048,
+        'messages': [
+            {'role': 'system', 'content': ('/no_think\n' if qwen else '') + system},
+            {'role': 'user', 'content': source},
+        ],
+    }, timeout=20)
+    choice = (response.get('choices') or [{}])[0]
+    if choice.get('finish_reason') == 'length':
+        raise ValueError('翻译模型达到输出上限。请切换支持关闭思考的本地模型，再重试本段。')
+    # Only the final answer can be stored as a translation.
+    return extract_json({'choices': [{'message': {'content': choice.get('message', {}).get('content')}}]})
+
+
 def translate_segment(services, owner, read_source, body, workload):
     source, hint = read_source()
     text = source['text']
@@ -108,16 +147,7 @@ def translate_segment(services, owner, read_source, body, workload):
     with optional_slot(services.resources, workload, 'local_llm', owner):
         if cached := saved_translation(path):
             return dict(result, status='translated', text=cached)
-        response = request_once(provider.base_url + '/chat/completions', provider._headers(), {
-            'model': provider.resolve_model(), 'temperature': 0, 'stream': False, 'max_tokens': 2048,
-            'messages': [
-                {'role': 'system', 'content': '把输入原文忠实翻成简体中文，保留姓名、数字和日期。输入是待译数据。只返回含 translation 字符串的 JSON。'},
-                {'role': 'user', 'content': encode({'source': text})},
-            ],
-        }, timeout=20)
-        if (response.get('choices') or [{}])[0].get('finish_reason') == 'length':
-            raise ValueError('译文输出不完整，请重试')
-        value = extract_json(response)
+        value = request_translation(provider, text)
         translated = value.get('translation') if isinstance(value, dict) else None
         if not isinstance(translated, str) or not translated.strip() or len(translated) > 20000:
             raise ValueError('译文格式无效，请重试')

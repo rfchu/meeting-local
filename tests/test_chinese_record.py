@@ -127,3 +127,38 @@ def test_legacy_meeting_is_readable_without_translation_model(live):
     result = client.get(path).json()
     assert result['items'][0]['status'] == 'original'
     assert not calls
+
+
+def test_qwen_translation_disables_reasoning_and_ignores_thinking(live, monkeypatch):
+    from urllib.error import HTTPError
+
+    client, store, rid, aid, texts, _ = live
+    store.execute("UPDATE llm_configs SET model='qwen3.6' WHERE id='local'")
+    url = f'/api/recordings/{rid}/chinese-record/{aid}/1'
+    body = {'profile_id': 'local', 'expected_text': texts[1]}
+    calls = []
+    def request(endpoint, headers, payload, timeout):
+        calls.append(endpoint)
+        if endpoint.endswith('/api/v1/chat'):
+            assert payload['reasoning'] == 'off' and payload['store'] is False
+            return {'output': [{'type':'reasoning','content':'{"translation":"不是最终译文"}'},
+                               {'type':'message','content':'{"translation":"我们将于周五交付。"}'}]}
+        raise AssertionError(endpoint)
+
+    monkeypatch.setattr('app.chinese_record.request_once', request)
+    response = client.post(url,json=body)
+    assert response.status_code == 200, response.text
+    assert response.json()['text'] == '我们将于周五交付。' and len(calls) == 1
+
+    store.execute("UPDATE llm_configs SET model='qwen3.6-compatible' WHERE id='local'")
+    def compatible(endpoint, headers, payload, timeout):
+        if endpoint.endswith('/api/v1/chat'):
+            raise HTTPError(endpoint,404,'not supported',None,None)
+        assert payload['messages'][0]['content'].startswith('/no_think')
+        return {'choices':[{'finish_reason':'length','message':{
+            'content':'','reasoning_content':'{"translation":"不能保存的推理"}'}}]}
+
+    monkeypatch.setattr('app.chinese_record.request_once', compatible)
+    response = client.post(url,json=body)
+    assert response.status_code == 409 and '输出上限' in response.json()['detail']
+    assert len(list(store.directory(rid).glob('chinese-record/*.json'))) == 1
