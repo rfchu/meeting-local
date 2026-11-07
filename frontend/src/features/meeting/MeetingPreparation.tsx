@@ -26,9 +26,10 @@ export default function MeetingPreparation({
     return <p>会议准备将在本次录音和处理任务结束、服务更新后启用。</p>;
   return (
     <section className="meeting-preparation">
-      <h3>会议准备与背景</h3>
-      <p>回顾本次目标和上次未完成事项，会后核对讨论是否形成结论。</p>
+      <h3>本次会议准备</h3>
+      <p>先写下会议目标和议程，需要时再补充参会人或关联上次会议。</p>
       <MeetingBriefForm
+        compact
         value={value}
         onChange={(v) => {
           setValue(v);
@@ -38,28 +39,35 @@ export default function MeetingPreparation({
         currentId={meeting.id}
         disabled={busy}
       />
-      <button
-        className="primary"
-        disabled={busy || !dirty}
-        onClick={() => {
-          setBusy(true);
-          void api
-            .saveBrief(meeting.id, value)
-            .then(onRefresh)
-            .then(() => {
-              setDirty(false);
-              toast("会议准备已保存；已生成的 AI 纪要可能需要重新核对。");
-            })
-            .catch((e) => toast(e.message))
-            .finally(() => setBusy(false));
-        }}
-      >
-        保存会议准备
-      </button>
-      {dirty && <span role="status">有未保存的准备内容</span>}
+      <div className="meeting-prepare-actions">
+        <button
+          className="primary"
+          disabled={busy || !dirty}
+          onClick={() => {
+            setBusy(true);
+            void api
+              .saveBrief(meeting.id, value)
+              .then(onRefresh)
+              .then(() => {
+                setDirty(false);
+                toast("会议准备已保存；已生成的 AI 纪要可能需要重新核对。");
+              })
+              .catch((e) => toast(e.message))
+              .finally(() => setBusy(false));
+          }}
+        >
+          保存会议准备
+        </button>
+        <small role="status">
+          {dirty ? "有未保存的准备内容" : "准备内容仅用于辅助整理"}
+        </small>
+      </div>
       {meeting.flow?.previous && (
-        <section>
-          <h4>上次会议：{meeting.flow.previous.title}</h4>
+        <details className="meeting-previous-tasks">
+          <summary>
+            上次会议 · {meeting.flow.previous.title} ·{" "}
+            {meeting.flow.previous.todos.length} 个跟进项
+          </summary>
           <button onClick={() => onOpen(meeting.flow!.previous!.id)}>
             打开上次会议
           </button>
@@ -108,7 +116,7 @@ export default function MeetingPreparation({
           ) : (
             <p>上次会议没有待完成的跟进项。</p>
           )}
-        </section>
+        </details>
       )}
     </section>
   );

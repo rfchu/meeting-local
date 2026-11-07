@@ -15,12 +15,14 @@ export default function MeetingBriefForm({
   meetings = [],
   currentId,
   disabled = false,
+  compact = false,
 }: {
   value: MeetingBrief;
   onChange: (v: MeetingBrief) => void;
   meetings?: MeetingSummary[];
   currentId?: string;
   disabled?: boolean;
+  compact?: boolean;
 }) {
   const fields = [
     ["title", "会议主题", 200],
@@ -29,8 +31,8 @@ export default function MeetingBriefForm({
     ["participants", "计划参会人", 1000],
     ["questions", "希望确认的问题", 2000],
   ] as const;
-  return (
-    <fieldset disabled={disabled} className="meeting-brief-form">
+  const meetingOptions = (
+    <>
       <label>
         原文语言
         <select
@@ -67,7 +69,30 @@ export default function MeetingBriefForm({
           <option value="en">英文</option>
         </select>
       </label>
-      {fields.map(([key, label, max]) => (
+      <label>
+        关联上次会议
+        <select
+          aria-label="关联上次会议"
+          value={value.previous_meeting_id || ""}
+          onChange={(e) =>
+            onChange({ ...value, previous_meeting_id: e.target.value || null })
+          }
+        >
+          <option value="">不关联</option>
+          {meetings
+            .filter((m) => m.id !== currentId)
+            .map((m) => (
+              <option key={m.id} value={m.id}>
+                {m.title}
+              </option>
+            ))}
+        </select>
+      </label>
+    </>
+  );
+  return (
+    <fieldset disabled={disabled} className="meeting-brief-form">
+      {(compact ? fields.slice(0, 3) : fields).map(([key, label, max]) => (
         <label key={key}>
           {label}
           {key === "title" || key === "participants" ? (
@@ -88,25 +113,29 @@ export default function MeetingBriefForm({
           )}
         </label>
       ))}
-      <label>
-        关联上次会议
-        <select
-          aria-label="关联上次会议"
-          value={value.previous_meeting_id || ""}
-          onChange={(e) =>
-            onChange({ ...value, previous_meeting_id: e.target.value || null })
-          }
-        >
-          <option value="">不关联</option>
-          {meetings
-            .filter((m) => m.id !== currentId)
-            .map((m) => (
-              <option key={m.id} value={m.id}>
-                {m.title}
-              </option>
+      {compact ? (
+        <details className="meeting-brief-options">
+          <summary>参会人、语言与关联会议</summary>
+          <div className="meeting-brief-form">
+            {fields.slice(3).map(([key, label, max]) => (
+              <label key={key}>
+                {label}
+                <textarea
+                  rows={2}
+                  maxLength={max}
+                  value={value[key]}
+                  onChange={(e) =>
+                    onChange({ ...value, [key]: e.target.value })
+                  }
+                />
+              </label>
             ))}
-        </select>
-      </label>
+            {meetingOptions}
+          </div>
+        </details>
+      ) : (
+        meetingOptions
+      )}
       <details className="interview-preparation">
         <summary>
           面试准备（可选）

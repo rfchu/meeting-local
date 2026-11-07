@@ -2615,9 +2615,11 @@ dialog code {
   line-height: 1.7;
 }
 
+.workspace-focused,
 .workspace:has(.meeting-review-workspace) {
   grid-template-columns: minmax(0, 1fr);
 }
+.workspace-focused > .info-panel,
 .workspace:has(.meeting-review-workspace) > .info-panel {
   display: none;
 }
@@ -3766,4 +3768,48 @@ button.note-options-trigger {
 .live-source-player audio {
   width: min(320px, 100%);
   height: 32px;
+}
+
+.attention-summary {
+  background: transparent;
+  padding: 0;
+  gap: 8px 16px;
+}
+.attention-heading {
+  margin-inline-end: auto;
+}
+.attention-heading h3 {
+  margin: 0 0 4px;
+}
+.attention-add:not([open]) {
+  padding-block: 4px;
+}
+.attention-add:not([open]) summary {
+  margin: 0;
+}
+.meeting-preparation {
+  max-width: 960px;
+}
+.meeting-brief-options,
+.meeting-preparation .interview-preparation,
+.meeting-previous-tasks {
+  grid-column: 1 / -1;
+  padding-block: 10px;
+  border-top: 1px solid var(--line);
+}
+.meeting-brief-options > summary,
+.meeting-previous-tasks > summary {
+  cursor: pointer;
+  color: var(--muted);
+}
+.meeting-brief-options > div,
+.meeting-prepare-actions {
+  margin-top: 12px;
+}
+.meeting-prepare-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 16px;
 }

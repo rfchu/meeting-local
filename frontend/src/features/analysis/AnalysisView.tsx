@@ -20,7 +20,6 @@ interface Props {
   meeting: Meeting;
   environment?: Environment;
   model: string;
-  onModel: (value: string) => void;
   onGenerate: () => void;
   onCompose: () => void;
   composing: boolean;
@@ -34,7 +33,6 @@ export default function AnalysisView({
   meeting,
   environment,
   model,
-  onModel,
   onGenerate,
   onCompose,
   composing,
@@ -47,8 +45,9 @@ export default function AnalysisView({
     running = isRunning(job),
     current = currentAnalysis(meeting),
     artifact = current || latestAnalysis(meeting);
-  const profiles = environment?.analysis.profiles || [],
-    models = environment?.analysis.models || [];
+  const profile = environment?.analysis.profiles.find(
+    (item) => item.id === model,
+  );
   const stale =
     artifact && (transcriptDirty || artifact.revision !== meeting.revision);
   const byId = new Map(meeting.segments.map((item) => [item.id, item]));
@@ -58,32 +57,13 @@ export default function AnalysisView({
         内部复盘 · 对照原文核对讨论、决定、待办和未决问题。
       </p>
       <div className="analysis-toolbar">
-        <label>
-          分析模型
-          <select
-            aria-label="摘要模型"
-            value={model}
-            onChange={(e) => onModel(e.target.value)}
-          >
-            <option value="">请选择模型配置</option>
-            {profiles.length ? (
-              profiles.map((item) => (
-                <option value={item.id} key={item.id}>
-                  {item.name} · {item.model} ·{" "}
-                  {item.provider_type === "local" ? "本地" : "云端"}
-                </option>
-              ))
-            ) : models.length ? (
-              models.map((item) => <option key={item}>{item}</option>)
-            ) : (
-              <option value="">请先配置模型</option>
-            )}
-          </select>
-        </label>
         <button
           className="primary"
           disabled={
-            !meeting.revision || !environment?.analysis.ready || running
+            !meeting.revision ||
+            !model ||
+            !environment?.analysis.ready ||
+            running
           }
           onClick={onGenerate}
         >
@@ -95,7 +75,9 @@ export default function AnalysisView({
         >
           用这份分析生成纪要草稿
         </button>
-        <button onClick={onConfigure}>配置模型</button>
+        <button className="text-btn" onClick={onConfigure}>
+          {profile?.name || model || "配置分析模型"} · 运行管理
+        </button>
         <select
           id="analysisExport"
           aria-label="导出会议分析"
@@ -144,7 +126,7 @@ export default function AnalysisView({
           <h3>还没有会议分析</h3>
           <p>
             {environment?.analysis.ready
-              ? "选择分析模型后生成摘要、决定和待办。"
+              ? "生成后可核对摘要、决定和待办。"
               : "请先配置本地或云端分析模型。"}
           </p>
         </div>

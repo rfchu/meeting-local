@@ -5,7 +5,6 @@ import type {
   Meeting,
   MeetingNote,
   MeetingNoteType,
-  LLMConfig,
   NoteReview,
   NoteTodo,
 } from "../../types";
@@ -31,7 +30,9 @@ export default function NotesView({
   focusNoteId,
   onNoteFocused,
   onLocate,
+  onConfigureModel,
 }: {
+  onConfigureModel: () => void;
   inlineReview?: boolean;
   focusNoteId?: string;
   onNoteFocused?: () => void;
@@ -56,9 +57,8 @@ export default function NotesView({
     [type, setType] = useState<MeetingNoteType>("note"),
     [scope, setScope] = useState<"personal" | "meeting">("personal"),
     [time, setTime] = useState(0);
-  const [profiles, setProfiles] = useState<LLMConfig[]>([]),
-    [profileId, setProfileId] = useModelChoice("notes"),
-    [busy, setBusy] = useState(false),
+  const [profileId] = useModelChoice("notes");
+  const [busy, setBusy] = useState(false),
     [selected, setSelected] = useState<string | null>(null);
   useEffect(() => {
     if (focusNoteId && meeting.notes.some((n) => n.id === focusNoteId)) {
@@ -67,14 +67,6 @@ export default function NotesView({
       onNoteFocused?.();
     }
   }, [focusNoteId, meeting.notes, onNoteFocused]);
-  useEffect(() => {
-    api
-      .environment()
-      .then((env) => {
-        setProfiles(env.analysis.profiles);
-      })
-      .catch((error) => toast((error as Error).message));
-  }, []);
   const run = async (operation: () => Promise<unknown>) => {
     setBusy(true);
     try {
@@ -109,6 +101,7 @@ export default function NotesView({
         note={selectedNote}
         meeting={meeting}
         profileId={profileId}
+        onConfigureModel={onConfigureModel}
         minutesDirty={minutesDirty}
         onPause={onPause}
         onRefresh={onRefresh}
@@ -119,23 +112,13 @@ export default function NotesView({
     );
   return (
     <div className="notes-view">
-      <div className="notes-purpose">
-        <h3>把现场关注整理成会议成果</h3>
-        <p>
-          共 {meeting.notes.length} 个关注点，{pending} 个待处理，
-          {flow?.counts.meeting || 0} 个已确认可用，{flow?.counts.personal || 0}{" "}
-          个保留个人。已确认内容可参与 AI 纪要整理，原始记录始终保留。
-        </p>
-      </div>
       <div className="attention-summary">
-        <button className="primary" onClick={onMinutes}>
-          前往会议成果 · 整理纪要与跟进
-        </button>
-        <small>
-          已采用到当前纪要 {flow?.counts.adopted || 0} 个；相关原文被引用{" "}
-          {flow?.counts.related || 0}{" "}
-          个。原文有关联不等于关注点已被充分覆盖，请核对纪要。
-        </small>
+        <div className="attention-heading">
+          <h3>会议关注点</h3>
+          <span className="muted">
+            {pending} 待核对 · {meeting.notes.length} 条简记
+          </span>
+        </div>
         <label>
           查看关注点
           <select
@@ -149,26 +132,10 @@ export default function NotesView({
             <option value="personal">个人保留</option>
           </select>
         </label>
+        <button className="text-btn" onClick={onMinutes}>
+          查看会议成果 →
+        </button>
       </div>
-      <details className="notes-expansion-toolbar">
-        <summary>AI 整理设置</summary>
-        <label>
-          整理模型{" "}
-          <select
-            aria-label="简记扩写模型"
-            value={profileId}
-            onChange={(e) => setProfileId(e.target.value)}
-          >
-            <option value="">请选择模型配置</option>
-            {profiles.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name} · {p.provider_type === "cloud" ? "云端" : "本地"}
-              </option>
-            ))}
-          </select>
-        </label>
-        <p>云端模型会接收所选简记和附近文字稿；原始记录不会被自动改写。</p>
-      </details>
       {active && (
         <p role="status">
           {active.stage} · {Math.round(active.progress * 100)}%{" "}
@@ -192,10 +159,10 @@ export default function NotesView({
             value={time}
             onChange={(e) => setTime(Math.max(0, Number(e.target.value) || 0))}
           />
-          <button disabled={busy} onClick={() => void add(true)}>
-            ⚑ 标记这个位置
-          </button>
         </label>
+        <button disabled={busy} onClick={() => void add(true)}>
+          仅添加时间标记
+        </button>
         <div className="note-compose-options">
           <select
             aria-label="补充简记用途"
@@ -243,6 +210,18 @@ export default function NotesView({
           </button>
         </div>
       </details>
+      {meeting.notes.length > 0 &&
+        filter === "pending" &&
+        !meeting.notes.some((note) =>
+          ["pending", "stale", "deferred"].includes(stateOf(note.id)),
+        ) && (
+          <p className="muted">
+            没有待核对的关注点。
+            <button className="text-btn" onClick={() => setFilter("all")}>
+              查看全部
+            </button>
+          </p>
+        )}
       {!meeting.notes.length && (
         <div className="empty">
           <h3>还没有简记</h3>
@@ -320,6 +299,7 @@ export default function NotesView({
           note={selectedNote}
           meeting={meeting}
           profileId={profileId}
+          onConfigureModel={onConfigureModel}
           minutesDirty={minutesDirty}
           onPause={onPause}
           onRefresh={onRefresh}
@@ -504,6 +484,7 @@ function ReviewPanel({
   note,
   meeting,
   profileId,
+  onConfigureModel,
   minutesDirty,
   onRefresh,
   onSeek,
@@ -515,6 +496,7 @@ function ReviewPanel({
   note: MeetingNote;
   meeting: Meeting;
   profileId: string;
+  onConfigureModel: () => void;
   minutesDirty: boolean;
   onRefresh: () => Promise<void>;
   onSeek: (time: number) => void;
@@ -662,6 +644,11 @@ function ReviewPanel({
           <button onClick={onPause}>暂停回听</button>
           <p>标签：{labels[note.note_type]}</p>
           <h3>AI 扩写建议</h3>
+          {!profileId && (
+            <button className="text-btn" onClick={onConfigureModel}>
+              在运行管理中配置扩写模型
+            </button>
+          )}
           <button
             disabled={
               busy ||

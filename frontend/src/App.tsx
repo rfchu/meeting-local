@@ -166,10 +166,7 @@ export default function App() {
     setMinutesDraft(minutesDraftRef.current.draft);
     setMinutesDirty(false);
   };
-  const [analysisModel, setAnalysisModel] = useModelChoice(
-      "analysis",
-      meeting?.id,
-    ),
+  const [analysisModel] = useModelChoice("analysis", meeting?.id),
     [minutesModel, setMinutesModel] = useModelChoice("minutes", meeting?.id),
     [generating, setGenerating] = useState(false);
   const [uploading, setUploading] = useState(false),
@@ -1381,7 +1378,10 @@ export default function App() {
               }}
               onPreview={() => void openMinutesPreview()}
             />
-            <div className="workspace" id="meeting-workspace">
+            <div
+              className={`workspace ${workspace === "prepare" ? "workspace-focused" : ""}`}
+              id="meeting-workspace"
+            >
               <div className="transcript-panel">
                 <div className="panel-header">
                   <div className="tabs">
@@ -1444,7 +1444,7 @@ export default function App() {
                     </button>
                   )}
                 </div>
-                {workspace === "prepare" && (
+                <div hidden={workspace !== "prepare"}>
                   <MeetingPreparation
                     key={meeting.id}
                     meeting={meeting}
@@ -1455,7 +1455,7 @@ export default function App() {
                     onOpen={(id) => void openMeeting(id)}
                     toast={toast}
                   />
-                )}
+                </div>
                 {workspace === "transcript" && (
                   <ChineseMeetingRecord
                     activeSegment={activeSegment}
@@ -1518,11 +1518,10 @@ export default function App() {
                     meeting={meeting}
                     environment={environment}
                     model={analysisModel}
-                    onModel={setAnalysisModel}
                     onGenerate={() => void generateAnalysis()}
                     onCompose={() => void startMinutes(true)}
                     composing={generating}
-                    onConfigure={() => setManagementPage("models")}
+                    onConfigure={() => setManagementPage("defaults")}
                     onJobAction={(id, action) => void jobAction(id, action)}
                     onSeek={(time) => seekRef.current?.(time)}
                     transcriptDirty={transcriptDirty}
@@ -1555,6 +1554,7 @@ export default function App() {
                       <NotesView
                         key={meeting.id}
                         inlineReview
+                        onConfigureModel={() => setManagementPage("defaults")}
                         focusNoteId={noteSourceId}
                         onNoteFocused={() => setNoteSourceId(undefined)}
                         onLocate={(time) => {
@@ -1657,7 +1657,7 @@ export default function App() {
                           void compareMinutes(left, right)
                         }
                         onExport={(format) => void exportMinutes(format)}
-                        onModel={setMinutesModel}
+                        onConfigureModel={() => setManagementPage("defaults")}
                         onCitations={setShowCitations}
                         onGenerate={() => void startMinutes()}
                         onDraft={(value) => {

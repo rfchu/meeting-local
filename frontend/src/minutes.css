@@ -612,3 +612,38 @@ fieldset.minutes-document:disabled {
   flex-wrap: wrap;
   gap: 6px;
 }
+
+.minutes-document-actions {
+  align-items: center;
+  padding-block: 8px;
+}
+.minutes-document-actions > span {
+  margin-inline-end: auto;
+}
+.minutes-secondary-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 4px 12px;
+  padding: 4px 20px 10px;
+}
+.minutes-secondary-actions > details {
+  margin: 0;
+  border: 0;
+  background: transparent;
+}
+.minutes-secondary-actions > details[open] {
+  flex-basis: 100%;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+.minutes-secondary-actions > details > summary {
+  padding: 7px 4px;
+  color: var(--muted);
+}
+.minutes-secondary-actions > details[open] > summary {
+  padding-inline: 12px;
+}
+.minutes-secondary-actions > .analysis-notice {
+  flex-basis: 100%;
+}
