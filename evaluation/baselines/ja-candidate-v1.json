@@ -1,0 +1,30 @@
+{
+  "candidate": "ja",
+  "scope": "Local synthetic smoke test, 2026-11-07. Single-language and same-window Japanese/English code-switching. Release gate requires both.",
+  "environment": "macOS arm64; macOS say at default rate; ffmpeg mono PCM16 16000 Hz. Mixed input is Japanese WAV + 16000 zero samples + English WAV.",
+  "samples": {
+    "ja": {
+      "voice": "Kyoko",
+      "text": "担当は田中さんです。試作品は十一月十七日に発送します。",
+      "seconds": 6.05025,
+      "sha256": "3bde31a298e48e86ef7be19986e3b4e98c661b1872c31d44e0c7373724a47c43"
+    },
+    "en": {
+      "voice": "Samantha",
+      "text": "Alice will review the prototype on November twentieth.",
+      "seconds": 3.096563
+    },
+    "mixed": {
+      "seconds": 10.146813,
+      "sha256": "a44186bc61c98986f65e6e6204b7871b6c581b0924343556009e5f7ce4214d54"
+    }
+  },
+  "translator": "LM Studio qwen3.6-35b-a3b-splash, reasoning off",
+  "results": [
+    {"engine": "Whisper large-v3-turbo", "sample": "ja", "mode": "ja", "asr_seconds": 1.27, "translation_seconds": 0.30, "source": "担当は田中さんです。試作品は11月17日に発送します。", "translation": "负责人是田中先生。样品将于11月17日寄出。", "audio_range_seconds": [0, 5.74], "finding": "Name and date preserved. The model renders さん as 先生."},
+    {"engine": "Whisper large-v3-turbo", "sample": "mixed", "mode": "auto", "asr_seconds": 1.06, "translation_seconds": 0.21, "source": "担当は田中さんです。試作品は11月17日に発送します。", "translation": "负责人是田中先生。样品将于11月17日寄出。", "audio_range_seconds": [0, 5.78], "finding": "English omitted. Alice and November 20 absent."},
+    {"engine": "Qwen3-ASR-1.7B 8-bit + Qwen3 ForcedAligner 0.6B 8-bit", "sample": "ja", "mode": "ja, isolated probe", "asr_seconds": 2.37, "translation_seconds": 0.31, "source": "担当は田中さんです。試作品は十一月十七日に発送します。", "translation": "负责人是田中先生。样品将于11月17日寄出。", "audio_range_seconds": [0, 6.05025], "finding": "Name and date preserved. Chunk-only timestamps."},
+    {"engine": "Qwen3-ASR-1.7B 8-bit + Qwen3 ForcedAligner 0.6B 8-bit", "sample": "mixed", "mode": "auto", "asr_seconds": 2.36, "translation_seconds": 0.17, "source": "Alice will review the prototype on November twentieth.", "translation": "爱丽丝将在十一月二十日审查原型。", "audio_range_seconds": [0.08, 3.6], "finding": "Japanese omitted. Tanaka and November 17 absent. English alignment precedes its actual input range."}
+  ],
+  "decision": "Hold T18. Repeat with a recognizer that preserves both languages and locates each in the original audio before making the option available."
+}
