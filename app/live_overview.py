@@ -30,6 +30,28 @@ def worker_failure(log):
     return '模型调用失败，请检查模型服务后重试'
 
 
+TOPIC_ARCHIVE_LIMIT = 32
+
+
+def topic_snapshots(db, rid):
+    """Return the newest retained snapshot for each stable topic identity."""
+    return db.execute("""
+        WITH candidates AS (
+          SELECT s.version, json_extract(item.value,'$.id') AS id,
+                 json_extract(item.value,'$.content') AS title,
+                 json_extract(item.value,'$.evidence[0].start') AS start,
+                 row_number() OVER (
+                   PARTITION BY json_extract(item.value,'$.id') ORDER BY s.version DESC
+                 ) AS occurrence
+          FROM live_overview_snapshots s, json_each(s.payload,'$.items') item
+          WHERE s.recording_id=? AND json_extract(item.value,'$.kind')='topic'
+            AND json_extract(item.value,'$.id') IS NOT NULL
+        )
+        SELECT version,id,title,start FROM candidates WHERE occurrence=1
+        ORDER BY version DESC LIMIT ?
+    """, (rid, TOPIC_ARCHIVE_LIMIT)).fetchall()
+
+
 def digest(value):return hashlib.sha256(encode(value).encode()).hexdigest()
 
 class Evidence(BaseModel):
@@ -276,6 +298,8 @@ class LiveOverview:
             value['evidence']=[{**e,'start':sources[e['segment_id']]['start'] if e['segment_id'] in sources else e.get('start',0)} for e in value['evidence']]
             values.append(value)
         history=self.store.all('SELECT version,cursor,created FROM live_overview_snapshots WHERE recording_id=? ORDER BY version DESC LIMIT 12',(rid,))
+        with self.store.connect() as db:
+            topics=[dict(row) for row in topic_snapshots(db,rid)]
         return {'enabled':bool(run and run['enabled']),'state':run['state'] if run else 'unconfigured','error':run['error'] if run else '',
             'failures':run['failures'] if run else 0,
             'elapsed_seconds':round(max(0,time.time()-run['last_attempt'])) if run and run['state']=='running' else 0,
@@ -289,7 +313,7 @@ class LiveOverview:
             'quality':json.loads(snapshot['payload']).get('quality',{}) if snapshot else {},
             'version':snapshot['version'] if snapshot else 0,'updated':snapshot['created'] if snapshot else None,
             'covered_count':snapshot['cursor'] if snapshot else 0,'confirmed_count':len(parts),'gap_count':len(gaps),
-            'items':values,'history':history,'historical':bool(version),'published':bool(self.store.one('SELECT id FROM meetings WHERE id=?',(rid,)))}
+            'items':values,'history':history,'topics':topics,'historical':bool(version),'published':bool(self.store.one('SELECT id FROM meetings WHERE id=?',(rid,)))}
 
     def refresh(self,rid):
         run=self.store.one('SELECT * FROM live_overview_runs WHERE recording_id=?',(rid,))
@@ -451,7 +475,13 @@ class LiveOverview:
             version=(db.execute('SELECT MAX(version) FROM live_overview_snapshots WHERE recording_id=?',(plan['rid'],)).fetchone()[0] or 0)+1
             db.execute('INSERT INTO live_overview_snapshots(recording_id,version,cursor,covered_hash,meta_hash,payload) VALUES(?,?,?,?,?,?)',
                 (plan['rid'],version,plan['cursor'],plan['covered_hash'],plan['meta_hash'],encode({'items':values,'filtered_count':result.filtered_count,'quality':quality,'prompt_version':PROMPT_VERSION,'provider':{**plan['config']['provider'],'name':plan['config']['name'],'engine':plan['config']['engine']}})))
-            db.execute('DELETE FROM live_overview_snapshots WHERE recording_id=? AND version<=?',(plan['rid'],version-12))
+            retained=[row['version'] for row in topic_snapshots(db,plan['rid'])]
+            if retained:
+                placeholders=','.join('?' for _ in retained)
+                db.execute(f"DELETE FROM live_overview_snapshots WHERE recording_id=? AND version<=? "
+                           f"AND version NOT IN ({placeholders})",(plan['rid'],version-12,*retained))
+            else:
+                db.execute('DELETE FROM live_overview_snapshots WHERE recording_id=? AND version<=?',(plan['rid'],version-12))
             db.execute("UPDATE live_overview_runs SET state='waiting',next_due=?,force=0,failures=0,error='',updated=CURRENT_TIMESTAMP WHERE recording_id=?",(time.time()+INTERVAL,plan['rid']))
 
     def run_once(self,rid,force=False):

@@ -66,6 +66,7 @@ export default function LiveOverviewPanel({
   useEffect(() => {
     setVersion(0);
     setEditing(null);
+    setExpanded(null);
   }, [recordingId]);
   const locatedItem = useRef("");
   useEffect(() => {
@@ -298,6 +299,10 @@ export default function LiveOverviewPanel({
                 onChange={(e) => setVersion(Number(e.target.value))}
               >
                 <option value={0}>最新概览</option>
+                {version > 0 &&
+                  !data.history.some((item) => item.version === version) && (
+                    <option value={version}>历史快照 v{version}</option>
+                  )}
                 {data.history.map((h) => (
                   <option key={h.version} value={h.version}>
                     v{h.version} ·{" "}
@@ -324,6 +329,28 @@ export default function LiveOverviewPanel({
           </div>
         )}
       </div>
+      {!!data?.topics?.length && (
+        <label>
+          按议题回看{" "}
+          <select
+            aria-label="按议题回看"
+            value={version}
+            onChange={(event) => setVersion(Number(event.target.value))}
+          >
+            <option value={0}>最新概览</option>
+            {version > 0 &&
+              !data.topics.some((topic) => topic.version === version) && (
+                <option value={version}>历史快照 v{version}</option>
+              )}
+            {data.topics.map((topic) => (
+              <option key={topic.id} value={topic.version}>
+                {topic.start != null ? `${clock(topic.start)} · ` : ""}
+                {topic.title}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
       {historical && (
         <p className="overview-history-label">
           正在查看历史快照。请在“详情与设置”中切回最新概览后核对。

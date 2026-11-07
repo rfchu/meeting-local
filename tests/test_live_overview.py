@@ -387,3 +387,19 @@ def test_excess_valid_overview_references_do_not_break_update():
     result = expand_numbered({'items':[item,wrong]},quotes)
     assert [e.segment_id for e in result.items[0].evidence] == ids[:4]
     assert result.filtered_count == 1
+
+
+def test_early_topic_remains_addressable_after_recent_history_rotates(setup):
+    _,_,service,_,rid,_,sid,_=setup
+    service.publish(plan(setup),output(sid,kind='topic',content='第一议题'))
+    service.publish(plan(setup),output(sid,kind='topic',content='第二议题'))
+    second=next(item for item in service.read(rid)['items'] if item['kind']=='topic')
+    for _ in range(13):
+        service.publish(plan(setup),output(sid,kind='topic',item_id=second['id'],content='第二议题'))
+    latest=service.read(rid)
+    assert len(latest['history'])==12
+    assert [item['title'] for item in latest['topics']]==['第二议题','第一议题']
+    old=service.read(rid,latest['topics'][1]['version'])
+    assert old['historical'] and old['items'][0]['content']=='第一议题'
+    assert old['items'][0]['evidence'][0]['segment_id']==sid
+    assert old['items'][0]['evidence'][0]['start']==0

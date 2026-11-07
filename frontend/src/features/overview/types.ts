@@ -45,5 +45,11 @@ export interface OverviewStatus {
     engine: "qwen" | "whisper";
   } | null;
   snapshot_provider?: OverviewStatus["provider"];
+  topics?: {
+    version: number;
+    id: string;
+    title: string;
+    start: number | null;
+  }[];
   history: { version: number; cursor: number; created: string }[];
 }
