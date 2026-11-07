@@ -1,0 +1,17 @@
+{
+  "candidate": "ja",
+  "scope": "T18a local ASR preflight for Japanese-led audio with a short English project name. Synthetic smoke sample, not a production release acceptance.",
+  "environment": "macOS arm64, macOS say at default rate, ffmpeg mono PCM16 16000 Hz. Insert 8000 zero samples after each utterance.",
+  "sha256": "d32956a7df15035411477117afbf22839bcf785528cfa435d8a157f965958989",
+  "samples": [
+    {"voice": "Kyoko", "text": "担当は田中さんです。予算は三百五十万円です。", "range_seconds": [0, 4.7615]},
+    {"voice": "Samantha", "text": "Project Bluebird.", "range_seconds": [5.2615, 6.4321875]},
+    {"voice": "Kyoko", "text": "次の会議は十二月十九日の午後二時です。佐藤さんが参加します。", "range_seconds": [6.9321875, 12.7166875]}
+  ],
+  "results": [
+    {"engine": "Whisper large-v3-turbo", "modes": ["ja", "auto"], "finding": "Preserved Japanese names, amounts, date and time in two segments. Omitted the English project name in both modes."},
+    {"engine": "Whisper large-v3-turbo", "modes": ["ja with Silero VAD"], "finding": "The VAD path also omitted the English project name."},
+    {"engine": "Qwen3-ASR-1.7B 8-bit + Qwen3 ForcedAligner 0.6B 8-bit", "modes": ["ja (isolated probe)", "auto"], "finding": "Preserved the project name in katakana and Japanese facts. The aligner fell back to a single chunk spanning 0 to 13.2166875 seconds in both modes."}
+  ],
+  "decision": "Keep Japanese disabled in T18b and T18c. The tested configurations did not provide both coverage and segment-level audio location. The ASR gate failed before downstream translation and real-time acceptance."
+}
