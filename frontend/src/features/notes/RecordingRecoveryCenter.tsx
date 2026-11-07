@@ -1,7 +1,6 @@
 import { watchRecordingCommands } from "./recordingCommandEvents";
 import { healthFreshness } from "./healthFreshness";
 import { useCallback, useEffect, useRef, useState } from "react";
-import Modal from "../../components/Modal";
 import { api } from "../../api";
 import type { RecordingSession } from "../../types";
 import { recoveryInventorySnapshot } from "./recordingBuffer";
@@ -11,13 +10,13 @@ import { watchRecordingRecovery } from "./recordingRecovery";
 import RecordingRecoveryList from "./RecordingRecoveryList";
 import type { CompletionMode } from "./recordingPreferences";
 export default function RecordingRecoveryCenter({
-  onClose,
+  onBusyChange,
   onComplete,
   toast,
   defaultEngine = "whisper",
 }: {
   defaultEngine?: "whisper" | "qwen";
-  onClose: () => void;
+  onBusyChange: (busy: boolean) => void;
   onComplete: (
     id: string,
     options: { mode: CompletionMode; engine: "whisper" | "qwen" },
@@ -28,6 +27,7 @@ export default function RecordingRecoveryCenter({
     [loading, setLoading] = useState(true),
     [busy, setBusy] = useState(false),
     [error, setError] = useState("");
+  useEffect(() => onBusyChange(busy), [busy, onBusyChange]);
   const [inventoryError, setInventoryError] = useState("");
   const [checkedAt, setCheckedAt] = useState(0);
   const [now, setNow] = useState(Date.now());
@@ -147,23 +147,7 @@ export default function RecordingRecoveryCenter({
     }
   };
   return (
-    <Modal
-      id="recordingRecoveryCenter"
-      className="recording-recovery-center"
-      ariaLabel="录音恢复中心"
-      onClose={() => {
-        if (!busy) onClose();
-      }}
-    >
-      <header className="recovery-center-heading">
-        <div>
-          <h2>录音恢复</h2>
-          <p>查看中断会话，将已保存的录音和简记整理为会议。</p>
-        </div>
-        <button disabled={busy} onClick={onClose}>
-          关闭
-        </button>
-      </header>
+    <section className="recording-recovery-center" aria-label="录音恢复中心">
       {error && (
         <p className="recovery-center-error" role="alert">
           {error}
@@ -285,6 +269,6 @@ export default function RecordingRecoveryCenter({
           />
         </fieldset>
       )}
-    </Modal>
+    </section>
   );
 }

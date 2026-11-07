@@ -2734,7 +2734,7 @@ dialog code {
 }
 
 /* Recovery is a separate maintenance view; the recording workbench stays focused. */
-.sidebar-recovery {
+.sidebar-management {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -2752,32 +2752,7 @@ dialog code {
   font-size: 11px;
 }
 .recording-recovery-center {
-  width: 820px;
-  max-width: calc(100vw - 32px);
-  max-height: 86vh;
-  padding: 0;
-  overflow: auto;
-}
-.recovery-center-heading {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 20px;
-  padding: 24px;
-  border-bottom: 1px solid var(--line);
-  height: auto;
-  min-height: 0;
-  margin: 0;
-  background: #fff;
-}
-.recovery-center-heading h2 {
-  margin: 0 0 8px;
-}
-.recovery-center-heading p {
-  margin: 0;
-  color: var(--muted);
-  font-size: 13px;
-  line-height: 1.7;
+  min-width: 0;
 }
 .recovery-center-tools {
   display: flex;

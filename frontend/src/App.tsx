@@ -4,7 +4,6 @@ import RuntimeManagement, {
 } from "./features/management/RuntimeManagement";
 import OverviewArchiveButton from "./features/overview/OverviewArchiveButton";
 import SampleMeetingDialog from "./features/onboarding/SampleMeetingDialog";
-import RecordingRecoveryCenter from "./features/notes/RecordingRecoveryCenter";
 import { recordingRecoveryCount } from "./features/notes/recordingInventory";
 import MinutesDeliveryPanel from "./features/minutes/MinutesDeliveryPanel";
 import ReviewSourcePane from "./features/meeting/ReviewSourcePane";
@@ -178,8 +177,7 @@ export default function App() {
     [toastText, setToastText] = useState(""),
     [renameOpen, setRenameOpen] = useState(false),
     [previewOpen, setPreviewOpen] = useState(false),
-    [recordingOpen, setRecordingOpen] = useState(false),
-    [recoveryOpen, setRecoveryOpen] = useState(false);
+    [recordingOpen, setRecordingOpen] = useState(false);
   const [taskFocus, setTaskFocus] = useState<TaskFocus | undefined>();
   const [managementPage, setManagementPage] = useState<ManagementPage | null>(
     null,
@@ -188,7 +186,7 @@ export default function App() {
     queryKey: ["recording-recoveries"],
     queryFn: recoverableRecordings,
     refetchInterval: 30000,
-    enabled: !recordingOpen && !recoveryOpen,
+    enabled: !recordingOpen,
   });
   const [libraryOpen, setLibraryOpen] = useState(false);
   const [transcriptionLanguage, setTranscriptionLanguage] =
@@ -928,7 +926,6 @@ export default function App() {
             : toast("跨会议跟进需在录音和任务结束后更新服务，现有内容已保留。")
         }
         recoveryCount={recordingRecoveryCount(recoveryQuery.data || [])}
-        onRecovery={() => setRecoveryOpen(true)}
       />
       {libraryOpen && (
         <MeetingLibrary
@@ -973,7 +970,9 @@ export default function App() {
               发现 {recordingRecoveryCount(recoveryQuery.data || [])}{" "}
               条录音会话待检查，请核对已保存内容。
             </span>
-            <button onClick={() => setRecoveryOpen(true)}>查看录音恢复</button>
+            <button onClick={() => setManagementPage("recovery")}>
+              前往运行管理查看
+            </button>
           </section>
         )}
         {!meeting ? (
@@ -1766,9 +1765,14 @@ export default function App() {
       )}
       {managementPage && (
         <RuntimeManagement
-          onRecovery={() => {
+          recoveryCount={recordingRecoveryCount(recoveryQuery.data || [])}
+          recoveryEngine={engine === "qwen" ? "qwen" : "whisper"}
+          onRecoveryComplete={async (id, options) => {
+            await completeRecording(id, options);
             setManagementPage(null);
-            setRecoveryOpen(true);
+            void client.invalidateQueries({
+              queryKey: ["recording-recoveries"],
+            });
           }}
           onRecording={() => {
             setManagementPage(null);
@@ -1871,26 +1875,6 @@ export default function App() {
           onOpen={async (id) => {
             await openMeeting(id);
             setWorkspace("minutes");
-          }}
-        />
-      )}
-      {recoveryOpen && (
-        <RecordingRecoveryCenter
-          defaultEngine={engine === "qwen" ? "qwen" : "whisper"}
-          toast={toast}
-          onClose={() => {
-            setRecoveryOpen(false);
-            void client.invalidateQueries({
-              queryKey: ["recording-recoveries"],
-            });
-            void client.invalidateQueries({ queryKey: ["meetings"] });
-          }}
-          onComplete={async (id, options) => {
-            await completeRecording(id, options);
-            setRecoveryOpen(false);
-            void client.invalidateQueries({
-              queryKey: ["recording-recoveries"],
-            });
           }}
         />
       )}

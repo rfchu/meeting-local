@@ -20,7 +20,6 @@ interface Props {
   onFollowups: () => void;
   onManage: () => void;
   onSearch: () => void;
-  onRecovery: () => void;
   recoveryCount: number;
 }
 
@@ -36,7 +35,6 @@ export default function Sidebar({
   onFollowups,
   onManage,
   onSearch,
-  onRecovery,
   recoveryCount,
 }: Props) {
   const choose = () => document.getElementById("file")?.click();
@@ -116,14 +114,11 @@ export default function Sidebar({
       </div>
       <div className="sidebar-bottom">
         <span className="dot" /> 会议数据保存在本机
-        <button className="text-btn sidebar-recovery" onClick={onRecovery}>
-          录音恢复
-          {recoveryCount > 0 && (
-            <span className="recovery-count">{recoveryCount}</span>
-          )}
-        </button>
-        <button className="text-btn" onClick={onManage}>
+        <button className="text-btn sidebar-management" onClick={onManage}>
           运行管理 ↗
+          {recoveryCount > 0 && (
+            <span className="recovery-count">待恢复 {recoveryCount}</span>
+          )}
         </button>
       </div>
     </aside>

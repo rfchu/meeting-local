@@ -1,5 +1,11 @@
 export type ManagementPage =
-  "overview" | "models" | "defaults" | "environment" | "tasks" | "index";
+  | "overview"
+  | "models"
+  | "defaults"
+  | "environment"
+  | "tasks"
+  | "index"
+  | "recovery";
 export interface RuntimeOverview {
   checked_at: number;
   passive: boolean;

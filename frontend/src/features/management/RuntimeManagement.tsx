@@ -1,3 +1,5 @@
+import type { ComponentProps } from "react";
+import RecordingRecoveryCenter from "../notes/RecordingRecoveryCenter";
 import type { TaskFocus } from "../../types";
 import RuntimeOverviewPage from "./RuntimeOverviewPage";
 import RuntimeEnvironmentPage from "./RuntimeEnvironmentPage";
@@ -20,6 +22,7 @@ import "./management.css";
 
 const pages: [ManagementPage, string, string][] = [
   ["overview", "运行总览", "能力与当前活动"],
+  ["recovery", "录音恢复", "检查中断会话和已保存内容"],
   ["models", "模型与服务", "语音模型与 LLM 配置"],
   ["defaults", "功能默认方案", "各功能的默认与上次模型"],
   ["tasks", "任务与诊断", "进度、等待与失败处理"],
@@ -36,7 +39,9 @@ export default function RuntimeManagement({
   toast,
   onOpenMeeting,
   onRecording,
-  onRecovery,
+  recoveryCount,
+  recoveryEngine,
+  onRecoveryComplete,
   onSearch,
 }: {
   page: ManagementPage;
@@ -47,11 +52,18 @@ export default function RuntimeManagement({
   toast: (text: string) => void;
   onOpenMeeting: (id: string) => void;
   onRecording: () => void;
-  onRecovery: () => void;
+  recoveryCount: number;
+  recoveryEngine: ComponentProps<
+    typeof RecordingRecoveryCenter
+  >["defaultEngine"];
+  onRecoveryComplete: ComponentProps<
+    typeof RecordingRecoveryCenter
+  >["onComplete"];
   onSearch: () => void;
 }) {
   const [modelDirty, setModelDirty] = useState(false);
   const [indexDirty, setIndexDirty] = useState(false);
+  const [recoveryBusy, setRecoveryBusy] = useState(false);
   const dirty = modelDirty || indexDirty;
   const [indexVisited, setIndexVisited] = useState(page === "index");
   useEffect(() => {
@@ -69,7 +81,9 @@ export default function RuntimeManagement({
     if (dirty) setPendingLeave(() => action);
     else action();
   };
-  const close = () => leave(onClose);
+  const close = () => {
+    if (!recoveryBusy) leave(onClose);
+  };
   return (
     <Modal className="management-shell" ariaLabel="运行管理" onClose={close}>
       <header className="management-header">
@@ -77,7 +91,9 @@ export default function RuntimeManagement({
           <span className="management-eyebrow">听记 · 本机工作空间</span>
           <h1>运行管理</h1>
         </div>
-        <button onClick={close}>返回会议</button>
+        <button disabled={recoveryBusy} onClick={close}>
+          返回会议
+        </button>
       </header>
       <div className="management-layout">
         <nav aria-label="运行管理导航">
@@ -85,9 +101,15 @@ export default function RuntimeManagement({
             <button
               key={key}
               aria-current={page === key ? "page" : undefined}
+              disabled={recoveryBusy}
               onClick={() => onPage(key)}
             >
-              <strong>{label}</strong>
+              <strong>
+                {label}
+                {key === "recovery" && recoveryCount > 0
+                  ? ` · ${recoveryCount}`
+                  : ""}
+              </strong>
               <small>{description}</small>
             </button>
           ))}
@@ -102,42 +124,54 @@ export default function RuntimeManagement({
               <p>
                 {page === "overview"
                   ? "了解当前能力与运行情况，再按需处理。"
-                  : page === "models"
-                    ? "统一管理模型服务；连接测试由你主动发起。"
-                    : page === "defaults"
-                      ? "统一默认、上次选择与本场覆盖的生效规则。"
-                      : page === "tasks"
-                        ? "查看处理进度、等待原因和可恢复的失败任务。"
-                        : page === "index"
-                          ? "集中维护本机语义检索，不影响关键词搜索。"
-                          : "仅检查本机能力，不会请求录音权限或启动采集。"}
+                  : page === "recovery"
+                    ? "核对中断会话，将已保存的录音和简记整理为会议。"
+                    : page === "models"
+                      ? "统一管理模型服务；连接测试由你主动发起。"
+                      : page === "defaults"
+                        ? "统一默认、上次选择与本场覆盖的生效规则。"
+                        : page === "tasks"
+                          ? "查看处理进度、等待原因和可恢复的失败任务。"
+                          : page === "index"
+                            ? "集中维护本机语义检索，不影响关键词搜索。"
+                            : "仅检查本机能力，不会请求录音权限或启动采集。"}
               </p>
             </div>
-            <button
-              disabled={query.isFetching}
-              onClick={() => {
-                void query.refetch();
-                void client.invalidateQueries({
-                  queryKey: ["runtime-resources"],
-                });
-                void client.invalidateQueries({
-                  queryKey: ["runtime-recordings"],
-                });
-                void client.invalidateQueries({
-                  queryKey: ["model-preferences"],
-                });
-              }}
-            >
-              {query.isFetching ? "检查中…" : "刷新状态"}
-            </button>
+            {page !== "recovery" && (
+              <button
+                disabled={query.isFetching}
+                onClick={() => {
+                  void query.refetch();
+                  void client.invalidateQueries({
+                    queryKey: ["runtime-resources"],
+                  });
+                  void client.invalidateQueries({
+                    queryKey: ["runtime-recordings"],
+                  });
+                  void client.invalidateQueries({
+                    queryKey: ["model-preferences"],
+                  });
+                }}
+              >
+                {query.isFetching ? "检查中…" : "刷新状态"}
+              </button>
+            )}
           </div>
-          {query.error && (
+          {page === "recovery" && (
+            <RecordingRecoveryCenter
+              defaultEngine={recoveryEngine}
+              toast={toast}
+              onBusyChange={setRecoveryBusy}
+              onComplete={onRecoveryComplete}
+            />
+          )}
+          {page !== "recovery" && query.error && (
             <p className="management-error" role="alert">
               状态检查暂不可用：{query.error.message}{" "}
               <button onClick={() => void query.refetch()}>重试检查</button>
             </p>
           )}
-          {data && (
+          {page !== "recovery" && data && (
             <p className="management-check-time">
               本机检查于{" "}
               {new Date(data.checked_at * 1000).toLocaleTimeString("zh-CN", {
@@ -146,13 +180,13 @@ export default function RuntimeManagement({
               · 未测试外部 LLM 连接
             </p>
           )}
-          {!data && query.isPending && (
+          {page !== "recovery" && !data && query.isPending && (
             <p role="status">正在读取本机运行信息…</p>
           )}
           {page === "overview" && (
             <RuntimeRecordingsPanel
               onRecording={() => leave(onRecording)}
-              onRecovery={() => leave(onRecovery)}
+              onRecovery={() => onPage("recovery")}
             />
           )}
           {page === "overview" && data && (
