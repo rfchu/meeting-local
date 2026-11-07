@@ -52,6 +52,11 @@ export default function RecordingCompletionPanel({
       >
         {recordOnly ? "打开已保存的会议" : "进入会后整理"}
       </button>
+      {handoffError && !recordOnly && (
+        <button disabled={completing} onClick={() => void onOpen()}>
+          先打开已保存的会议
+        </button>
+      )}
       {recordOnly ? (
         <p>本次未启用实时识别。原音与简记已保存，配置模型后可继续转写。</p>
       ) : (

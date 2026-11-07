@@ -565,8 +565,9 @@ export default function App() {
       toast("正在将录音保存到本机…");
       const value = await api.upload(file);
       await client.invalidateQueries({ queryKey: ["meetings"] });
-      await openMeeting(value.id);
-      toast("录音已导入，可以开始转写");
+      if (await openMeeting(value.id)) {
+        toast("录音已导入，可以开始转写");
+      }
     } catch (error) {
       toast((error as Error).message);
     } finally {
@@ -652,9 +653,7 @@ export default function App() {
         throw new Error("本机会议已保存，打开暂未成功，请重试进入会后整理");
       setRecordingOpen(false);
       setWorkspace(
-        options.mode === "none" || meetingRef.current?.id !== created.id
-          ? "notes"
-          : handoffWorkspace(meetingRef.current),
+        options.mode === "none" ? "notes" : handoffWorkspace(opened),
       );
       toast(
         reusedHandoff
