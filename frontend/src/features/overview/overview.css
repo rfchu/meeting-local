@@ -404,3 +404,38 @@
 .recording-workbench.focus-mode .recording-health-panel strong {
   display: block;
 }
+
+/* Give the selected work surface the full width and keep the other panes mounted. */
+.recording-workbench .workbench-history-wrapper .recording-workspace {
+  grid-template-columns: minmax(0, 1fr);
+  padding-inline: clamp(12px, 2vw, 24px);
+}
+.recording-workbench
+  .recording-workspace:not([data-mobile-pane="notes"])
+  .live-notes,
+.recording-workbench
+  .recording-workspace[data-mobile-pane="notes"]
+  .live-draft {
+  display: none;
+}
+.recording-workbench .workbench-history-wrapper .recording-view-tabs {
+  align-items: center;
+  flex-wrap: wrap;
+  padding: 0 clamp(12px, 2vw, 24px) 6px;
+}
+.recording-view-tabs button {
+  padding: 5px 10px;
+}
+.recording-view-tabs .recording-quick-mark {
+  margin-inline-start: auto;
+}
+.recording-workbench.focus-mode .recording-session-strip {
+  padding-block: 2px;
+}
+.recording-workbench.focus-mode .recording-live-status .waveform-track svg {
+  height: 18px;
+}
+.recording-workbench.focus-mode > .recording-health-panel {
+  padding-block: 5px;
+  gap: 6px 12px;
+}

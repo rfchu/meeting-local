@@ -573,14 +573,13 @@ export default function RecordingView({
                   AI 概览
                 </button>
                 <button
-                  className="mobile-only"
                   aria-pressed={mobilePane === "notes"}
                   onClick={() => setMobilePane("notes")}
                 >
                   我的简记{notes.length ? ` · ${notes.length}` : ""}
                 </button>
                 <button
-                  className="mobile-only"
+                  className="text-btn recording-quick-mark"
                   disabled={!recording}
                   onClick={() => markNow()}
                 >
