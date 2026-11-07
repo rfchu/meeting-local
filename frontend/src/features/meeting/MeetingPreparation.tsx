@@ -70,6 +70,15 @@ export default function MeetingPreparation({
                 {t.content} · {t.owner || "负责人待确认"} ·{" "}
                 {t.due_date || "期限待确认"}
                 {t.stale ? " · 来源变化，需复核" : ""}
+                {t.meeting_id && (
+                  <button
+                    className="text-btn"
+                    onClick={() => onOpen(t.meeting_id!)}
+                  >
+                    来源会议：
+                    {t.source_meeting_title || meeting.flow!.previous!.title}
+                  </button>
+                )}
                 <button
                   disabled={
                     busy ||

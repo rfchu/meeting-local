@@ -122,3 +122,45 @@ def test_irrecoverably_outdated_minutes_disable_retry_and_offer_new_generation(s
     assert not result['can_retry'] and '重新生成' in result['retry_blocked']
     assert c.post('/api/jobs/'+jid+'/retry').status_code==409
     assert not s.all("SELECT * FROM job_runtime_events WHERE job_id=? AND action='retry'",(jid,))
+
+
+def test_confirmed_action_follows_series_with_one_identity_and_original_source(setup):
+    from app.meeting_flow import publish_preparation
+
+    client, store, origin = setup
+    minutes = MeetingMinutes(title='系列纪要', action_items=[
+        MinutesItem(content='交付原型', source_segment_ids=['s']),
+        MinutesItem(content='补充材料', source_segment_ids=['s']),
+    ])
+    with store.connect() as db:
+        artifact = minutes_versions.publish_draft(db, origin, 1, minutes, {'edited': True})
+    path = f'/api/meetings/{origin}/minutes/{artifact}/actions'
+    def track(index, content):
+        result = client.post(f'{path}/{index}/track', json={'content':content,'confirmed':True})
+        assert result.status_code == 201, result.text
+        return result.json()
+
+    pending = track(0, '交付原型')['id']
+    assert track(0, '交付原型') == {'id':pending,'reused':True}
+    done = track(1, '补充材料')['id']
+    assert client.put(f'/api/meetings/{origin}/note-todos/{done}', json={'status':'done'}).status_code == 200
+
+    def next_meeting(previous):
+        mid = uid()
+        with store.connect() as db:
+            db.execute('INSERT INTO meetings(id,title,filename) VALUES(?,?,?)',(mid,'系列下一场','test.wav'))
+            publish_preparation(db,mid,{'previous_meeting_id':previous})
+        value = client.get(f'/api/meetings/{mid}').json()
+        candidates = value['flow']['previous']['todos']
+        assert [task['id'] for task in candidates] == [pending]
+        assert candidates[0]['meeting_id'] == origin
+        assert candidates[0]['source_artifact_id'] == artifact
+        return mid
+
+    second = next_meeting(origin)
+    for _ in range(2):
+        assert client.post(f'/api/meetings/{second}/tasks/{pending}/carry').status_code == 201
+    third = next_meeting(second)
+    assert client.post(f'/api/meetings/{third}/tasks/{pending}/carry').status_code == 201
+    assert client.put(f'/api/meetings/{third}/note-todos/{pending}', json={'status':'done'}).status_code == 200
+    assert {row['id']:row['status'] for row in client.get('/api/followups').json()} == {pending:'done',done:'done'}

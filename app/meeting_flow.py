@@ -154,7 +154,6 @@ def flow(store,mid):
             prev=db.execute('SELECT id,title FROM meetings WHERE id=?',(value['previous_meeting_id'],)).fetchone()
             if prev:
                 previous=dict(prev);previous['todos']=[t for t in tasks(db,prev['id']) if t['status']=='pending' and t['note_scope']=='meeting']
-                for todo in previous['todos']:todo['stale']=todo_stale(db,todo)
         return {'brief':value,'counts':counts,'attention':entries,'previous':previous,'has_current_minutes':valid_artifact}
 
 
