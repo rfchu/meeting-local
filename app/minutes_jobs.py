@@ -3,6 +3,7 @@ from .languages import meeting_languages
 import fcntl,hashlib,json
 from types import SimpleNamespace
 from typing import Literal
+from pydantic import Field
 from .db import uid,encode
 from .analysis import OpenAICompatibleProvider,AIMinutesResult,MeetingAnalysis,analysis_chunk_chars,TEMPLATE_VERSION
 from .auto_minutes import ProviderSelection
@@ -12,10 +13,10 @@ from .model_preferences import resolve_profile
 from .job_checkpoints import JobCheckpoints,digest
 from . import minutes_versions,meeting_flow
 from .configuration_queries import ConfigurationQueries
-from .chinese_record import read_meeting_record
+from .chinese_record import read_meeting_record,record_identity,record_matches
 
 class MinutesTaskInput(ComposeInput):
-    chinese_record_profile_id:str|None=None  # Empty string selects original-only coverage.
+    chinese_record_profile_id:str|None=Field(default=None,max_length=100)  # Empty string selects original-only coverage.
     operation:Literal['compose','polish']='compose'
     mode:Literal['quick','full']='quick'
     confirm_cloud:bool=False
@@ -34,7 +35,7 @@ class MinutesJobs:
     def chinese_record(self,mid,profile_id,segments):
         services=SimpleNamespace(store=self.store,configurations=ConfigurationQueries(self.store))
         record=read_meeting_record(services,mid,profile_id,0,len(segments))
-        return record,{'profile_id':profile_id,'counts':record['counts'],'digest':digest(record)}
+        return record,record_identity(record,profile_id)
     def submit(self,mid,body):
         store=self.store;row=self.meetings.meeting(mid)
         if not row['revision'] or not json.loads(row['segments']):raise ValueError('文字稿为空，请先完成转写')
@@ -82,6 +83,7 @@ class MinutesJobs:
                 db.execute('BEGIN IMMEDIATE')
                 current=db.execute('SELECT revision,title FROM meetings WHERE id=?',(mid,)).fetchone()
                 if not current or current['revision']!=row['revision'] or current['title']!=row['title'] or meeting_flow.ai_context(db,mid)[1]!=context_hash:raise ValueError('资料已变化，请刷新后重试')
+                if 'chinese_record' in config and not record_matches(db,mid,config['chinese_record']):raise ValueError('中文会议记录已变化，请刷新后再试')
                 pending=db.execute("SELECT id,config FROM jobs WHERE meeting_id=? AND state IN ('queued','running') LIMIT 1",(mid,)).fetchone()
                 if pending:
                     if json.loads(pending['config']).get('request_key')==config['request_key']:return {'job_id':pending['id'],'reused':True,'revision':row['revision']}
@@ -165,6 +167,7 @@ class MinutesJobs:
             db.execute('BEGIN IMMEDIATE');worker.check(jid)
             current=db.execute('SELECT revision,title FROM meetings WHERE id=?',(mid,)).fetchone()
             if not current or current['revision']!=config['revision'] or current['title']!=config['title'] or meeting_flow.ai_context(db,mid)[1]!=context_hash:raise ValueError('生成期间资料已变化，草稿未发布')
+            if identity is not None and not record_matches(db,mid,identity):raise ValueError('生成期间中文会议记录已变化，旧草稿保留，请重新生成')
             if config['operation']=='polish':
                 selected=minutes_versions.selected(db,mid,row['revision'])
                 if not selected or selected['id']!=source['id']:raise ValueError('润色期间采用稿已变化')

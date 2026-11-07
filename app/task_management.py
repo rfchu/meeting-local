@@ -34,6 +34,10 @@ def retry_blocker(store,job,worker):
     if job.get('kind')=='minutes' and 'revision' in config:
         source=store.one('SELECT revision,title FROM meetings WHERE id=?',(job['meeting_id'],))
         if not source or source['revision']!=config['revision']:return '原文版本已变化，请回到会议重新生成纪要'
+        if (identity:=config.get('chinese_record')) is not None:
+            from .chinese_record import record_matches
+            with store.connect() as db:
+                if not record_matches(db,job['meeting_id'],identity):return '中文记录或译文已变化，请回到会议重新生成纪要'
         if config.get('operation'):
             if config.get('title',source['title'])!=source['title']:return '会议主题已变化，请回到会议重新生成纪要'
             if config.get('context_hash'):

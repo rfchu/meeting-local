@@ -290,3 +290,44 @@ def test_chinese_record_minutes_preserve_original_sources(setup,template,section
     assert calls[0][1]==[{**original,'translation_zh':'周五交付'},missing]
     assert json.loads(artifact['provenance'])['chinese_record']['counts']=={'original':0,'translated':1,'pending':1,'unknown':0}
     assert json.loads(artifact['provenance'])['citation_translations']=={'s1':'周五交付'}
+
+
+@pytest.mark.parametrize('when',['queued','running'])
+def test_translation_change_keeps_adopted_manual_version_and_requires_new_job(setup,monkeypatch,when):
+    from app.chinese_record import provider_for,translation_path,write_translation
+    from app.configuration_queries import ConfigurationQueries
+    from app.analysis import OpenAICompatibleProvider
+    from app.main import LMStudioProvider
+    monkeypatch.setattr(OpenAICompatibleProvider,'generate_ai_minutes',LMStudioProvider.generate_ai_minutes)
+    c,s,m,calls,hooks=setup;pid=uid()
+    s.execute("INSERT INTO llm_configs(id,name,provider_type,base_url,model) VALUES(?,?,'local',?,?)",
+              (pid,'translator','http://localhost:1234/v1','translator'))
+    segment={'id':'s1','start':0,'end':1,'speaker':'甲','text':'Delivery on Friday'}
+    s.save_revision(m,[segment],encode({'language':'en'}))
+    first=execute(setup,enqueue(setup,chinese_record_profile_id=pid))
+    document=json.loads(first['payload']);document['purpose']='人工核对的目标'
+    url=f'/api/meetings/{m}'
+    saved=c.put(url+'/minutes',json={'document':document,'source_minutes_id':first['id'],'allow_branch':True})
+    assert saved.status_code==201,saved.text
+    old=saved.json()['id']
+    services=SimpleNamespace(store=s,configurations=ConfigurationQueries(s))
+    translation=translation_path(services,m,segment,'en',provider_for(services,pid))
+    jid=enqueue(setup,chinese_record_profile_id=pid)
+    change=lambda:write_translation(translation,'周五交付')
+    if when=='queued':change()
+    else:hooks['generate']=change
+    with pytest.raises(ValueError,match='中文会议记录已变化'):
+        execute(setup,jid)
+    hooks.clear()
+    assert len(calls)==(1 if when=='queued' else 2)
+    assert len(s.all("SELECT id FROM artifacts WHERE kind='meeting_minutes'"))==2
+    s.execute("UPDATE jobs SET state='failed' WHERE id=?",(jid,))
+    assert c.post('/api/jobs/'+jid+'/retry').status_code==409
+    detail=c.get(url).json();versions={row['id']:row for row in detail['artifacts']}
+    assert detail['active_minutes_id']==old and versions[old]['stale']
+    assert versions[old]['payload']['purpose']=='人工核对的目标'
+    fresh=execute(setup,enqueue(setup,chinese_record_profile_id=pid))
+    detail=c.get(url).json();versions={row['id']:row for row in detail['artifacts']}
+    assert fresh['id']!=old and not versions[fresh['id']]['stale'] and detail['active_minutes_id']==old
+    assert versions[fresh['id']]['provenance']['citation_translations']=={'s1':'周五交付'}
+    assert versions[old]['payload']['purpose']=='人工核对的目标'

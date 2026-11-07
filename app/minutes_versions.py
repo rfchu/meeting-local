@@ -20,7 +20,8 @@ def publish_draft(db,mid,revision,document,provenance):
         from .minutes import MeetingMinutes
         from .interview import preserve_review
         old=MeetingMinutes.model_validate(json.loads(previous['payload']))
-        same=previous['revision']==revision and json.loads(previous['provenance']).get('flow_context_hash')==provenance.get('flow_context_hash')
+        previous_source=json.loads(previous['provenance'])
+        same=previous['revision']==revision and all(previous_source.get(key)==provenance.get(key) for key in ('flow_context_hash','chinese_record'))
         document=preserve_review(document,old,same)
     if previous:adopt(db,mid,previous['id'])
     aid=uid();db.execute("INSERT INTO artifacts(id,meeting_id,revision,kind,payload,provenance) VALUES(?,?,?,'meeting_minutes',?,?)",(aid,mid,revision,encode(document.model_dump()),encode({**provenance,'draft':bool(previous)})))

@@ -272,7 +272,9 @@ export default function InterviewMinutesBody({
                     return (
                       <blockquote key={i}>
                         <p>{e.quote}</p>
-                        {translations?.[e.segment_id] && <p>生成时的中文译文：{translations[e.segment_id]}</p>}
+                        {translations?.[e.segment_id] && (
+                          <p>生成时的中文译文：{translations[e.segment_id]}</p>
+                        )}
                         {!segment && <small>原文依据待核对</small>}
                         <button
                           disabled={!segment}

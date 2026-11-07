@@ -5,7 +5,7 @@ from . import meeting_flow,minutes_versions,minutes_delivery
 from .meeting_review import MeetingReview
 from .live_overview import approved_context
 
-REASON_LABELS={'transcript_changed':'原文版本变化','meeting_context_changed':'会议资料或已确认关注点变化',
+REASON_LABELS={'chinese_record_changed':'中文记录或译文已变化','transcript_changed':'原文版本变化','meeting_context_changed':'会议资料或已确认关注点变化',
     'dependency_limit':'来源链过长，需核对','dependency_stale':'来源纪要已过期','dependency_missing':'来源纪要不存在','dependency_cycle':'来源关系循环',
     'note_changed':'已采用简记变化','attention_changed':'简记用途确认变化','invalid_provenance':'来源记录无法核验','meeting_missing':'会议不存在'}
 

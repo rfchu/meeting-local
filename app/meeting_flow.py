@@ -92,6 +92,9 @@ def artifact_reasons(db,mid,provenance,revision=None,_seen=None):
         current=row['revision'];reasons=[];seen=set(_seen or ())
         if revision is not None and revision!=current:reasons.append('transcript_changed')
         if not isinstance(provenance,dict):return ['invalid_provenance']
+        if 'transcript_changed' not in reasons and (identity:=provenance.get('chinese_record')) is not None:
+            from .chinese_record import record_matches
+            if not record_matches(db,mid,identity):reasons.append('chinese_record_changed')
         for aid in provenance.get('source_minutes_dependencies',[]):
             if aid in seen:
                 reasons.append('dependency_cycle');continue

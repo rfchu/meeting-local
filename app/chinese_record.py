@@ -4,6 +4,8 @@ import json
 import os
 import re
 from tempfile import NamedTemporaryFile
+from pathlib import Path
+from .job_checkpoints import digest
 
 from pydantic import BaseModel, Field
 
@@ -54,10 +56,14 @@ def provider_for(services, profile_id):
 
 
 def translation_path(services, owner, source, language, provider):
+    return translation_file(services.store.directory(owner), source, language, provider)
+
+
+def translation_file(directory, source, language, provider):
     identity = [1, 'zh', language, float(source['start']), float(source['end']), source['text'],
                 provider.profile['id'], provider.base_url, provider.resolve_model()]
     key = hashlib.sha256(encode(identity).encode()).hexdigest()
-    return services.store.directory(owner) / 'chinese-record' / f'{key}.json'
+    return directory / 'chinese-record' / f'{key}.json'
 
 
 def saved_translation(path):
@@ -131,11 +137,16 @@ class MeetingTranslationInput(TranslationInput):
 
 
 def meeting_record(services, mid):
-    row = services.store.one(
+    with services.store.connect() as db:
+        return meeting_record_in(db, mid)
+
+
+def meeting_record_in(db, mid):
+    row = db.execute(
         """SELECT m.revision,m.segments,r.source FROM meetings m
            LEFT JOIN revisions r ON r.meeting_id=m.id AND r.revision=m.revision WHERE m.id=?""",
         (mid,),
-    )
+    ).fetchone()
     if not row:
         raise FileNotFoundError('会议不存在')
     try:
@@ -159,12 +170,16 @@ def meeting_source(services, mid, segment_id, revision):
 def read_meeting_record(services, mid, profile_id, offset, limit):
     revision, segments, hint = meeting_record(services, mid)
     provider = provider_for(services, profile_id) if profile_id else None
+    return record_view(services.store.directory(mid), revision, segments, hint, provider, offset, limit)
+
+
+def record_view(directory, revision, segments, hint, provider, offset, limit):
     counts = {'original': 0, 'translated': 0, 'pending': 0, 'unknown': 0}
     items = []
     for position, source in enumerate(segments):
         text = source['text']
         language = segment_language(text, hint)
-        translation = (saved_translation(translation_path(services, mid, source, language, provider))
+        translation = (saved_translation(translation_file(directory, source, language, provider))
                        if language == 'en' and provider else None)
         status = 'original' if language == 'zh' else 'unknown' if language == 'unknown' else 'translated' if translation else 'pending'
         counts[status] += 1
@@ -172,3 +187,25 @@ def read_meeting_record(services, mid, profile_id, offset, limit):
             items.append({'id': source['id'], 'status': status, 'original': text,
                           'text': translation or text, 'start': source['start'], 'end': source['end']})
     return {'revision': revision, 'counts': counts, 'total': len(segments), 'items': items}
+
+
+def record_identity(record, profile_id):
+    return {'profile_id':profile_id, 'counts':record['counts'], 'digest':digest(record)}
+
+
+def record_matches(db, mid, identity):
+    """Use the caller's transaction, including the translation writer's lock at publication."""
+    try:
+        revision, segments, hint = meeting_record_in(db, mid)
+        profile_id = identity['profile_id']
+        provider = None
+        if profile_id:
+            profile = db.execute("SELECT * FROM llm_configs WHERE id=? AND provider_type='local'", (profile_id,)).fetchone()
+            if not profile:return False
+            provider = OpenAICompatibleProvider(profile)
+        database = next(row[2] for row in db.execute('PRAGMA database_list') if row[1]=='main')
+        if not database:return False
+        view = record_view(Path(database).parent / mid, revision, segments, hint, provider, 0, len(segments))
+        return record_identity(view, profile_id)==identity
+    except (ValueError,RuntimeError,OSError,KeyError,TypeError):
+        return False

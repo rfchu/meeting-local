@@ -78,7 +78,7 @@ def register_routes(app,services:ApplicationServices):
                 latest=db.execute("SELECT id FROM artifacts WHERE meeting_id=? AND revision=? AND kind='meeting_minutes' ORDER BY created DESC,rowid DESC LIMIT 1",(mid,row['revision'])).fetchone()
                 if not base or (not body.allow_branch and (not latest or latest['id']!=body.source_minutes_id)):raise HTTPException(409,'纪要版本已变化，请刷新后再保存')
                 original=json.loads(base['provenance'])
-                for key in ('flow_context_hash','reviewed_attention','reviewed_live_overview','composition','source_minutes_dependencies'):
+                for key in ('flow_context_hash','reviewed_attention','reviewed_live_overview','composition','source_minutes_dependencies','chinese_record','citation_translations'):
                     if key in original:provenance[key]=original[key]
                 adopted=[n for n in original.get('adopted_notes',[]) if any(item.content==n['content'] and item.source_segment_ids==n['source_segment_ids'] for item in getattr(body.document,n['section']))]
                 if adopted:provenance['adopted_notes']=adopted
