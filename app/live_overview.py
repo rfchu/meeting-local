@@ -8,7 +8,7 @@ from pydantic import BaseModel,Field,ValidationError
 from .analysis import OpenAICompatibleProvider
 from .db import encode,uid
 from .live_results import plan_ranges,RATE
-from .terminology import confirmed_context
+from .terminology import confirmed_context, rows as terminology_rows
 from .overview_quality import same_item,select_items
 from .overview_prompt import INSTRUCTION,PROMPT_VERSION
 
@@ -64,9 +64,18 @@ class OverviewItem(BaseModel):
     content:str=Field(min_length=1,max_length=350)
     evidence:list[Evidence]=Field(min_length=1,max_length=4)
     note_ids:list[str]=Field(default_factory=list,max_length=4)
+    topic_ref:str|None=Field(default=None,max_length=100)
+
+class TermCandidate(BaseModel):
+    original:str=Field(min_length=2,max_length=80)
+    name:str=Field(min_length=2,max_length=80)
+    category:Literal['person','organization','product','technical','other']
+    evidence_id:str=Field(max_length=40)
+
 
 class OverviewOutput(BaseModel):
     filtered_count:int=Field(default=0,ge=0)
+    terms:list[dict]=Field(default_factory=list,max_length=8)
     items:list[OverviewItem]=Field(max_length=MAX_ITEMS)
 
 class ModelItem(BaseModel):
@@ -75,9 +84,11 @@ class ModelItem(BaseModel):
     content:str=Field(min_length=1,max_length=350)
     evidence_ids:list[str]=Field(min_length=1,max_length=4)
     note_ids:list[str]=Field(default_factory=list,max_length=4)
+    topic_ref:str|None=Field(max_length=100)
 
 class ModelOutput(BaseModel):
     items:list[ModelItem]=Field(max_length=MAX_ITEMS)
+    terms:list[TermCandidate]=Field(default_factory=list,max_length=8)
 
 
 def numbered_input(data):
@@ -90,10 +101,11 @@ def numbered_input(data):
             eid='e'+str(len(quotes)+1);lookup[key]=eid
             quotes[eid]={'segment_id':sid,'quote':quote}
         return lookup[key]
+    topic_aliases={topic['id']:f't{n+1}' for n,topic in enumerate(data.get('agenda_topics',[]))}
     current=[]
     for item in data['current_items']:
         ids=[add(e['segment_id'],e['quote']) for e in item['evidence'] if e['segment_id'] in sources and e['quote'] in sources[e['segment_id']]['text']]
-        current.append({k:item[k] for k in ('id','kind','content','note_ids')}|{'evidence_ids':ids})
+        current.append({k:item[k] for k in ('id','kind','content','note_ids')}|{'evidence_ids':ids,'topic_ref':topic_aliases.get(item.get('topic_ref') or item['id'])})
     item_aliases={item['id']:'i'+str(n+1) for n,item in enumerate(current)}
     note_aliases={note['id']:'n'+str(n+1) for n,note in enumerate(data['focus_notes'])}
     for item in current:
@@ -108,6 +120,7 @@ def numbered_input(data):
                 if len(quote)>=2:add(sid,quote)
     model={k:v for k,v in data.items() if k not in ('context','new_segments','current_items','dismissed_items')}
     model['focus_notes']=[dict(note,id=note_aliases[note['id']]) for note in data['focus_notes']]
+    model['agenda_topics']=[{'ref':topic_aliases[t['id']],'title':t['content']} for t in data.get('agenda_topics',[])]
     model['current_items']=current
     model['dismissed_items']=[{k:i[k] for k in ('kind','content')} for i in data['dismissed_items']]
     model['evidence']=[{'id':eid,'text':e['quote'],'start':sources[e['segment_id']]['start'],
@@ -115,7 +128,7 @@ def numbered_input(data):
     return model,quotes
 
 
-def expand_numbered(result,quotes,item_ids=None,note_ids=None):
+def expand_numbered(result,quotes,item_ids=None,note_ids=None,topic_ids=None):
     # Keep the schema's four-reference limit, but tolerate extra valid IDs
     # from compatible providers that do not enforce the requested schema.
     items=[];filtered=0
@@ -129,7 +142,7 @@ def expand_numbered(result,quotes,item_ids=None,note_ids=None):
         if not isinstance(ids,list) or not ids or any(not isinstance(eid,str) or eid not in quotes for eid in ids):
             filtered+=1;continue
         try:
-            item=ModelItem.model_validate({**raw,'evidence_ids':list(dict.fromkeys(ids))[:4]})
+            item=ModelItem.model_validate({'topic_ref':None,**raw,'evidence_ids':list(dict.fromkeys(ids))[:4]})
         except ValidationError:
             filtered+=1;continue
         value=item.model_dump(exclude={'evidence_ids'})
@@ -138,10 +151,21 @@ def expand_numbered(result,quotes,item_ids=None,note_ids=None):
             value['id']=item_ids.get(value['id'])
         if note_ids is not None:
             value['note_ids']=[note_ids[nid] for nid in value['note_ids'] if nid in note_ids]
+        if topic_ids is not None:
+            ref=item.topic_ref or ''
+            value['topic_ref']=topic_ids.get(ref) or (ref if re.fullmatch(r'new_[1-9]',ref) else None)
         value['evidence']=[quotes[eid] for eid in dict.fromkeys(item.evidence_ids)]
         items.append(value)
     if raw_items and not items:raise ValueError('本轮候选均缺少有效证据编号，上一版已保留')
-    return OverviewOutput.model_validate({'items':items,'filtered_count':filtered})
+    terms=[]
+    candidates=result.get('terms',[])
+    for raw in candidates[:8] if isinstance(candidates,list) else []:
+        try:term=TermCandidate.model_validate(raw)
+        except ValidationError:continue
+        evidence=quotes.get(term.evidence_id)
+        if evidence and term.original in evidence['quote']:
+            terms.append(term.model_dump(exclude={'evidence_id'})|{'evidence':evidence})
+    return OverviewOutput.model_validate({'items':items,'filtered_count':filtered,'terms':terms})
 
 
 class EnableInput(BaseModel):
@@ -160,7 +184,62 @@ class Deferred(Exception):pass
 
 
 def item_core(item):
-    return {key:item[key] for key in ('id','kind','content','evidence','note_ids')}|({'note_fingerprints':item['note_fingerprints']} if 'note_fingerprints' in item else {})
+    return {key:item[key] for key in ('id','kind','content','evidence','note_ids')}|({'note_fingerprints':item['note_fingerprints']} if 'note_fingerprints' in item else {})|({'topic_ref':item['topic_ref']} if item.get('topic_ref') else {})
+
+
+def update_agenda(previous, incoming):
+    """Keep the latest version of each grounded item across overview rounds."""
+    values={item['id']:item for item in previous}
+    for item in incoming:
+        prior=values.get(item['id'],{})
+        if item['kind']=='topic':
+            item={**item,'topic_start':prior.get('topic_start',min(e['start'] for e in item['evidence']))}
+        if item['kind']=='decision' and prior.get('kind')=='decision':
+            previous=prior.get('previous_decision')
+            if prior['content']!=item['content'] and {
+                e['segment_id'] for e in item['evidence']
+            } - {e['segment_id'] for e in prior['evidence']}:
+                previous={'content':prior['content'],'evidence':prior['evidence']}
+            if previous:item={**item,'previous_decision':previous}
+        values[item['id']]=item
+    topics=[item for item in values.values() if item['kind']=='topic']
+    topics=sorted(topics,key=lambda item:max(e['start'] for e in item['evidence']))[-TOPIC_ARCHIVE_LIMIT:]
+    groups={item['id']:[] for item in topics}
+    unassigned=[]
+    for item in values.values():
+        if item['kind']=='topic':continue
+        if item.get('topic_ref') in groups:
+            groups[item['topic_ref']].append(item)
+        elif not item.get('topic_ref'):
+            unassigned.append(item)
+    def latest(items):
+        return sorted(items,key=lambda item:max(e['start'] for e in item['evidence']))[-MAX_ITEMS:]
+    return topics+[item for group in groups.values() for item in latest(group)]+latest(unassigned)
+
+
+def matching_agenda_topic(plan):
+    """Use a clear lexical match as a backstop for a single-topic update."""
+    def anchors(text):
+        words=re.findall(r'[\u3400-\u9fff]+|[a-zA-Z][a-zA-Z0-9-]{3,}',text.casefold())
+        return {part for word in words for part in (
+            [word] if word.isascii() else [word[n:n+3] for n in range(len(word)-2)]
+        )}
+
+    incoming=anchors(' '.join(part['text'] for part in plan['input']['new_segments']))
+    sources={part['id']:part['text'] for part in plan['parts']}
+    scores={topic['id']:set() for topic in plan.get('agenda_topics',[])}
+    for item in plan.get('agenda',[]):
+        ref=item['id'] if item['kind']=='topic' else item.get('topic_ref')
+        if ref in scores:
+            scores[ref].update(incoming & anchors(' '.join(
+                sources.get(entry['segment_id'],'') for entry in item['evidence']
+            )))
+    if len(scores)<2:return None
+    ranked=sorted(scores,key=lambda key:len(scores[key]),reverse=True)
+    best,other=ranked[:2]
+    if len(scores[best])>=6 and len(scores[best])>=2*max(1,len(scores[other])):
+        return best
+    return None
 
 
 def evidence_valid(item,sources):
@@ -286,13 +365,19 @@ class LiveOverview:
         if version and not snapshot:raise ValueError('此概览快照已清理')
         config=json.loads(run['config']) if run else None
         parts,gaps=self.source(rid,config['engine']) if config else ([],[]);sources={s['id']:s for s in parts}
-        items=json.loads(snapshot['payload'])['items'] if version else self.effective(rid,snapshot)
+        payload=json.loads(snapshot['payload']) if snapshot else {}
+        items=payload['items'] if version else self.effective(rid,snapshot)
+        agenda=payload.get('agenda',[])
+        item_ids={item['id'] for item in items}
+        candidates=items+[item for item in agenda if item['id'] not in item_ids]
         decisions=self.reviews(rid)
         stored=self.store.all('SELECT * FROM meeting_notes WHERE meeting_id=?',(rid,)) if self.store.one('SELECT id FROM meetings WHERE id=?',(rid,)) else self.session(rid).get('notes',[])
         note_hashes={n['id']:digest(n) for n in focus_notes(stored)}
         values=[]
-        for item in items:
+        for item in candidates:
             row=decisions.get(item['id'])
+            if row and not version and row['state']!='pending':
+                item={**item,**row['payload']}
             stale_notes=any(note_hashes.get(k)!=v for k,v in item.get('note_fingerprints',{}).items())
             evidence=[]
             for entry in item['evidence']:
@@ -308,6 +393,25 @@ class LiveOverview:
                 value['review_trace']={'state':row['state'],'updated':row['updated'],'version':row['version'],
                                        'snapshot_version':row['payload'].get('reviewed_snapshot_version')}
             values.append(value)
+        rendered={item['id']:item for item in values}
+        agenda_view=[]
+        for item in agenda:
+            value={**item,**rendered[item['id']]}
+            previous=item.get('previous_decision')
+            if previous and evidence_valid(previous,sources):
+                value['previous_decision']=previous
+            else:
+                value.pop('previous_decision',None)
+            agenda_view.append(value)
+        terms=[]
+        with self.store.connect() as db:
+            known_names={name.casefold() for term in terminology_rows(db,rid,'confirmed')
+                         for name in [term['name'],*term['aliases']]}
+        for term in payload.get('terms',[]):
+            if term['original'].casefold() in known_names:continue
+            evidence=term['evidence'];source=sources.get(evidence['segment_id'])
+            if source and evidence['quote'] in source['text']:
+                terms.append({**term,'evidence':{**evidence,'start':source['start']}})
         history=self.store.all('SELECT version,cursor,created FROM live_overview_snapshots WHERE recording_id=? ORDER BY version DESC LIMIT 12',(rid,))
         with self.store.connect() as db:
             topics=[dict(row) for row in topic_snapshots(db,rid)]
@@ -324,7 +428,10 @@ class LiveOverview:
             'quality':json.loads(snapshot['payload']).get('quality',{}) if snapshot else {},
             'version':snapshot['version'] if snapshot else 0,'updated':snapshot['created'] if snapshot else None,
             'covered_count':snapshot['cursor'] if snapshot else 0,'confirmed_count':len(parts),'gap_count':len(gaps),
-            'items':values,'history':history,'topics':topics,'latest_version':history[0]['version'] if history else 0,'historical':bool(version),'published':bool(self.store.one('SELECT id FROM meetings WHERE id=?',(rid,)))}
+            'items':[item for item in values if item['id'] in item_ids],
+            'agenda':agenda_view,
+            'agenda_terms':terms,'covered_until':payload.get('covered_until'),
+            'history':history,'topics':topics,'latest_version':history[0]['version'] if history else 0,'historical':bool(version),'published':bool(self.store.one('SELECT id FROM meetings WHERE id=?',(rid,)))}
 
     def refresh(self,rid):
         run=self.store.one('SELECT * FROM live_overview_runs WHERE recording_id=?',(rid,))
@@ -341,7 +448,8 @@ class LiveOverview:
             snapshot=db.execute('SELECT * FROM live_overview_snapshots WHERE recording_id=? ORDER BY version DESC LIMIT 1',(rid,)).fetchone()
             if not snapshot:raise ValueError('尚无概览可核对')
             old=db.execute('SELECT * FROM live_overview_reviews WHERE recording_id=? AND item_id=?',(rid,item_id)).fetchone()
-            items={i['id']:i for i in json.loads(snapshot['payload'])['items']}
+            payload=json.loads(snapshot['payload'])
+            items={i['id']:i for i in payload.get('agenda',[])+payload['items']}
             if old and old['state']!='pending':items[item_id]=json.loads(old['payload'])
             item=items.get(item_id)
             if not item or digest(item_core(item))!=body.fingerprint or (old['version'] if old else 0)!=body.version:raise ValueError('概览条目已变化，请刷新后再核对')
@@ -390,7 +498,10 @@ class LiveOverview:
         for note in meta['focus_notes']:
             context.extend(p for p in parts if p['start']<=note['time']+30 and p['end']>=note['time']-30)
         context=list({p['id']:p for p in context}.values())
-        data={'current_items':current,'dismissed_items':dismissed,**meta,'context':context,'new_segments':[],'missing_range_count':len(gaps),'unrecognized_ranges':[{'start':a,'end':b} for a,b in gaps[-20:]]}
+        snapshot_payload=json.loads(snapshot['payload']) if snapshot else {}
+        agenda=snapshot_payload.get('agenda',[])
+        agenda_topics=[item for item in agenda if item['kind']=='topic' and evidence_valid(item,sources)]
+        data={'agenda_topics':[{'id':t['id'],'content':t['content']} for t in agenda_topics],'current_items':current,'dismissed_items':dismissed,**meta,'context':context,'new_segments':[],'missing_range_count':len(gaps),'unrecognized_ranges':[{'start':a,'end':b} for a,b in gaps[-20:]]}
         if len(encode(data))>budget:raise ValueError('概览上下文超过会中预算，请减少选入简记或缩短已确认条目后继续')
         end=cursor
         for part in parts[cursor:]:
@@ -400,7 +511,7 @@ class LiveOverview:
             if sum(len(s['text']) for s in data['new_segments'])>=8000:break
         if end==cursor and cursor<len(parts):raise ValueError('单段文字超过概览预算，请切换更大上下文模型')
         return {'rid':rid,'run':run,'profile':profile,'config':config,'input':data,'parts':parts,'cursor':end,
-            'meta_hash':meta_hash,'covered_hash':digest(parts[:end]),'existing':existing,'snapshot_version':snapshot['version'] if snapshot else 0}
+            'meta_hash':meta_hash,'covered_hash':digest(parts[:end]),'existing':existing,'agenda':agenda,'agenda_topics':agenda_topics,'previous_terms':snapshot_payload.get('terms',[]),'snapshot_version':snapshot['version'] if snapshot else 0}
 
     def generate(self,plan):
         current=self.store.one('SELECT enabled,epoch FROM live_overview_runs WHERE recording_id=?',(plan['rid'],))
@@ -408,6 +519,7 @@ class LiveOverview:
         provider=OpenAICompatibleProvider(plan['profile'])
         model_input,quotes=numbered_input(plan['input'])
         item_ids={short['id']:original['id'] for short,original in zip(model_input['current_items'],plan['input']['current_items'])}
+        topic_ids={f't{n+1}':topic['id'] for n,topic in enumerate(plan.get('agenda_topics',[]))}
         note_ids={short['id']:original['id'] for short,original in zip(model_input['focus_notes'],plan['input']['focus_notes'])}
         payload={'model':plan['config']['model'],'temperature':0,'max_tokens':3072,'stream':False,
             'messages':[{'role':'system','content':INSTRUCTION},{'role':'user','content':encode(model_input)}],
@@ -431,7 +543,7 @@ class LiveOverview:
                     if process.returncode:
                         log.flush()
                         raise ValueError(worker_failure((Path(work)/'worker.log').read_text(errors='replace'))+'；原文与上一版均已保留')
-                    return expand_numbered(json.loads(output.read_text()),quotes,item_ids,note_ids)
+                    return expand_numbered(json.loads(output.read_text()),quotes,item_ids,note_ids,topic_ids)
                 finally:
                     if process.poll() is None:
                         process.terminate()
@@ -443,24 +555,64 @@ class LiveOverview:
         if not result.items and plan['input']['current_items']:raise ValueError('模型返回空概览，已保留上一版')
         allowed={p['id']:p for p in plan['input']['context']+plan['input']['new_segments']}
         old={i['id']:i for i in plan['existing']};notes={n['id'] for n in plan['input']['focus_notes']}
+        known_topics={item['id'] for item in plan.get('agenda_topics',[])}
+        new_topics={item.topic_ref:uid() for item in result.items
+                    if item.kind=='topic' and item.topic_ref and re.fullmatch(r'new_[1-9]',item.topic_ref)}
+        fresh={part['id'] for part in plan['input']['new_segments']}
+        fresh_topics=[item for item in result.items if item.kind=='topic'
+                      and any(entry.segment_id in fresh for entry in item.evidence)]
+        matched=matching_agenda_topic(plan) if len(fresh_topics)<=1 else None
         values=[];seen=set();early_duplicates=0
-        for item in result.items:
+        matched_topic=next((topic for topic in plan.get('agenda_topics',[]) if topic['id']==matched),None)
+        ordered=sorted(result.items,key=lambda item: not any(entry.segment_id in fresh for entry in item.evidence)) if matched else result.items
+        for item in ordered:
             if not item.content.strip():raise ValueError('概览内容为空')
             value=item.model_dump();key=value['id']
-            if key and (key not in old or key in seen):raise ValueError('概览返回未知或重复的条目ID')
+            ref=item.topic_ref
+            resolved=ref if ref in known_topics else new_topics.get(ref)
+            is_fresh=any(entry.segment_id in fresh for entry in item.evidence)
+            prior=old.get(key)
+            if matched and is_fresh:
+                if item.kind!='topic' and any(
+                    existing['kind']==item.kind and existing.get('topic_ref') not in (None,matched)
+                    and existing['content']==item.content for existing in plan.get('agenda',[])
+                ):
+                    continue
+                resolved=matched
+                if item.kind=='topic':
+                    value['content']=matched_topic['content']
+            if item.kind=='topic' and resolved:
+                key=resolved
+            if key and key not in old and key not in known_topics and key not in new_topics.values():raise ValueError('概览返回未知的条目ID')
             if not evidence_valid(value,allowed):raise ValueError('概览引用不在本轮已确认文字中')
             if not set(item.note_ids)<=notes:raise ValueError('概览返回不存在或未选入的简记关联')
+            prior=old.get(key)
+            if item.kind!='topic' and prior and prior.get('topic_ref'):
+                same_topic=not resolved or resolved==prior['topic_ref']
+                same_source=bool({e['segment_id'] for e in prior['evidence']}
+                                 & {e['segment_id'] for e in value['evidence']})
+                if not same_topic or not same_source:
+                    key=None
             if key is None:
                 match=next((i for i in old.values() if same_item(i,value)),None)
                 key=match['id'] if match else uid()
             if key in seen:
+                if matched and item.kind=='topic':continue
                 if any(same_item(value,prior) for prior in values):early_duplicates+=1;continue
                 raise ValueError('概览重复返回同一条目')
             seen.add(key);value['id']=key
+            value['topic_ref']=None if item.kind=='topic' else resolved or (old.get(key) or {}).get('topic_ref')
+            if not value['topic_ref']:value.pop('topic_ref')
             value['evidence']=[{**e,'start':allowed[e['segment_id']]['start'],'range_id':allowed[e['segment_id']]['range_id'],
                 'segment_index':allowed[e['segment_id']]['segment_index']} for e in value['evidence']]
             value['note_fingerprints']={n['id']:digest(n) for n in plan['input']['focus_notes'] if n['id'] in value['note_ids']}
             values.append(value)
+        if matched_topic and not fresh_topics:
+            evidence=next((entry for value in values if value.get('topic_ref')==matched
+                           for entry in value['evidence'] if entry['segment_id'] in fresh),None)
+            if evidence:
+                values=[value for value in values if value['id']!=matched]
+                values.insert(0,{**matched_topic,'evidence':[evidence]})
         with self.recordings.lock,self.store.connect() as db:
             db.execute('BEGIN IMMEDIATE')
             run=db.execute('SELECT * FROM live_overview_runs WHERE recording_id=?',(plan['rid'],)).fetchone()
@@ -481,11 +633,18 @@ class LiveOverview:
             carried=[i for i in plan['existing'] if i['id'] not in new_ids and i['id'] not in protected and
                 i.get('decision')!='dismissed' and (i['kind'],i['content']) not in new_content and not (topics and i['kind']=='topic')]
             pinned=[i for i in protected.values() if i['decision']=='confirmed']
+            agenda=update_agenda(plan.get('agenda',[]),values+pinned)
             values,quality=select_items(values,carried,pinned,MAX_ITEMS)
+            terms={(t['category'],t['original'].casefold()):t for t in plan.get('previous_terms',[])}
+            for term in result.terms:
+                evidence=term['evidence']
+                if evidence_valid({'evidence':[evidence]},allowed) and term['original'] in evidence['quote']:
+                    terms[(term['category'],term['original'].casefold())]=term
+            terms=list(terms.values())[-32:]
             quality['duplicates_removed']+=early_duplicates
             version=(db.execute('SELECT MAX(version) FROM live_overview_snapshots WHERE recording_id=?',(plan['rid'],)).fetchone()[0] or 0)+1
             db.execute('INSERT INTO live_overview_snapshots(recording_id,version,cursor,covered_hash,meta_hash,payload) VALUES(?,?,?,?,?,?)',
-                (plan['rid'],version,plan['cursor'],plan['covered_hash'],plan['meta_hash'],encode({'items':values,'filtered_count':result.filtered_count,'quality':quality,'prompt_version':PROMPT_VERSION,'provider':{**plan['config']['provider'],'name':plan['config']['name'],'engine':plan['config']['engine']}})))
+                (plan['rid'],version,plan['cursor'],plan['covered_hash'],plan['meta_hash'],encode({'items':values,'agenda':agenda,'terms':terms,'covered_until':max((p['end'] for p in current[:plan['cursor']]),default=0),'filtered_count':result.filtered_count,'quality':quality,'prompt_version':PROMPT_VERSION,'provider':{**plan['config']['provider'],'name':plan['config']['name'],'engine':plan['config']['engine']}})))
             retained=[row['version'] for row in topic_snapshots(db,plan['rid'])]
             if retained:
                 placeholders=','.join('?' for _ in retained)

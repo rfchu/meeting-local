@@ -18,10 +18,12 @@ export default function TermDialog({
   canScan = false,
   onClose,
   onLocate,
+  suggestion,
 }: {
   scope: string;
   canScan?: boolean;
   onClose: () => void;
+  suggestion?: { name: string; original: string; category: string };
   onLocate?: (id: string) => void;
 }) {
   const [showIgnored, setShowIgnored] = useState(false);
@@ -55,13 +57,20 @@ export default function TermDialog({
   };
   useEffect(() => {
     clear();
+    if (!library && suggestion) {
+      setName(suggestion.name);
+      setAliases(
+        suggestion.original === suggestion.name ? "" : suggestion.original,
+      );
+      setCategory(suggestion.category);
+    }
     setError("");
     setData({ terms: [], library: [], job: null });
     void load().catch((e) => setError(e.message));
     return () => {
       generation.current++;
     };
-  }, [load]);
+  }, [load, library, suggestion]);
   useEffect(() => {
     let live = true;
     void api

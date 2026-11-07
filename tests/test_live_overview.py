@@ -424,3 +424,87 @@ def test_historical_snapshot_explains_review_and_only_marks_affected_source(setu
     assert by_kind['action']['review_trace']['snapshot_version']==snapshot['version']
     assert not by_kind['action']['stale'] and not by_kind['action']['evidence'][0]['stale']
     assert by_kind['point']['stale_reasons']==['source'] and by_kind['point']['evidence'][0]['stale']
+
+
+def test_agenda_reuses_topic_on_revisit_and_retains_earlier_outcomes(setup):
+    client, _, service, _, rid, _, first_source, add = setup
+    second_source = add(30, 40, '验收由测试组负责。')
+    third_source = add(40, 45, '回退方案需要先演练。')
+
+    def item(kind, text, source, quote, ref, item_id=None):
+        return {
+            'id': item_id, 'kind': kind, 'content': text, 'topic_ref': ref,
+            'evidence': [{'segment_id': source, 'quote': quote}],
+        }
+
+    service.publish(plan(setup), {'items': [
+        item('topic', '交付', first_source, '陈明负责周五前交付预览稿', 'new_1'),
+        item('decision', '周五交付预览稿', first_source, '陈明负责周五前交付预览稿', 'new_1'),
+        item('topic', '验收', second_source, '验收由测试组负责', 'new_2'),
+        item('action', '测试组负责验收', second_source, '验收由测试组负责', 'new_2'),
+        item('topic', '回退', third_source, '回退方案需要先演练', 'new_3'),
+    ]})
+    initial = service.read(rid)['agenda']
+    first = next(row for row in initial if row['kind'] == 'topic' and row['content'] == '交付')
+    decision = next(row for row in initial if row['kind'] == 'decision')
+    assert decision['topic_ref'] == first['id']
+    followup = add(45, 55, '陈明确认改为下周一交付预览稿。')
+    replacement=item('decision', '下周一交付预览稿', followup, '陈明确认改为下周一交付预览稿', first['id'], decision['id'])
+    replacement['evidence']+=decision['evidence'][:1]
+    service.publish(plan(setup), {'items': [
+        item('topic', '交付', followup, '陈明确认改为下周一交付预览稿', first['id']),
+        replacement,
+    ], 'terms': [
+        {'name': '陈明', 'original': '陈明', 'category': 'person',
+         'evidence': {'segment_id': followup, 'quote': '陈明确认改为下周一交付预览稿'}},
+        {'name': '无依据人名', 'original': '无依据人名', 'category': 'person',
+         'evidence': {'segment_id': followup, 'quote': '陈明确认改为下周一交付预览稿'}},
+    ]})
+    result = client.get(f'/api/recordings/{rid}/overview').json()
+    assert result['covered_until'] == 55
+    assert len([row for row in result['agenda'] if row['kind'] == 'topic']) == 3
+    revisited = next(row for row in result['agenda'] if row['id'] == first['id'])
+    assert revisited['topic_start'] == 0 and revisited['evidence'][0]['start'] == 45
+    updated = next(row for row in result['agenda'] if row['id'] == decision['id'])
+    assert updated['topic_ref'] == first['id']
+    assert updated['previous_decision']['evidence'][0]['segment_id'] == first_source
+    assert any(row['content'] == '测试组负责验收' for row in result['agenda'])
+    assert [term['original'] for term in result['agenda_terms']] == ['陈明']
+    archived = next(row for row in result['agenda'] if row['kind'] == 'action')
+    reviewed = service.decide(rid, archived['id'], ReviewInput(
+        state='confirmed', fingerprint=archived['fingerprint'], version=archived['review_version'],
+    ))
+    assert next(row for row in reviewed['agenda'] if row['id'] == archived['id'])['decision'] == 'confirmed'
+
+
+def test_clear_source_overlap_corrects_wrong_topic_without_overwriting_its_action(setup):
+    _, _, service, _, rid, _, sid, add = setup
+    text = '平台批量导入学校账号，由丁总协调完整名单。'
+    first = add(30, 40, text)
+    second = add(40, 50, '服务器采购须由招标代理提交合同。')
+
+    def row(kind, content, ref, source, quote, item_id=None):
+        return {'kind': kind, 'content': content, 'topic_ref': ref, 'id': item_id,
+                'evidence': [{'segment_id': source, 'quote': quote}]}
+
+    service.publish(plan(setup), {'items': [
+        row('topic', '账号平台', 'new_1', first, text),
+        row('topic', '服务器采购', 'new_2', second, '服务器采购须由招标代理提交合同'),
+        row('action', '招标代理提交合同', 'new_2', second, '招标代理提交合同'),
+    ]})
+    agenda = service.read(rid)['agenda']
+    account = next(item for item in agenda if item['content'] == '账号平台')
+    procurement = next(item for item in agenda if item['content'] == '服务器采购')
+    original = next(item for item in agenda if item['kind'] == 'action')
+    followup_text = '学校账号由丁总协调完整名单，平台批量导入学校账号，明天联调。'
+    followup = add(50, 60, followup_text)
+    service.publish(plan(setup), {'items': [
+        row('topic', '误归到服务器采购', procurement['id'], followup, followup_text),
+        row('action', '明天联调', procurement['id'], followup, '明天联调', original['id']),
+    ]})
+    updated = {item['id']: item for item in service.read(rid)['agenda']}
+    assert updated[account['id']]['content'] == '账号平台'
+    assert updated[account['id']]['evidence'][0]['segment_id'] == followup
+    assert updated[procurement['id']]['evidence'][0]['segment_id'] == second
+    assert updated[original['id']]['content'] == '招标代理提交合同'
+    assert next(item for item in updated.values() if item['content'] == '明天联调')['topic_ref'] == account['id']

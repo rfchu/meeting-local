@@ -1,10 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../../api";
+import TermDialog from "../terminology/TermDialog";
 import Modal from "../../components/Modal";
 import type { LLMConfig } from "../../types";
 import { clock } from "../../utils";
 import { useModelChoice } from "../../preferences/useModelChoice";
-import type { OverviewItem, OverviewStatus, OverviewEvidence } from "./types";
+import type {
+  OverviewItem,
+  OverviewStatus,
+  OverviewEvidence,
+  OverviewTerm,
+} from "./types";
 import "./overview.css";
 const labels = {
   topic: "当前议题",
@@ -46,6 +52,13 @@ export default function LiveOverviewPanel({
     [showIgnored, setShowIgnored] = useState(false);
   const [editing, setEditing] = useState<OverviewItem | null>(null),
     [content, setContent] = useState("");
+  const [section, setSection] = useState<"agenda" | "outcomes" | "terms">(
+    "agenda",
+  );
+  const [openTopics, setOpenTopics] = useState<Record<string, boolean>>({});
+  const [termDialog, setTermDialog] = useState<OverviewTerm | null | undefined>(
+    undefined,
+  );
   const [detailsOpen, setDetailsOpen] = useState(false);
   const seq = useRef(0);
   const view = useRef("");
@@ -77,6 +90,9 @@ export default function LiveOverviewPanel({
   }, [load]);
   useEffect(() => {
     setVersion(0);
+    setSection("agenda");
+    setOpenTopics({});
+    setTermDialog(undefined);
     setEditing(null);
     setExpanded(null);
   }, [recordingId]);
@@ -169,6 +185,206 @@ export default function LiveOverviewPanel({
     items = (data?.items || []).filter(
       (i) => showIgnored || i.decision !== "dismissed",
     );
+  const agenda = (data?.agenda || []).filter(
+    (item) => showIgnored || item.decision !== "dismissed",
+  );
+  const latestEvidence = (item: OverviewItem) =>
+    Math.max(...item.evidence.map((entry) => entry.start));
+  const topics = agenda
+    .filter((item) => item.kind === "topic")
+    .sort(
+      (a, b) =>
+        (a.topic_start ?? latestEvidence(a)) -
+        (b.topic_start ?? latestEvidence(b)),
+    );
+  const currentTopic = topics
+    .filter((item) => !item.stale && item.decision !== "dismissed")
+    .reduce<OverviewItem | undefined>(
+      (current, item) =>
+        !current || latestEvidence(item) >= latestEvidence(current)
+          ? item
+          : current,
+      undefined,
+    );
+  const topicIds = new Set(topics.map((topic) => topic.id));
+  const entries = [
+    ...new Map([...items, ...agenda].map((item) => [item.id, item])).values(),
+  ].filter((item) => item.kind !== "topic");
+  const outcomes = entries
+    .filter((item) => ["decision", "action", "question"].includes(item.kind))
+    .sort((a, b) => latestEvidence(b) - latestEvidence(a));
+  const digest = ["decision", "question"].flatMap(
+    (kind) =>
+      outcomes.find(
+        (item) =>
+          item.kind === kind && !item.stale && item.decision !== "dismissed",
+      ) || [],
+  );
+  const unassigned = entries.filter(
+    (item) => !item.topic_ref || !topicIds.has(item.topic_ref),
+  );
+  const agendaView = timeline && !historical && !!topics.length;
+  const renderItem = (item: OverviewItem) => {
+    const evidence = item.evidence.reduce<OverviewEvidence | undefined>(
+      (latest, entry) =>
+        !(entry.stale ?? item.stale) && (!latest || entry.start > latest.start)
+          ? entry
+          : latest,
+      undefined,
+    );
+    return (
+      <article
+        key={item.id}
+        data-overview-item={item.id}
+        className={`overview-item ${item.decision}${item.stale ? " stale" : ""}`}
+      >
+        <div className="overview-item-main">
+          {timeline && item.kind !== "topic" && (
+            <span className="overview-kind">{labels[item.kind]}</span>
+          )}
+          <p>{item.content}</p>
+          {onLocate && evidence && (
+            <button
+              className="text-btn overview-locate"
+              aria-label={`${locateLabel} ${clock(evidence.start)}`}
+              onClick={() => onLocate(evidence)}
+            >
+              {clock(evidence.start)} {timeline ? "›" : "· " + locateLabel}
+            </button>
+          )}
+          <button
+            className="overview-review-toggle text-btn"
+            aria-label="查看依据与核对"
+            aria-expanded={expanded === item.id}
+            onClick={() => setExpanded(expanded === item.id ? null : item.id)}
+          >
+            ···
+          </button>
+        </div>
+        {timeline && item.previous_decision && (
+          <small>
+            已替代 · {item.previous_decision.content}
+            {onLocate &&
+              item.previous_decision.evidence.map((entry) => (
+                <button
+                  className="text-btn"
+                  key={entry.segment_id + entry.quote}
+                  onClick={() => onLocate(entry)}
+                >
+                  {clock(entry.start)} ›
+                </button>
+              ))}
+          </small>
+        )}
+        {(item.stale || item.decision !== "pending") && (
+          <small>
+            {item.stale
+              ? item.stale_reasons?.length === 1
+                ? item.stale_reasons[0] === "source"
+                  ? "引用原文已变化，需重新核对"
+                  : "关联简记已变化，需重新核对"
+                : "依据或关联简记已变化，需重新核对"
+              : item.decision === "confirmed"
+                ? "已确认 · 不随 AI 刷新覆盖"
+                : item.decision === "dismissed"
+                  ? "已忽略"
+                  : "AI 草稿 · 待核对"}
+            {item.note_ids.length
+              ? ` · 关联 ${item.note_ids.length} 条简记`
+              : ""}
+          </small>
+        )}
+        {expanded === item.id && (
+          <div className="overview-item-actions">
+            {!historical && (
+              <>
+                {item.decision !== "confirmed" && (
+                  <button
+                    disabled={busy || item.stale}
+                    onClick={() => void decide(item, "confirmed")}
+                  >
+                    确认
+                  </button>
+                )}
+                <button
+                  disabled={busy || item.stale}
+                  onClick={() => {
+                    setEditing(item);
+                    setContent(item.content);
+                  }}
+                >
+                  编辑确认
+                </button>
+                {item.decision === "confirmed" ? (
+                  <button
+                    disabled={busy}
+                    onClick={() => void decide(item, "pending")}
+                  >
+                    撤回确认
+                  </button>
+                ) : item.decision !== "dismissed" ? (
+                  <button
+                    disabled={busy}
+                    onClick={() => void decide(item, "dismissed")}
+                  >
+                    忽略
+                  </button>
+                ) : (
+                  <button
+                    disabled={busy}
+                    onClick={() => void decide(item, "pending")}
+                  >
+                    重新考虑
+                  </button>
+                )}
+              </>
+            )}
+          </div>
+        )}
+        {expanded === item.id && (
+          <div className="overview-evidence">
+            <small>
+              {item.note_ids.length
+                ? `关联 ${item.note_ids.length} 条简记 · `
+                : ""}
+              以下为原文依据
+            </small>
+            {item.review_trace && (
+              <p>
+                最近人工核对 ·{" "}
+                {
+                  {
+                    confirmed: "已确认",
+                    dismissed: "已忽略",
+                    pending: "已恢复待核对",
+                  }[item.review_trace.state]
+                }
+                {item.review_trace.snapshot_version
+                  ? ` · 基于 v${item.review_trace.snapshot_version}`
+                  : ""}
+                {" · "}
+                {item.review_trace.updated}
+              </p>
+            )}
+            {item.evidence.map((e, index) => (
+              <blockquote key={index}>
+                <p>{e.quote}</p>
+                {onLocate && (
+                  <button
+                    className="text-btn"
+                    disabled={e.stale ?? item.stale}
+                    onClick={() => onLocate(e)}
+                  >
+                    {clock(e.start)} {locateLabel}
+                  </button>
+                )}
+              </blockquote>
+            ))}
+          </div>
+        )}
+      </article>
+    );
+  };
   return (
     <section
       className={
@@ -387,202 +603,259 @@ export default function LiveOverviewPanel({
           {error}
         </p>
       )}
+      {timeline && !historical && (
+        <nav className="overview-mode-tabs" aria-label="概览内容">
+          <button
+            aria-pressed={section === "agenda"}
+            onClick={() => setSection("agenda")}
+          >
+            议题时间线
+          </button>
+          <button
+            aria-pressed={section === "outcomes"}
+            onClick={() => setSection("outcomes")}
+          >
+            全场结论与待办
+          </button>
+          <button
+            aria-pressed={section === "terms"}
+            onClick={() => setSection("terms")}
+          >
+            人名与术语
+          </button>
+        </nav>
+      )}
+      {termDialog !== undefined && (
+        <TermDialog
+          scope={recordingId}
+          suggestion={termDialog ?? undefined}
+          onClose={() => {
+            setTermDialog(undefined);
+            void load();
+          }}
+        />
+      )}
       <div className="overview-groups">
-        {!data?.items.length && (
-          <div className="overview-empty">
-            <strong>
-              {data?.enabled ? "正在听取会议内容" : "把讨论脉络留在这里"}
-            </strong>
-            <p>
-              {data?.state === "running"
-                ? "首版正在整理，内容就绪后会自动显示。"
-                : data?.enabled
-                  ? "积累约 30 秒确认文字后自动整理。"
-                  : "开启后，自动梳理重点、分歧与后续行动。"}
-            </p>
-            {active &&
-              data?.enabled &&
-              data.state !== "running" &&
-              !data.error && (
-                <button
-                  className="text-btn"
-                  disabled={busy || !data.confirmed_count}
-                  onClick={() =>
-                    void run(() => api.refreshOverview(recordingId))
-                  }
-                >
-                  现在整理
-                </button>
-              )}
-          </div>
-        )}
-        {(Object.keys(labels) as (keyof typeof labels)[]).map((kind) => {
-          const group = items.filter((i) => i.kind === kind);
-          return (
-            !!group.length && (
-              <section key={kind} className="overview-group" data-kind={kind}>
-                {(!timeline || kind === "topic") && (
-                  <h4>
-                    {historical && kind === "topic" ? "历史议题" : labels[kind]}
-                  </h4>
+        {timeline && !historical && section === "terms" ? (
+          <section className="overview-term-list">
+            <button onClick={() => setTermDialog(null)}>管理本场术语</button>
+            {!data?.agenda_terms?.length && (
+              <p className="muted">暂无有原话依据的术语建议。</p>
+            )}
+            {data?.agenda_terms?.map((term) => (
+              <article key={term.category + ":" + term.original}>
+                <div>
+                  <strong>{term.name}</strong>
+                  <small>原文写法 · {term.original}</small>
+                </div>
+                {onLocate && (
+                  <button
+                    className="text-btn"
+                    onClick={() => onLocate(term.evidence)}
+                  >
+                    {clock(term.evidence.start)} ›
+                  </button>
                 )}
-                {group.map((item) => {
-                  const evidence = item.evidence.find(
-                    (entry) => !(entry.stale ?? item.stale),
-                  );
-                  return (
-                    <article
-                      key={item.id}
-                      data-overview-item={item.id}
-                      className={`overview-item ${item.decision}${item.stale ? " stale" : ""}`}
+                <button onClick={() => setTermDialog(term)}>核对写法</button>
+              </article>
+            ))}
+          </section>
+        ) : timeline && !historical && section === "outcomes" ? (
+          <section aria-label="全场结论与待办">
+            {!outcomes.length && (
+              <p className="muted">暂无结论、待办或待确认事项。</p>
+            )}
+            {outcomes.map((item) => {
+              const topic = topics.find((entry) => entry.id === item.topic_ref);
+              return (
+                <div key={item.id}>
+                  {topic && (
+                    <button
+                      className="text-btn overview-topic-link"
+                      onClick={() => {
+                        setSection("agenda");
+                        setOpenTopics((old) => ({ ...old, [topic.id]: true }));
+                        requestAnimationFrame(() =>
+                          document
+                            .getElementById("overview-topic-" + topic.id)
+                            ?.scrollIntoView({ block: "nearest" }),
+                        );
+                      }}
                     >
-                      <div className="overview-item-main">
-                        {timeline && kind !== "topic" && (
-                          <span className="overview-kind">{labels[kind]}</span>
-                        )}
-                        <p>{item.content}</p>
-                        {onLocate && evidence && (
-                          <button
-                            className="text-btn overview-locate"
-                            aria-label={`${locateLabel} ${clock(evidence.start)}`}
-                            onClick={() => onLocate(evidence)}
-                          >
-                            {clock(evidence.start)}{" "}
-                            {timeline ? "›" : "· " + locateLabel}
-                          </button>
-                        )}
-                        <button
-                          className="overview-review-toggle text-btn"
-                          aria-label="查看依据与核对"
-                          aria-expanded={expanded === item.id}
-                          onClick={() =>
-                            setExpanded(expanded === item.id ? null : item.id)
-                          }
-                        >
-                          ···
-                        </button>
-                      </div>
-                      {(item.stale || item.decision !== "pending") && (
-                        <small>
-                          {item.stale
-                            ? item.stale_reasons?.length === 1
-                              ? item.stale_reasons[0] === "source"
-                                ? "引用原文已变化，需重新核对"
-                                : "关联简记已变化，需重新核对"
-                              : "依据或关联简记已变化，需重新核对"
-                            : item.decision === "confirmed"
-                              ? "已确认 · 不随 AI 刷新覆盖"
-                              : item.decision === "dismissed"
-                                ? "已忽略"
-                                : "AI 草稿 · 待核对"}
-                          {item.note_ids.length
-                            ? ` · 关联 ${item.note_ids.length} 条简记`
-                            : ""}
-                        </small>
+                      {topic.content} ↗
+                    </button>
+                  )}
+                  {renderItem(item)}
+                </div>
+              );
+            })}
+          </section>
+        ) : agendaView ? (
+          <>
+            <section className="overview-brief">
+              <strong>会议速览</strong>
+              {data?.covered_until != null && (
+                <small>已整理至 {clock(data.covered_until)}</small>
+              )}
+              <p>{currentTopic?.content}</p>
+              {digest.map((item) => (
+                <p key={item.id}>
+                  {labels[item.kind]} · {item.content}
+                </p>
+              ))}
+            </section>
+            {topics.map((topic) => {
+              const rows = entries.filter(
+                (item) => item.topic_ref === topic.id,
+              );
+              const selected = topic.id === currentTopic?.id;
+              const reopened = selected && topics.at(-1)?.id !== topic.id;
+              const clues = rows.filter(
+                (item) =>
+                  item.kind === "point" &&
+                  !item.stale &&
+                  item.decision !== "dismissed",
+              );
+              const question = rows.find(
+                (item) =>
+                  item.kind === "question" &&
+                  !item.stale &&
+                  item.decision !== "dismissed",
+              );
+              return (
+                <section
+                  className="overview-agenda-topic"
+                  key={topic.id}
+                  id={"overview-topic-" + topic.id}
+                >
+                  <button
+                    className="overview-topic-toggle"
+                    aria-expanded={openTopics[topic.id] ?? selected}
+                    onClick={() =>
+                      setOpenTopics((old) => ({
+                        ...old,
+                        [topic.id]: !(old[topic.id] ?? selected),
+                      }))
+                    }
+                  >
+                    <time>
+                      {clock(topic.topic_start ?? latestEvidence(topic))}
+                    </time>
+                    <strong>{topic.content}</strong>
+                    <small>
+                      {reopened ? "重新讨论" : selected ? "正在讨论" : "已讨论"}{" "}
+                      · {rows.length} 条
+                    </small>
+                  </button>
+                  {(openTopics[topic.id] ?? selected) && (
+                    <div className="overview-topic-content">
+                      {renderItem(topic)}
+                      {rows.map(renderItem)}
+                      {question && clues.length >= 2 && (
+                        <details className="overview-fishbone">
+                          <summary>展开议题分析图</summary>
+                          <p>{question.content}</p>
+                          <ul>
+                            {clues.map((clue) => {
+                              const evidence = clue.evidence.find(
+                                (entry) => !entry.stale,
+                              );
+                              return (
+                                <li key={clue.id}>
+                                  {clue.content}
+                                  {onLocate && evidence && (
+                                    <button
+                                      className="text-btn"
+                                      onClick={() => onLocate(evidence)}
+                                    >
+                                      {clock(evidence.start)} ›
+                                    </button>
+                                  )}
+                                </li>
+                              );
+                            })}
+                          </ul>
+                        </details>
                       )}
-                      {expanded === item.id && (
-                        <div className="overview-item-actions">
-                          {!historical && (
-                            <>
-                              {item.decision !== "confirmed" && (
-                                <button
-                                  disabled={busy || item.stale}
-                                  onClick={() => void decide(item, "confirmed")}
-                                >
-                                  确认
-                                </button>
-                              )}
-                              <button
-                                disabled={busy || item.stale}
-                                onClick={() => {
-                                  setEditing(item);
-                                  setContent(item.content);
-                                }}
-                              >
-                                编辑确认
-                              </button>
-                              {item.decision === "confirmed" ? (
-                                <button
-                                  disabled={busy}
-                                  onClick={() => void decide(item, "pending")}
-                                >
-                                  撤回确认
-                                </button>
-                              ) : item.decision !== "dismissed" ? (
-                                <button
-                                  disabled={busy}
-                                  onClick={() => void decide(item, "dismissed")}
-                                >
-                                  忽略
-                                </button>
-                              ) : (
-                                <button
-                                  disabled={busy}
-                                  onClick={() => void decide(item, "pending")}
-                                >
-                                  重新考虑
-                                </button>
-                              )}
-                            </>
-                          )}
-                        </div>
-                      )}
-                      {expanded === item.id && (
-                        <div className="overview-evidence">
-                          <small>
-                            {item.note_ids.length
-                              ? `关联 ${item.note_ids.length} 条简记 · `
-                              : ""}
-                            以下为原文依据
-                          </small>
-                          {item.review_trace && (
-                            <p>
-                              最近人工核对 ·{" "}
-                              {
-                                {
-                                  confirmed: "已确认",
-                                  dismissed: "已忽略",
-                                  pending: "已恢复待核对",
-                                }[item.review_trace.state]
-                              }
-                              {item.review_trace.snapshot_version
-                                ? ` · 基于 v${item.review_trace.snapshot_version}`
-                                : ""}
-                              {" · "}
-                              {item.review_trace.updated}
-                            </p>
-                          )}
-                          {item.evidence.map((e, index) => (
-                            <blockquote key={index}>
-                              <p>{e.quote}</p>
-                              {onLocate && (
-                                <button
-                                  className="text-btn"
-                                  disabled={e.stale ?? item.stale}
-                                  onClick={() => onLocate(e)}
-                                >
-                                  {clock(e.start)} {locateLabel}
-                                </button>
-                              )}
-                            </blockquote>
-                          ))}
-                        </div>
-                      )}
-                    </article>
-                  );
-                })}
-              </section>
-            )
-          );
-        })}
+                    </div>
+                  )}
+                </section>
+              );
+            })}
+            {!!unassigned.length && (
+              <details className="overview-past-topics">
+                <summary>未归类 · {unassigned.length} 条</summary>
+                {unassigned.map(renderItem)}
+              </details>
+            )}
+          </>
+        ) : (
+          <>
+            {!data?.items.length && (
+              <div className="overview-empty">
+                <strong>
+                  {data?.enabled ? "正在听取会议内容" : "把讨论脉络留在这里"}
+                </strong>
+                <p>
+                  {data?.state === "running"
+                    ? "首版正在整理，内容就绪后会自动显示。"
+                    : data?.enabled
+                      ? "积累约 30 秒确认文字后自动整理。"
+                      : "开启后，自动梳理重点、分歧与后续行动。"}
+                </p>
+                {active &&
+                  data?.enabled &&
+                  data.state !== "running" &&
+                  !data.error && (
+                    <button
+                      className="text-btn"
+                      disabled={busy || !data.confirmed_count}
+                      onClick={() =>
+                        void run(() => api.refreshOverview(recordingId))
+                      }
+                    >
+                      现在整理
+                    </button>
+                  )}
+              </div>
+            )}
+            {(Object.keys(labels) as (keyof typeof labels)[]).map((kind) => {
+              const group = items.filter((i) => i.kind === kind);
+              return (
+                !!group.length && (
+                  <section
+                    key={kind}
+                    className="overview-group"
+                    data-kind={kind}
+                  >
+                    {(!timeline || kind === "topic") && (
+                      <h4>
+                        {historical && kind === "topic"
+                          ? "历史议题"
+                          : labels[kind]}
+                      </h4>
+                    )}
+                    {group.map(renderItem)}
+                  </section>
+                )
+              );
+            })}
+          </>
+        )}
         {timeline &&
+          section === "agenda" &&
           data?.topics?.some(
-            (topic) => topic.version !== data.latest_version,
+            (topic) =>
+              topic.version !== data.latest_version && !topicIds.has(topic.id),
           ) && (
             <details className="overview-past-topics">
               <summary>历史议题</summary>
               {data.topics
-                .filter((topic) => topic.version !== data.latest_version)
+                .filter(
+                  (topic) =>
+                    topic.version !== data.latest_version &&
+                    !topicIds.has(topic.id),
+                )
                 .map((topic) => (
                   <button
                     key={topic.id}

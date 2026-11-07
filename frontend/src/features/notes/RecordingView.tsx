@@ -630,7 +630,7 @@ export default function RecordingView({
                   <LiveOverviewPanel
                     recordingId={correctionSessionId || ""}
                     engine={draftEngine}
-                    timeline={recording}
+                    timeline
                     onVersion={setOverviewVersion}
                     locateLabel="原话"
                     active={recording && !recordOnly}

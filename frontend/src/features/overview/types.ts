@@ -8,6 +8,9 @@ export interface OverviewEvidence {
 }
 export interface OverviewItem {
   id: string;
+  topic_ref?: string;
+  topic_start?: number;
+  previous_decision?: { content: string; evidence: OverviewEvidence[] };
   kind: "topic" | "point" | "decision" | "question" | "action";
   content: string;
   evidence: OverviewEvidence[];
@@ -24,7 +27,16 @@ export interface OverviewItem {
   };
   fingerprint: string;
 }
+export interface OverviewTerm {
+  original: string;
+  name: string;
+  category: string;
+  evidence: OverviewEvidence;
+}
 export interface OverviewStatus {
+  agenda?: OverviewItem[];
+  agenda_terms?: OverviewTerm[];
+  covered_until?: number | null;
   consent_scope?: string;
   filtered_count?: number;
   quality?: { duplicates_removed?: number; overflow_count?: number };
