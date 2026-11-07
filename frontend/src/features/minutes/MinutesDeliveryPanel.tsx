@@ -1,3 +1,4 @@
+import AudienceDeliveryPreview from "./AudienceDeliveryPreview";
 import { recordingQualityAttention } from "../notes/recordingQuality";
 import { useState, useEffect, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -138,6 +139,14 @@ export default function MinutesDeliveryPanel({
               </p>
             )}
           </div>
+        )}
+        {open && eligible && (
+          <AudienceDeliveryPreview
+            key={adopted.id}
+            meetingId={meeting.id}
+            artifactId={adopted.id}
+            includeCitations={includeCitations}
+          />
         )}
         <label>
           <input

@@ -295,6 +295,13 @@ class SourceReviewInput(BaseModel):
     confirmed: bool=False
 
 
+class AudiencePreviewInput(BaseModel):
+    artifact_id: str = Field(min_length=1,max_length=100)
+    audience: Literal['internal','external']
+    selection: list[str] = Field(default_factory=list,max_length=250)
+    include_citations: bool = False
+
+
 class DeliveryFinalizeInput(DeliveryInput):
     fingerprint: str=Field(pattern=r'^[a-f0-9]{64}$')
 

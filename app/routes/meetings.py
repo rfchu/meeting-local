@@ -17,7 +17,7 @@ from ..analysis import OpenAICompatibleProvider, analysis_chunk_chars, SECTION_N
 from ..transcript_paragraphs import paragraphs
 from ..qa import QA
 from .. import meeting_flow, minutes_delivery, handoff_sources, delivery_readiness
-from ..http_schemas import DeliveryFinalizeInput, SourceReviewInput, ActionTrackInput, AnalysisJobInput, AttentionDecisionInput, DeliveryInput, JobInput, MeetingBriefInput, MeetingNoteInput, MeetingNoteUpdate, MeetingNotesBatchInput, NoteAcceptInput, NoteUseInput, RenameInput, ReviewCheckpointInput, RevisionInput, SpeakerReviewApplyInput, TodoUpdate
+from ..http_schemas import AudiencePreviewInput, DeliveryFinalizeInput, SourceReviewInput, ActionTrackInput, AnalysisJobInput, AttentionDecisionInput, DeliveryInput, JobInput, MeetingBriefInput, MeetingNoteInput, MeetingNoteUpdate, MeetingNotesBatchInput, NoteAcceptInput, NoteUseInput, RenameInput, ReviewCheckpointInput, RevisionInput, SpeakerReviewApplyInput, TodoUpdate
 from ..application_services import ApplicationServices
 
 def register_routes(app,services:ApplicationServices):
@@ -295,6 +295,11 @@ def register_routes(app,services:ApplicationServices):
     def get_delivery_readiness(mid:str,include_citations:bool=False):
         try:return delivery_readiness.read(store,mid,include_citations)
         except KeyError:raise HTTPException(404,'会议不存在')
+
+    @app.post('/api/meetings/{mid}/minutes/audience-preview')
+    def preview_audience(mid:str,body:AudiencePreviewInput):
+        try:return delivery_readiness.audience_preview(store,mid,body)
+        except ValueError as error:raise HTTPException(409,str(error))
 
     @app.post('/api/meetings/{mid}/minutes/delivery-finalize',status_code=201)
     def finalize_delivery(mid:str,body:DeliveryFinalizeInput):

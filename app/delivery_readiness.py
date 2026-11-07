@@ -64,3 +64,22 @@ def finalize(store,mid,body):
         payload=minutes_delivery.prepare(db,mid,body.artifact_id,body.include_citations)
         payload.update(task_sources=minutes_delivery.task_sources(db,mid),review_token=body.fingerprint,review_confirmation={step:value['review']['steps'][step]['fingerprint'] for step in ('transcript','speakers','minutes')})
         return {**minutes_delivery.persist(db,mid,body.artifact_id,payload),'reused':False}
+
+
+def audience_projection(db, mid, body):
+    payload = minutes_delivery.prepare(db, mid, body.artifact_id,
+                                       body.include_citations if body.audience == 'internal' else False)
+    if body.audience == 'external':
+        return minutes_delivery.external_projection(db, mid, payload, body.selection)
+    if body.selection:
+        raise ValueError('内部版使用完整采用稿')
+    return payload, []
+
+
+def audience_preview(store, mid, body):
+    from .minutes import MeetingMinutes, minutes_markdown
+    with store.connect() as db:
+        db.execute('BEGIN')
+        payload, candidates = audience_projection(db, mid, body)
+        return {'candidates': candidates, 'markdown': minutes_markdown(
+            MeetingMinutes.model_validate(payload['document']), payload['segments'], payload['include_citations'])}

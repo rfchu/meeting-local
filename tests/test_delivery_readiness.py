@@ -149,3 +149,37 @@ def test_task_source_validity_change_requires_a_new_snapshot_even_when_execution
     value=read(setup);assert value['current_delivery_id'] is None and value['can_finalize']
     second=post(setup).json();assert second['id']!=first['id']
     assert second['task_status']==first['task_status'] # source validity is separately bound
+
+
+def audience_preview(f, **patch):
+    return f[0].post(f'/api/meetings/{f[2]}/minutes/audience-preview',json={
+        'artifact_id':f[3],'audience':'external','selection':[],**patch})
+
+
+def test_external_preview_is_empty_by_default_and_filters_internal_material(setup):
+    c,s,m,a,doc=setup
+    doc.title='PRIVATE-TITLE'
+    doc.purpose='PRIVATE-PURPOSE'
+    doc.interviewer_evaluation='PRIVATE-ASSESSMENT'
+    doc.overview += [
+        MinutesItem(content='PRIVATE-NOTE',source_segment_ids=['s1']),
+        MinutesItem(content='PRIVATE-ASSESSMENT',source_segment_ids=['s1']),
+        MinutesItem(content='PRIVATE-UNSOURCED'),
+    ]
+    doc.overview[0].owner='PRIVATE-OWNER'
+    doc.conclusions=[MinutesItem(content='对外讨论要点',source_segment_ids=['s1'])]
+    c.post(f'/api/meetings/{m}/notes',json={'raw_text':'PRIVATE-NOTE','note_scope':'personal','captured_at':1})
+    s.execute('UPDATE artifacts SET payload=? WHERE id=?',(encode(doc.model_dump()),a))
+    response=audience_preview(setup,include_citations=True)
+    assert response.status_code==200,response.text
+    value=response.json()
+    assert '周五交付' not in value['markdown']
+    assert 'PRIVATE-' not in response.text
+    assert [item['id'] for item in value['candidates']]==['overview:0','conclusions:0']
+    for blocked in ('action_items:0','overview:1','overview:2','overview:3','summary:0'):
+        assert audience_preview(setup,selection=[blocked]).status_code==409
+    selected=audience_preview(setup,selection=['overview:0','conclusions:0'],include_citations=True).json()
+    assert all(word in selected['markdown'] for word in ('对外会议纪要','周五交付','对外讨论要点'))
+    assert all(word not in selected['markdown'] for word in ('PRIVATE-','00:00','周五提交材料'))
+    assert 'PRIVATE-TITLE' in audience_preview(setup,audience='internal').json()['markdown']
+    assert not s.all('SELECT * FROM minutes_deliveries')

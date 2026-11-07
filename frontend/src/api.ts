@@ -744,6 +744,19 @@ export const api = {
     request(`/meetings/${mid}/tasks/${tid}/carry`, json("POST")),
   unlinkTask: (mid: string, tid: string) =>
     request(`/meetings/${mid}/tasks/${tid}/link`, { method: "DELETE" }),
+  audiencePreview: (
+    mid: string,
+    body: {
+      artifact_id: string;
+      audience: "internal" | "external";
+      selection: string[];
+      include_citations: boolean;
+    },
+  ) =>
+    request<{
+      candidates: { id: string; label: string; content: string }[];
+      markdown: string;
+    }>(`/meetings/${mid}/minutes/audience-preview`, json("POST", body)),
   deliveryReadiness: (mid: string, includeCitations: boolean) =>
     request<DeliveryReadiness>(
       `/meetings/${mid}/minutes/delivery-readiness?include_citations=${includeCitations}`,

@@ -2,7 +2,7 @@
 import hashlib,json
 from . import meeting_flow,minutes_versions
 from .db import encode
-from .minutes import MeetingMinutes,validate_minutes_citations
+from .minutes import MeetingMinutes,MinutesItem,validate_minutes_citations
 
 
 def prepare(db,mid,aid,include_citations):
@@ -62,3 +62,55 @@ def public(row):
     return {'id':row['id'],'artifact_id':row['artifact_id'],'created':row['created'],
             'title':payload['document']['title'],'revision':payload['revision'],
             'include_citations':payload['include_citations'],'task_status':payload['task_status']}
+
+
+EXTERNAL_SECTIONS = {
+    'overview': '会议概况', 'conclusions': '讨论要点',
+    'decisions': '已定事项', 'action_items': '已确认行动',
+}
+
+
+def external_projection(db, mid, payload, selection):
+    source = MeetingMinutes.model_validate(payload['document'])
+    # Start from an empty document. Custom titles, metadata, templates, and
+    # transcript excerpts can contain internal material even without citations.
+    from .minutes_composition import semantic_template
+    projected = MeetingMinutes(
+        title='External Meeting Minutes' if source.output_language == 'en' else '对外会议纪要',
+        output_language=source.output_language, style='formal',
+        template_snapshot=semantic_template('general-meeting').model_dump(),
+    )
+    from unicodedata import normalize
+    def normalized(text):
+        return ''.join(normalize('NFKC', text).casefold().split())
+
+    private_text = [source.interviewer_evaluation]
+    for row in db.execute("SELECT raw_text,expanded_text,accepted_text FROM meeting_notes WHERE meeting_id=? AND note_scope='personal'", (mid,)):
+        private_text.extend(row)
+    if source.interview_context:
+        private_text.extend(source.interview_context.model_dump().values())
+    private = [normalized(value) for value in private_text if isinstance(value, str) and value.strip()]
+    active_tasks = {task['id'] for task in meeting_flow.tasks(db, mid)
+                    if not task['stale'] and task['note_scope'] == 'meeting'}
+    confirmed_actions = {item['action_index'] for item in payload['task_status'] if item['task_id'] in active_tasks}
+    candidates = []
+    selected = set(selection)
+    for section, label in EXTERNAL_SECTIONS.items():
+        if source.interview and section == 'decisions':
+            continue  # Interview decisions represent internal competency assessments.
+        for index, item in enumerate(getattr(source, section)):
+            if not item.source_segment_ids or any(secret in normalized(item.content) for secret in private):
+                continue
+            if section == 'action_items' and index not in confirmed_actions:
+                continue
+            key = f'{section}:{index}'
+            candidates.append({'id': key, 'label': label, 'content': item.content})
+            if key in selected:
+                getattr(projected, section).append(MinutesItem(content=item.content))
+    if selected - {item['id'] for item in candidates}:
+        raise ValueError('有选入条目已变化或不可对外分享，请重新预览')
+    return {
+        'document': projected.model_dump(),
+        'segments': [], 'revision': payload['revision'],
+        'include_citations': False, 'task_status': [],
+    }, candidates
