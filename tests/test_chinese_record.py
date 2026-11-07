@@ -190,3 +190,38 @@ def test_translation_repairs_literal_newlines_and_marks_model_contention(live, m
     monkeypatch.setattr('app.chinese_record.request_once',model('{"translation":"我们已确认。\n星期五交付。"}'))
     fixed = client.post(url,json=body)
     assert fixed.status_code == 200 and fixed.json()['text'] == '我们已确认。\n星期五交付。'
+
+
+def test_japanese_draft_translation_is_bound_to_candidate_and_excluded_from_formal_sources(live):
+    from app.db import encode, uid
+
+    client, store, mid, _, _, calls = live
+    aid, other = uid(), uid()
+    original = '担当は田中さんです。試作品は金曜日に出荷します。'
+    store.execute('INSERT INTO meetings(id,title,filename) VALUES(?,?,?)', (mid, '日语会议', 'test.wav'))
+    store.execute('INSERT INTO meetings(id,title,filename) VALUES(?,?,?)', (other, 'Other', 'test.wav'))
+    store.execute(
+        'INSERT INTO artifacts(id,meeting_id,revision,kind,payload,provenance) VALUES(?,?,?,?,?,?)',
+        (aid, mid, 0, 'transcript_candidate', encode([
+            {'id': 's1', 'start': 30, 'end': 55, 'text': original, 'timestamp_precision': 'chunk'},
+        ]), encode({'experimental': True, 'language': 'ja'})),
+    )
+    suffix = f'/experimental-drafts/{aid}/chinese-record'
+    url = f'/api/meetings/{mid}' + suffix
+    params = {'profile_id': 'local'}
+    assert client.get(f'/api/meetings/{other}' + suffix, params=params).status_code == 404
+    assert client.get(url, params=params).json()['counts']['pending'] == 1
+    assert client.post(url + '/s1', json={**params, 'expected_text': 'changed'}).status_code == 409
+    assert client.post(url + '/s1', json={**params, 'expected_text': original}).status_code == 200
+    assert client.post(url + '/s1', json={**params, 'expected_text': original}).status_code == 200
+    result = client.get(url, params=params).json()['items'][0]
+    assert result == {'id': 's1', 'original': original, 'text': '我们星期五交付。',
+                      'status': 'translated', 'start': 30, 'end': 55}
+    assert calls == [original]
+    assert client.get(f'/api/meetings/{mid}/chinese-record', params=params).json()['total'] == 0
+    search = client.post('/api/retrieval/search', json={'query': '星期五交付'})
+    assert search.status_code == 200 and search.json()['results'] == []
+    qa = client.post('/api/retrieval/qa/prepare', json={
+        'question': '星期五交付什么？', 'query': '星期五交付', 'profile_id': 'local',
+    })
+    assert qa.status_code == 201 and qa.json()['sources'] == []

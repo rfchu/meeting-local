@@ -24,6 +24,8 @@ class TranslationInput(BaseModel):
 
 
 def segment_language(text, hint):
+    if hint == 'ja':
+        return 'ja'
     if re.search(r'[\u3040-\u30ff\uac00-\ud7af\u0400-\u052f\u0600-\u06ff]', text):
         return 'unknown'
     if re.search(r'[\u3400-\u9fff]', text):
@@ -138,7 +140,7 @@ def request_translation(provider, text):
     return translation_json(choice.get('message', {}).get('content'))
 
 
-def translate_segment(services, owner, read_source, body, workload):
+def translate_segment(services, owner, read_source, body, workload, *, directory=None):
     source, hint = read_source()
     text = source['text']
     if text != body.expected_text:
@@ -146,10 +148,11 @@ def translate_segment(services, owner, read_source, body, workload):
     language = segment_language(text, hint)
     result = {'status': 'original' if language == 'zh' else 'unknown', 'text': text,
               'start': source['start'], 'end': source['end']}
-    if language != 'en':
+    if language not in ('en', 'ja'):
         return result
     provider = provider_for(services, body.profile_id)
-    path = translation_path(services, owner, source, language, provider)
+    directory = directory if directory is not None else services.store.directory(owner)
+    path = translation_file(directory, source, language, provider)
     if cached := saved_translation(path):
         return dict(result, status='translated', text=cached)
     with optional_slot(services.resources, workload, 'local_llm', owner):
@@ -164,7 +167,7 @@ def translate_segment(services, owner, read_source, body, workload):
             db.execute('BEGIN IMMEDIATE')
             current, current_hint = read_source()
             current_provider = provider_for(services, body.profile_id)
-            if path != translation_path(services, owner, current, segment_language(current['text'], current_hint), current_provider):
+            if path != translation_file(directory, current, segment_language(current['text'], current_hint), current_provider):
                 raise ValueError('原文或模型已变化，请刷新后再试')
             write_translation(path, translated)
     return dict(result, status='translated', text=translated)
@@ -218,13 +221,48 @@ def record_view(directory, revision, segments, hint, provider, offset, limit):
         text = source['text']
         language = segment_language(text, hint)
         translation = (saved_translation(translation_file(directory, source, language, provider))
-                       if language == 'en' and provider else None)
+                       if language in ('en', 'ja') and provider else None)
         status = 'original' if language == 'zh' else 'unknown' if language == 'unknown' else 'translated' if translation else 'pending'
         counts[status] += 1
         if offset <= position < offset + limit:
             items.append({'id': source['id'], 'status': status, 'original': text,
                           'text': translation or text, 'start': source['start'], 'end': source['end']})
     return {'revision': revision, 'counts': counts, 'total': len(segments), 'items': items}
+
+
+def japanese_draft(services, mid, aid):
+    row = services.store.one(
+        "SELECT revision,payload,provenance FROM artifacts WHERE id=? AND meeting_id=? AND kind='transcript_candidate'",
+        (aid, mid),
+    )
+    if row:
+        provenance = json.loads(row['provenance'])
+        if provenance.get('experimental') is True and provenance.get('language') == 'ja' and not provenance.get('incomplete'):
+            return row['revision'], json.loads(row['payload'])
+    raise FileNotFoundError('未找到已完成的日语草稿')
+
+
+def japanese_draft_directory(services, mid, aid):
+    # Validate both IDs before using them as path components.
+    return services.store.directory(mid) / 'experimental-drafts' / services.store.directory(aid).name
+
+
+def read_japanese_draft_record(services, mid, aid, profile_id, offset, limit):
+    revision, segments = japanese_draft(services, mid, aid)
+    provider = provider_for(services, profile_id) if profile_id else None
+    return record_view(japanese_draft_directory(services, mid, aid), revision, segments, 'ja', provider, offset, limit)
+
+
+def translate_japanese_draft_segment(services, mid, aid, segment_id, body):
+    def read_source():
+        _, segments = japanese_draft(services, mid, aid)
+        segment = next((item for item in segments if item['id'] == segment_id), None)
+        if segment is None:
+            raise FileNotFoundError('草稿原文片段不存在')
+        return segment, 'ja'
+
+    return translate_segment(services, mid, read_source, body, 'meeting_translation',
+                             directory=japanese_draft_directory(services, mid, aid))
 
 
 def record_identity(record, profile_id):

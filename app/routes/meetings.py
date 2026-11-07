@@ -1,5 +1,6 @@
 """Meetings HTTP routes; shared services are supplied by the composition root."""
-from ..chinese_record import MeetingTranslationInput, meeting_source, read_meeting_record, translate_segment
+from ..chinese_record import (MeetingTranslationInput, TranslationInput, meeting_source, read_meeting_record,
+                              read_japanese_draft_record, translate_japanese_draft_segment, translate_segment)
 from ..languages import EXPERIMENTAL_TRANSCRIPTION_LANGUAGES, configure_transcription_asr, meeting_languages
 from ..resources import optional_slot
 from ..task_management import retry_blocker, classify
@@ -47,6 +48,23 @@ def register_routes(app,services:ApplicationServices):
         try:
             return translate_segment(services,mid,lambda:meeting_source(services,mid,segment_id,body.revision),body,'meeting_translation')
         except FileNotFoundError:raise HTTPException(404,'会议不存在')
+        except HTTPException:raise
+        except (ValueError,RuntimeError) as error:raise HTTPException(409,str(error))
+        except (OSError,TypeError):raise HTTPException(503,'本地翻译暂不可用，原文已保留')
+
+
+    @app.get('/api/meetings/{mid}/experimental-drafts/{aid}/chinese-record')
+    def japanese_draft_record(mid:str,aid:str,profile_id:str=Query(default='',max_length=100),
+                              offset:int=Query(default=0,ge=0),limit:int=Query(default=50,ge=1,le=100)):
+        try:return read_japanese_draft_record(services,mid,aid,profile_id,offset,limit)
+        except FileNotFoundError as error:raise HTTPException(404,str(error))
+        except (ValueError,RuntimeError) as error:raise HTTPException(409,str(error))
+
+
+    @app.post('/api/meetings/{mid}/experimental-drafts/{aid}/chinese-record/{segment_id}')
+    def japanese_draft_translation(mid:str,aid:str,segment_id:str,body:TranslationInput):
+        try:return translate_japanese_draft_segment(services,mid,aid,segment_id,body)
+        except FileNotFoundError as error:raise HTTPException(404,str(error))
         except HTTPException:raise
         except (ValueError,RuntimeError) as error:raise HTTPException(409,str(error))
         except (OSError,TypeError):raise HTTPException(503,'本地翻译暂不可用，原文已保留')
