@@ -60,7 +60,7 @@ export default function LiveDraftList({
     if (active && following.current && list.current)
       list.current.scrollTop = list.current.scrollHeight;
   }, [active]);
-  const [chinese, setChinese] = useState(false);
+  const [bilingual, setBilingual] = useState(false);
   const [model, setModel] = useState("");
   const profile = profiles.some((item) => item.id === model)
     ? model
@@ -69,12 +69,12 @@ export default function LiveDraftList({
     drafts,
     recordingId || "",
     profile,
-    chinese,
+    bilingual,
   );
   useLayoutEffect(() => {
-    if (chinese && active && following.current && list.current)
+    if (bilingual && active && following.current && list.current)
       list.current.scrollTop = list.current.scrollHeight;
-  }, [translation.entries, chinese, active]);
+  }, [translation.entries, bilingual, active]);
   const groups = paragraphs(drafts);
   return (
     <>
@@ -82,13 +82,13 @@ export default function LiveDraftList({
         {recordingId && (
           <button
             className="text-btn"
-            aria-pressed={chinese}
-            onClick={() => setChinese(!chinese)}
+            aria-pressed={bilingual}
+            onClick={() => setBilingual((value) => !value)}
           >
-            {chinese ? "中文视图已开启 · 切回原文" : "开启中文视图"}
+            {bilingual ? "双语视图已开启 · 切回原文" : "开启双语视图"}
           </button>
         )}
-        {chinese && (
+        {bilingual && (
           <label>
             本地翻译模型
             <select
@@ -119,7 +119,7 @@ export default function LiveDraftList({
             : `回到最新${unread ? `（${unread} 条新结果）` : ""}`}
         </button>
       </div>
-      {chinese && (
+      {bilingual && (
         <small role="status">
           {!profile
             ? "请选择本地翻译模型，当前显示原文。"
@@ -127,7 +127,7 @@ export default function LiveDraftList({
               ? "本地模型忙碌，空闲后自动继续翻译。"
               : translation.remaining
                 ? `自动翻译已确认片段 · ${translation.remaining} 段待处理`
-                : "已确认的英文片段自动翻译 · 临时文字保留原文"}
+                : "已确认的英文片段显示原文和译文 · 临时文字显示原文"}
         </small>
       )}
       <div
@@ -176,39 +176,46 @@ export default function LiveDraftList({
               .join(" ")}
           >
             <b>{clock(draft.start)}</b>
-            {chinese && recordingId ? (
+            {bilingual && recordingId ? (
               <div>
                 {draft.parts.map((part, partIndex) => {
                   const key = liveChineseKey(part, recordingId, profile);
                   const entry = translation.entries[key];
                   return (
-                    <p key={partIndex}>
-                      {entry?.result?.text ?? part.text}{" "}
+                    <div key={partIndex} className="live-bilingual-part">
+                      <p>
+                        {part.text}{" "}
+                        {entry?.result?.status === "unknown" && (
+                          <small>语言待确认</small>
+                        )}
+                        {key && profile && !entry && (
+                          <small>
+                            {translation.next === key && !translation.busy
+                              ? "翻译中"
+                              : "等待翻译"}
+                          </small>
+                        )}
+                        {entry?.error && (
+                          <>
+                            <small role="alert">{entry.error}</small>{" "}
+                            <button
+                              className="text-btn"
+                              onClick={() => translation.retry(key)}
+                            >
+                              重试本段
+                            </button>
+                          </>
+                        )}
+                      </p>
                       {entry?.result?.status === "translated" && (
-                        <small>中文译文</small>
+                        <p
+                          className="live-bilingual-translation"
+                          lang="zh-Hans"
+                        >
+                          <small>中文译文</small> {entry.result.text}
+                        </p>
                       )}
-                      {entry?.result?.status === "unknown" && (
-                        <small>语言待确认</small>
-                      )}
-                      {key && profile && !entry && (
-                        <small>
-                          {translation.next === key && !translation.busy
-                            ? "翻译中"
-                            : "等待翻译 · 原文"}
-                        </small>
-                      )}
-                      {entry?.error && (
-                        <>
-                          <small role="alert">{entry.error}</small>{" "}
-                          <button
-                            className="text-btn"
-                            onClick={() => translation.retry(key)}
-                          >
-                            重试本段
-                          </button>
-                        </>
-                      )}
-                    </p>
+                    </div>
                   );
                 })}
               </div>

@@ -865,6 +865,18 @@ dialog code {
   font-size: 12px;
   line-height: 1.65;
 }
+.live-draft-list .live-bilingual-part + .live-bilingual-part {
+  margin-top: 8px;
+}
+.live-draft-list .live-bilingual-translation {
+  margin-top: 3px;
+  padding-inline-start: 8px;
+  border-inline-start: 2px solid var(--line);
+  white-space: pre-line;
+}
+.live-bilingual-translation small {
+  color: var(--muted);
+}
 .live-draft-list article button {
   font-size: 10px;
   white-space: nowrap;
