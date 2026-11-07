@@ -40,6 +40,8 @@ export default function DeliveryHistoryRow({
         <small>
           交付 {number} · {delivery.created} ·{" "}
           {delivery.include_citations ? "含原文引用" : "不含原文引用"}
+          {!!delivery.template_version &&
+            ` · 自定义模板 v${delivery.template_version}`}
         </small>
         <small>
           {delivery.sent_at

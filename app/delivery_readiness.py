@@ -69,11 +69,7 @@ def finalize(store,mid,body):
 def audience_projection(db, mid, body):
     payload = minutes_delivery.prepare(db, mid, body.artifact_id,
                                        body.include_citations if body.audience == 'internal' else False)
-    if body.audience == 'external':
-        return minutes_delivery.external_projection(db, mid, payload, body.selection)
-    if body.selection:
-        raise ValueError('内部版使用完整采用稿')
-    return payload, []
+    return minutes_delivery.audience_document(db,mid,payload,body.audience,body.selection,body.template_version)
 
 
 def audience_snapshot(db, mid, body):
@@ -114,7 +110,7 @@ def finalize_audience(store, mid, body):
         """, (mid, body.artifact_id, body.fingerprint, body.audience)).fetchone()
         if previous:
             saved = json.loads(previous['payload'])
-            if saved['selection'] == selection and saved['include_citations'] == (body.audience == 'internal' and body.include_citations):
+            if saved['selection'] == selection and saved.get('template_version',0)==body.template_version and saved['include_citations'] == (body.audience == 'internal' and body.include_citations):
                 return {**minutes_delivery.public(previous), 'reused': True}
         payload, _, checks, fingerprint = audience_snapshot(db, mid, body)
         if body.fingerprint != fingerprint:

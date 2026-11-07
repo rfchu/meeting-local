@@ -248,3 +248,26 @@ def test_audience_template_versions_validate_columns_and_keep_audiences_separate
     assert client.get(root+'internal').json()['columns']==['summary']
     assert len(store.all("SELECT id FROM minutes_templates WHERE status='audience'"))==3
     assert all(not row['id'].startswith('audience:') for row in client.get('/api/minutes-templates').json())
+
+
+def test_custom_template_freezes_order_filters_candidates_and_rejects_old_preview(setup):
+    client,_,mid,_,_=setup
+    confirm(setup)
+    root='/api/audience-templates/external'
+    assert client.put(root,json={'columns':['overview'],'expected_version':0}).status_code==200
+    options={'template_version':1,'selection':['overview:0']}
+    preview=audience_preview(setup,**options)
+    assert preview.status_code==200
+    markdown=preview.json()['markdown']
+    assert '## 概况' in markdown and '待办事项' not in markdown
+    assert audience_preview(setup,template_version=1,selection=['action_items:0']).status_code==409
+    result=confirm_audience(setup,preview.json()['fingerprint'],template_version=1)
+    assert result.status_code==201,result.text
+    current=audience_preview(setup,**options).json()
+    assert client.put(root,json={'columns':['decisions','overview'],'expected_version':1}).status_code==200
+    assert confirm_audience(setup,current['fingerprint'],template_version=1).status_code==409
+    delivery=result.json()['id']
+    for kind,magic in [('md',None),('docx',b'PK'),('pdf',b'%PDF')]:
+        export=client.get(f'/api/meetings/{mid}/minutes/export/{kind}?delivery_id={delivery}')
+        assert export.status_code==200
+        assert export.content.startswith(magic) if magic else export.text==markdown

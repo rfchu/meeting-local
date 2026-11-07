@@ -19,11 +19,18 @@ export default function AudienceDeliveryPreview({
   const [checkedFingerprint, setCheckedFingerprint] = useState("");
   const [saving, setSaving] = useState(false);
   const [result, setResult] = useState("");
+  const [custom, setCustom] = useState(false);
+  const template = useQuery({
+    queryKey: ["audience-template", audience],
+    queryFn: () => api.audienceTemplate(audience),
+  });
+  const templateVersion = custom ? template.data?.version || 0 : 0;
   const input = {
     artifact_id: artifactId,
     audience,
     selection,
     include_citations: includeCitations,
+    template_version: templateVersion,
   };
   const preview = useQuery({
     queryKey: [
@@ -33,6 +40,7 @@ export default function AudienceDeliveryPreview({
       audience,
       selection,
       includeCitations,
+      templateVersion,
     ],
     queryFn: () => api.audiencePreview(meetingId, input),
   });
@@ -47,6 +55,7 @@ export default function AudienceDeliveryPreview({
             setAudience(
               event.target.value === "internal" ? "internal" : "external",
             );
+            setCustom(false);
             setSelection([]);
             setResult("");
             setCheckedFingerprint("");
@@ -56,7 +65,34 @@ export default function AudienceDeliveryPreview({
           <option value="internal">内部版</option>
         </select>
       </label>
-      <AudienceTemplateEditor key={audience} audience={audience} />
+      <label>
+        交付模板{" "}
+        <select
+          aria-label="交付模板"
+          disabled={saving}
+          value={custom ? "custom" : "default"}
+          onChange={(event) => {
+            setCustom(event.target.value === "custom");
+            setSelection([]);
+            setCheckedFingerprint("");
+            setResult("");
+          }}
+        >
+          <option value="default">内置默认</option>
+          {!!template.data?.version && (
+            <option value="custom">自定义 · v{template.data.version}</option>
+          )}
+        </select>
+      </label>
+      <AudienceTemplateEditor
+        key={audience}
+        audience={audience}
+        onSaved={() => {
+          setSelection([]);
+          setCheckedFingerprint("");
+          setResult("");
+        }}
+      />
       {audience === "external" && (
         <p>逐项选入可分享的内容。对外版使用通用标题，不附原文或引用。</p>
       )}
@@ -66,7 +102,9 @@ export default function AudienceDeliveryPreview({
           {preview.error.message}{" "}
           <button
             onClick={() =>
-              selection.length ? setSelection([]) : void preview.refetch()
+              selection.length
+                ? setSelection([])
+                : void template.refetch().then(() => preview.refetch())
             }
           >
             {selection.length ? "清空选择并重试" : "重试"}

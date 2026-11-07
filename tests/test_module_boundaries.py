@@ -42,6 +42,8 @@ def test_http_contract_matches_pre_split_v22(tmp_path):
     assert schema['components']['schemas'].pop('DeliveryFinalizeInput')
     for route,method in (('audience-preview','post'),('audience-finalize','post'),('deliveries/{delivery_id}/sent','put')):
         assert set(schema['paths'].pop('/api/meetings/{mid}/minutes/'+route))=={method}
+    for name in ('AudiencePreviewInput','AudienceFinalizeInput'):
+        assert schema['components']['schemas'][name]['properties']['template_version']['default']==0
     for name in ('AudiencePreviewInput','AudienceFinalizeInput','DeliverySentInput'):
         assert schema['components']['schemas'].pop(name)
     assert schema['paths'].pop('/api/meetings/{mid}/handoff/sources')

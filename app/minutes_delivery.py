@@ -2,7 +2,8 @@
 import hashlib,json
 from . import meeting_flow,minutes_versions
 from .db import encode
-from .minutes import MeetingMinutes,MinutesItem,validate_minutes_citations
+from .minutes import MeetingMinutes,MinutesItem,validate_minutes_citations,ENGLISH_SECTIONS
+from .minutes_templates import MinutesTemplate,MinutesTemplateSection,audience_template
 
 
 def prepare(db,mid,aid,include_citations):
@@ -48,8 +49,20 @@ def matching(db,mid,aid,payload,exact_citations=True,review=None):
         if confirmation and review and any(confirmation.get(step)!=review['steps'][step]['fingerprint'] or review['steps'][step]['state']!='done' for step in ('transcript','speakers','minutes')):continue
         if saved.get('audience','internal') != payload.get('audience','internal'):continue
         if saved.get('selection',[]) != payload.get('selection',[]):continue
+        if saved.get('template_version',0) != payload.get('template_version',0):continue
         if all(saved.get(key)==payload.get(key) for key in keys):result.append(row['id'])
     return result
+
+
+def current_internal(db, mid, aid, payload, exact_citations=True, review=None):
+    matches=matching(db,mid,aid,payload,exact_citations,review)
+    if matches or not payload:
+        return matches
+    version=audience_template(db,'internal')['version']
+    if not version:
+        return []
+    projected,_=audience_document(db,mid,payload,'internal',[],version)
+    return matching(db,mid,aid,projected,exact_citations,review)
 
 
 def current_external(db, mid, aid, payload, review):
@@ -67,7 +80,7 @@ def current_external(db, mid, aid, payload, review):
         if saved['review_confirmation'] != confirmation or saved['task_sources'] != task_sources(db, mid):
             continue
         try:
-            projected, _ = external_projection(db, mid, payload, saved['selection'])
+            projected, _ = audience_document(db,mid,payload,'external',saved['selection'],saved.get('template_version',0))
         except ValueError:
             continue
         if all(saved.get(key) == value for key, value in projected.items()):
@@ -87,6 +100,7 @@ def public(row):
     return {'id':row['id'],'artifact_id':row['artifact_id'],'created':row['created'],
             'title':payload['document']['title'],'revision':payload['revision'],
             'audience':payload.get('audience','internal'),'sent_at':payload.get('sent_at'),
+            'template_version':payload.get('template_version',0),
             'include_citations':payload['include_citations'],'task_status':payload['task_status']}
 
 
@@ -96,7 +110,7 @@ EXTERNAL_SECTIONS = {
 }
 
 
-def external_projection(db, mid, payload, selection):
+def external_projection(db, mid, payload, selection, columns=None):
     source = MeetingMinutes.model_validate(payload['document'])
     # Start from an empty document. Custom titles, metadata, templates, and
     # transcript excerpts can contain internal material even without citations.
@@ -122,7 +136,8 @@ def external_projection(db, mid, payload, selection):
                          if item['task_id'] in active_tasks}
     candidates = []
     selected = set(selection)
-    for section, label in EXTERNAL_SECTIONS.items():
+    for section in columns if columns is not None else EXTERNAL_SECTIONS:
+        label = EXTERNAL_SECTIONS[section]
         if source.interview and section == 'decisions':
             continue  # Interview decisions represent internal competency assessments.
         for index, item in enumerate(getattr(source, section)):
@@ -142,6 +157,32 @@ def external_projection(db, mid, payload, selection):
         'segments': [], 'revision': payload['revision'],
         'include_citations': False, 'task_status': [],
     }, candidates
+
+
+def audience_document(db, mid, payload, audience, selection, template_version=0):
+    template = audience_template(db,audience) if template_version else None
+    if template and template['version']!=template_version:
+        raise ValueError('模板版本已变化，请刷新后重新预览')
+    if audience=='external':
+        projected,candidates=external_projection(db,mid,payload,selection,template['columns'] if template else None)
+    else:
+        if selection:raise ValueError('内部版按选定模板展示采用稿')
+        projected,candidates=payload,[]
+    if not template:
+        return projected,candidates
+    document=MeetingMinutes.model_validate(projected['document'])
+    columns=template['columns']
+    for section in template['allowed']:
+        if section not in columns:setattr(document,section,[])
+    labels=ENGLISH_SECTIONS if document.output_language=='en' else template['allowed']
+    layout=MinutesTemplate(
+        id=f'audience:{audience}',name='自定义交付纪要',version=template_version,builtin=False,
+        sections=[MinutesTemplateSection(id=key,title=labels[key],source=key,
+                  kind={'decisions':'decision_table','action_items':'action_table'}.get(key,'list')) for key in columns],
+    )
+    document.template_snapshot=layout.model_dump()
+    return {**projected,'document':document.model_dump(),'template_version':template_version,
+            'task_status':projected['task_status'] if 'action_items' in columns else []},candidates
 
 
 def set_sent(store, mid, delivery_id, sent):

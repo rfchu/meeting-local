@@ -165,6 +165,7 @@ type AudiencePreviewInput = {
   audience: "internal" | "external";
   selection: string[];
   include_citations: boolean;
+  template_version?: number;
 };
 
 export const api = {

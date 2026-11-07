@@ -301,6 +301,7 @@ class DeliverySentInput(BaseModel):
 
 
 class AudiencePreviewInput(BaseModel):
+    template_version: int = Field(default=0,ge=0)
     artifact_id: str = Field(min_length=1,max_length=100)
     audience: Literal['internal','external']
     selection: list[str] = Field(default_factory=list,max_length=250)

@@ -280,7 +280,7 @@ def minutes_markdown(document: MeetingMinutes, segments: list[dict], include_cit
 
 def _style_layout(value):
     if isinstance(value, MeetingMinutes):
-        if value.output_language=='en':
+        if value.output_language=='en' and not (value.template_snapshot or {}).get('id','').startswith('audience:'):
             labels=({'overview':'Candidate Background','conclusions':'Questions and Answers',
                      'decisions':'Competency Evidence','action_items':'Follow-up Actions',
                      'open_questions':'Reviewed Concerns','summary':'Interview Summary'}
