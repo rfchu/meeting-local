@@ -3,6 +3,8 @@ Never reuse transformer KV state or encoder features for growing/changed audio.
 """
 import hashlib
 
+from app.languages import UnsupportedAutoLanguage
+
 class PrefixHistory:
     def __init__(self):self.last=None
     def choose(self,tokenizer,request,audio_bytes,context,rollback=8):
@@ -80,6 +82,8 @@ def decode_with_fallback(decode,decoder,prefix):
         text,attempts=decode(decoder,prefix)
         if prefix and (not text or attempts[0]['generation_tokens']==0):raise RuntimeError('前缀续写未产生有效尾部')
         return text,attempts,prefix,''
+    except UnsupportedAutoLanguage:
+        raise
     except Exception as error:
         reason=type(error).__name__;decoder.clear()
     if prefix:

@@ -624,7 +624,7 @@ export function useRecordingController({
     setCompleting(true);
     try {
       await onComplete(id, {
-        mode,
+        mode: briefRef.current.source_language === "ja" ? "none" : mode,
         engine,
         goal: mode === "none" ? "transcript" : postGoal,
       });
@@ -1038,7 +1038,12 @@ export function useRecordingController({
       } catch {
         setSaveStatus("本机会议已保存，浏览器暂存清理未完成");
       }
-      if (allowAutoProcess && autoProcess && !processingDeferredRef.current) {
+      if (
+        allowAutoProcess &&
+        autoProcess &&
+        !processingDeferredRef.current &&
+        briefRef.current.source_language !== "ja"
+      ) {
         try {
           const receipt = await api.recordingCompletion(
             session.id,

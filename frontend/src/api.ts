@@ -13,6 +13,7 @@ import type { RecordingObservation } from "./features/management/RecordingValida
 import type {
   RecordingQuality,
   RecordingReviewStatus,
+  SourceLanguage,
   TranscriptionLanguage,
 } from "./types";
 import type { RuntimeTasks } from "./features/management/TasksPanel";
@@ -625,7 +626,7 @@ export const api = {
     id: string,
     offset: number,
     engine: "whisper" | "qwen" = "whisper",
-    sourceLanguage?: "auto" | "zh" | "en",
+    sourceLanguage?: SourceLanguage,
   ) =>
     request<{
       ready: boolean;
@@ -646,7 +647,7 @@ export const api = {
     windowSeconds: 5 | 10 | 15 = 15,
     contextEnabled = true,
     terms = "",
-    sourceLanguage?: "auto" | "zh" | "en",
+    sourceLanguage?: SourceLanguage,
   ) =>
     readLiveStream<
       LiveStreamResult & {
@@ -969,7 +970,7 @@ export const api = {
     confirmed = true,
     contextEnabled = true,
     terms = "",
-    sourceLanguage?: "auto" | "zh" | "en",
+    sourceLanguage?: SourceLanguage,
   ) => {
     const data = new FormData();
     data.append("file", file);
@@ -991,7 +992,7 @@ export const api = {
     engine: "whisper" | "qwen" = "whisper",
     recordingId?: string,
     signal?: AbortSignal,
-    sourceLanguage?: "auto" | "zh" | "en",
+    sourceLanguage?: SourceLanguage,
   ) => {
     const data = new FormData();
     data.append("file", file);

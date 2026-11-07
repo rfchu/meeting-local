@@ -50,7 +50,7 @@ export function readRecordingPreferences(
       return { ...DEFAULT_RECORDING_PREFERENCES };
     return {
       ...DEFAULT_RECORDING_PREFERENCES,
-      sourceLanguage: ["auto", "zh", "en"].includes(value.sourceLanguage)
+      sourceLanguage: ["auto", "zh", "en", "ja"].includes(value.sourceLanguage)
         ? value.sourceLanguage
         : "auto",
       outputLanguage: value.outputLanguage === "en" ? "en" : "zh",

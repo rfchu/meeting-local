@@ -1,17 +1,27 @@
 """Language policy shared by recording, ASR and editorial tasks."""
 from typing import Literal
 
-SourceLanguage = Literal['auto', 'zh', 'en']
-TranscriptionLanguage = Literal['auto', 'zh', 'en', 'ja']
+SourceLanguage = Literal['auto', 'zh', 'en', 'ja']
+TranscriptionLanguage = SourceLanguage
 EXPERIMENTAL_TRANSCRIPTION_LANGUAGES = {'ja': 'Japanese'}
 OutputLanguage = Literal['zh', 'en']
-ASR_NAMES = {'auto': None, 'zh': 'Chinese', 'en': 'English'}
+ASR_NAMES = {'auto': None, 'zh': 'Chinese', 'en': 'English', 'ja': 'Japanese'}
+AUTO_LANGUAGES = frozenset(('zh', 'en', 'Chinese', 'English'))
+
+
+class UnsupportedAutoLanguage(ValueError):
+    pass
+
+
+def check_auto_languages(languages):
+    if not languages or any(name not in AUTO_LANGUAGES for name in languages):
+        raise UnsupportedAutoLanguage('自动识别仅支持中英文。日语会议请选择「日语（Beta）」后重新识别。')
 
 
 def source_language(value=None):
     value = value or 'zh'  # Existing recordings and jobs used a fixed Chinese prompt.
     if value not in ASR_NAMES:
-        raise ValueError('原文语言仅支持自动识别、中文或英文')
+        raise ValueError('原文语言仅支持自动识别、中文、英文或日语')
     return value
 
 
@@ -66,6 +76,5 @@ def qwen_text(raw, language):
     """Auto detection emits a language header before <asr_text>; never show it as speech."""
     if source_language(language) != 'auto':
         return raw.strip()
-    if '<asr_text>' not in raw:
-        return ''
-    return raw.split('<asr_text>', 1)[1].strip()
+    header, marker, text = raw.partition('<asr_text>')
+    return text.strip() if marker and header.removeprefix('language ').strip() in AUTO_LANGUAGES else ''

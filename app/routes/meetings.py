@@ -444,7 +444,8 @@ def register_routes(app,services:ApplicationServices):
     @app.post('/api/meetings/{mid}/jobs',status_code=201)
     def enqueue(mid:str,body:JobInput):
         row=meeting(mid)
-        experimental=body.source_language in EXPERIMENTAL_TRANSCRIPTION_LANGUAGES
+        language=body.source_language or meeting_languages(store,mid)['source_language']
+        experimental=language in EXPERIMENTAL_TRANSCRIPTION_LANGUAGES
         if experimental and (body.engine != 'qwen' or body.completion_mode != 'full'
                              or body.recording_handoff or body.minutes_followup or body.diarization):
             raise HTTPException(422,'实验性语言仅支持千问会后原文草稿，请关闭快速完成、自动区分发言人与自动纪要')
@@ -456,7 +457,6 @@ def register_routes(app,services:ApplicationServices):
             if not (recordings.root/mid/'session.json').exists():raise HTTPException(409,'会后交接仅适用于本机录音')
             existing=store.one('SELECT id FROM jobs WHERE id=? AND meeting_id=?',(jid,mid))
             if existing:return {'id':existing['id'],'reused':True}
-        language=body.source_language or meeting_languages(store,mid)['source_language']
         provider=configure_transcription_asr(get_asr_provider(body.engine),language)
         if body.completion_mode!='quick' and not provider.ready(): raise HTTPException(409,f'{provider.label} 尚未就绪，请先安装对应模型')
         if body.completion_mode=='quick' and not (recordings.root/mid/'session.json').exists():raise HTTPException(409,'快速完成仅适用于本机实时录音')

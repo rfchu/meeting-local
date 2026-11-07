@@ -1,7 +1,8 @@
+import { createPortal } from "react-dom";
 import { liveChineseKey, useLiveChinese } from "./useLiveChinese";
 import { draftSourceId } from "../overview/notes";
 import { useLayoutEffect, useRef, useState } from "react";
-import type { LiveDraftSegment } from "../../types";
+import type { LiveDraftSegment, SourceLanguage } from "../../types";
 import { paragraphs } from "../transcript/paragraphs";
 import { clock } from "../../utils";
 
@@ -14,10 +15,18 @@ export default function LiveDraftList({
   active = true,
   jump,
   recordingId,
+  sourceLanguage,
   profiles = [],
+  subtitleTarget,
+  subtitleEnabled = false,
+  onCollapseSubtitle,
 }: {
   drafts: LiveDraftSegment[];
+  subtitleTarget?: HTMLDivElement | null;
+  subtitleEnabled?: boolean;
+  onCollapseSubtitle?: () => void;
   recordingId?: string;
+  sourceLanguage?: SourceLanguage;
   profiles?: { id: string; name: string }[];
   partial?: LiveDraftSegment | null;
   emptyText?: string;
@@ -65,19 +74,45 @@ export default function LiveDraftList({
   const profile = profiles.some((item) => item.id === model)
     ? model
     : profiles[0]?.id || "";
+  const latest = drafts.at(-1);
+  const caption = partial || latest;
   const translation = useLiveChinese(
-    drafts,
+    subtitleEnabled ? (latest ? [latest] : []) : drafts,
     recordingId || "",
     profile,
-    bilingual,
+    subtitleEnabled || bilingual,
+    sourceLanguage,
   );
   useLayoutEffect(() => {
     if (bilingual && active && following.current && list.current)
       list.current.scrollTop = list.current.scrollHeight;
   }, [translation.entries, bilingual, active]);
   const groups = paragraphs(drafts);
+  const captionTranslation =
+    latest && !partial
+      ? translation.entries[
+          liveChineseKey(latest, recordingId || "", profile, sourceLanguage)
+        ]?.result
+      : undefined;
   return (
     <>
+      {subtitleEnabled &&
+        subtitleTarget &&
+        createPortal(
+          <section className="workbench-subtitle" aria-label="最新会中字幕">
+            {caption && <time>{clock(caption.start)}</time>}
+            <div>
+              <p>{caption?.text || "等待实时文字…"}</p>
+              {captionTranslation?.status === "translated" && (
+                <p>{captionTranslation.text}</p>
+              )}
+            </div>
+            <button className="text-btn" onClick={onCollapseSubtitle}>
+              收起字幕
+            </button>
+          </section>,
+          subtitleTarget,
+        )}
       <div className="live-draft-follow">
         {recordingId && (
           <button
@@ -85,26 +120,28 @@ export default function LiveDraftList({
             aria-pressed={bilingual}
             onClick={() => setBilingual((value) => !value)}
           >
-            {bilingual ? "双语视图已开启 · 切回原文" : "开启双语视图"}
+            {bilingual ? "双语 · 切回原文" : "原文 · 切换双语"}
           </button>
         )}
         {bilingual && (
-          <label>
-            本地翻译模型
-            <select
-              value={profile}
-              onChange={(event) => setModel(event.target.value)}
-            >
-              {!profiles.length && <option value="">未配置本地模型</option>}
-              {profiles.map((item) => (
-                <option key={item.id} value={item.id}>
-                  {item.name}
-                </option>
-              ))}
-            </select>
-          </label>
+          <details className="workbench-transcript-menu">
+            <summary>翻译设置</summary>
+            <label>
+              本地翻译模型
+              <select
+                value={profile}
+                onChange={(event) => setModel(event.target.value)}
+              >
+                {!profiles.length && <option value="">未配置本地模型</option>}
+                {profiles.map((item) => (
+                  <option key={item.id} value={item.id}>
+                    {item.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </details>
         )}
-        <span>{follow ? "自动跟随最新结果" : "正在回看 · 已暂停跟随"}</span>
         <button
           className="text-btn"
           onClick={() => {
@@ -127,7 +164,7 @@ export default function LiveDraftList({
               ? "本地模型忙碌，空闲后自动继续翻译。"
               : translation.remaining
                 ? `自动翻译已确认片段 · ${translation.remaining} 段待处理`
-                : "已确认的英文片段显示原文和译文 · 临时文字显示原文"}
+                : "已确认片段显示原文和译文 · 临时文字显示原文"}
         </small>
       )}
       <div
@@ -139,6 +176,7 @@ export default function LiveDraftList({
         aria-relevant="additions text"
         tabIndex={0}
         onScroll={() => {
+          if (!active) return;
           const element = list.current;
           if (!element) return;
           const atBottom =
@@ -179,7 +217,12 @@ export default function LiveDraftList({
             {bilingual && recordingId ? (
               <div>
                 {draft.parts.map((part, partIndex) => {
-                  const key = liveChineseKey(part, recordingId, profile);
+                  const key = liveChineseKey(
+                    part,
+                    recordingId,
+                    profile,
+                    sourceLanguage,
+                  );
                   const entry = translation.entries[key];
                   return (
                     <div key={partIndex} className="live-bilingual-part">

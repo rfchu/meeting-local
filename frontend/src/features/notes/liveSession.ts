@@ -1,11 +1,11 @@
-import type { LiveDraftSegment } from "../../types";
+import type { LiveDraftSegment, SourceLanguage } from "../../types";
 import type {
   DecoderMetrics,
   DecoderTotals,
   LiveStreamResult,
 } from "./liveStream";
 export interface SessionConfig {
-  source_language?: "auto" | "zh" | "en";
+  source_language?: SourceLanguage;
   engine?: "qwen" | "whisper";
   responsive: boolean;
   context_enabled: boolean;

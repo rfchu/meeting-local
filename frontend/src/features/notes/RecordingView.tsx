@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import {
   browserCaptureAllowed,
   embeddedHost,
@@ -155,6 +156,39 @@ export default function RecordingView({
   termsOpen,
   toast,
 }: RecordingViewModel) {
+  const [notesCollapsed, setNotesCollapsed] = useState(false);
+  const [subtitleCollapsed, setSubtitleCollapsed] = useState(false);
+  const [subtitleTarget, setSubtitleTarget] = useState<HTMLDivElement | null>(
+    null,
+  );
+  const [returnToOverview, setReturnToOverview] = useState(false);
+  const [overviewVersion, setOverviewVersion] = useState(0);
+  const [seenOverview, setSeenOverview] = useState(0);
+  useEffect(() => {
+    if (mobilePane === "overview") setSeenOverview(overviewVersion);
+  }, [mobilePane, overviewVersion]);
+  const tracks = [
+    ...(captureSource !== "browser"
+      ? [{ label: "电脑声音", levels: systemLevels, color: "#3968e8" }]
+      : []),
+    ...(captureSource !== "macos-system"
+      ? [{ label: "麦克风", levels: microphoneLevels, color: "#263752" }]
+      : []),
+  ];
+  const syncFailed =
+    failedChunksRef.current.length > 0 ||
+    localSaveFailedRef.current ||
+    /失败|未完成|错误|待重试/.test(saveStatus);
+  const retry = () => void retrySync().catch((error) => toast(error.message));
+  const captureWarning =
+    recording &&
+    captureSource !== "browser" &&
+    (captureHealth?.stalled ||
+      nativeUnavailable ||
+      captureHealth?.tracks.some(
+        (track) =>
+          track.state === "no_data" || track.file_state === "unconfirmed",
+      ));
   const controlRequired =
     sessionRef.current?.source === "macos" &&
     !!nativeOwnership?.control_required;
@@ -180,7 +214,7 @@ export default function RecordingView({
           onClose={() => setTermsOpen(false)}
         />
       )}
-      {embeddedHost() && (
+      {embeddedHost() && !recording && (
         <p className="muted">
           内嵌工作区可使用已有原生音轨模式；浏览器麦克风录音请打开宿主的“浏览器工作台”。
         </p>
@@ -196,8 +230,12 @@ export default function RecordingView({
       <div className="workbench-topbar">
         <div>
           <div className="eyebrow">本机会议采集</div>
-          <h2>录音与会议简记</h2>
-          <button className="text-btn" onClick={() => setTermsOpen(true)}>
+          <h2>{recording ? brief.title || "本次会议" : "录音与会议简记"}</h2>
+          <button
+            hidden={recording}
+            className="text-btn"
+            onClick={() => setTermsOpen(true)}
+          >
             {sessionRef.current ? "会议术语" : "个人术语库"}
           </button>
         </div>
@@ -207,6 +245,11 @@ export default function RecordingView({
           <span /> {clock(elapsed)}
         </div>
         <div className="recording-controls">
+          {recording && (
+            <button className="recording-quick-mark" onClick={() => markNow()}>
+              ⚑ 标记此刻
+            </button>
+          )}
           {state === "idle" && !targetRecordingId && (
             <button
               className="primary"
@@ -255,7 +298,9 @@ export default function RecordingView({
               onClick={endGuide.request}
             >
               ■{" "}
-              {autoProcess && !processingDeferredRef.current
+              {brief.source_language !== "ja" &&
+              autoProcess &&
+              !processingDeferredRef.current
                 ? "结束并整理"
                 : "结束录音"}
             </button>
@@ -273,6 +318,15 @@ export default function RecordingView({
                   ? "恢复录音控制"
                   : "等待控制租约释放"}
             </button>
+          )}
+          {recording && (
+            <details className="workbench-menu">
+              <summary aria-label="更多录音操作">⋯</summary>
+              <div>
+                <button onClick={() => setTermsOpen(true)}>会议术语</button>
+                <button onClick={() => setInspectorOpen(true)}>运行详情</button>
+              </div>
+            </details>
           )}
           {state === "saving" && (
             <span role="status" aria-live="polite">
@@ -315,43 +369,6 @@ export default function RecordingView({
         </div>
       </div>
       <RecordingEndGuide guide={endGuide} />
-      {recording &&
-        captureSource !== "browser" &&
-        (captureHealth?.stalled ||
-          nativeUnavailable ||
-          captureHealth?.tracks.some(
-            (t) => t.state === "no_data" || t.file_state === "unconfirmed",
-          )) && (
-          <section
-            className="recording-end-guide"
-            role="alert"
-            aria-label="采集状态异常"
-          >
-            <div>
-              <strong>
-                {nativeUnavailable
-                  ? "暂时无法连接录音服务"
-                  : captureHealth?.stalled
-                    ? "采集心跳停止更新"
-                    : captureHealth?.tracks.some(
-                          (t) => t.file_state === "unconfirmed",
-                        )
-                      ? "音轨保存状态待核对"
-                      : "部分音轨未收到音频"}
-              </strong>
-              <span>
-                采集上报位置 {clock(accruedRef.current)}
-                。已有音轨文件保留；请检查输入设备、其他软件的设备使用及磁盘空间，状态恢复后会自动更新。
-              </span>
-            </div>
-            <button onClick={() => setInspectorOpen(true)}>检查运行详情</button>
-            {!controlRequired && (
-              <button disabled={endGuide.pending} onClick={endGuide.request}>
-                结束并检查已存音轨
-              </button>
-            )}
-          </section>
-        )}
       {state === "idle" && (
         <label className="recording-session-strip">
           会议场景与音源
@@ -379,15 +396,19 @@ export default function RecordingView({
       {state === "idle" ? (
         <RecordingSetupBar
           source={sourceLabel}
-          recognition={`${engineName} · ${({ auto: "自动识别", zh: "中文", en: "英文" } as const)[brief.source_language || "auto"]} · ${draftEngine === "qwen" && streamEnabled ? (responsiveMode ? "短片段模式" : "逐字推送") : "分段识别"}`}
+          recognition={`${engineName} · ${({ auto: "自动识别（中英）", zh: "中文", en: "英文", ja: "日语（Beta）" } as const)[brief.source_language || "auto"]} · ${draftEngine === "qwen" && streamEnabled ? (responsiveMode ? "短片段模式" : "逐字推送") : "分段识别"}`}
           outcome={
-            completionMode === "none"
+            brief.source_language === "ja" || completionMode === "none"
               ? "仅保存录音与简记"
               : postGoal === "minutes"
                 ? "文字稿＋AI 纪要"
                 : "生成会议文字稿"
           }
-          processing={`${completionMode === "none" ? "暂不转写" : completionMode === "quick" ? "快速完成" : "精细处理"} · ${autoProcess ? "自动进入整理" : "手动选择"}`}
+          processing={
+            brief.source_language === "ja"
+              ? "会后可手动生成日语草稿"
+              : `${completionMode === "none" ? "暂不转写" : completionMode === "quick" ? "快速完成" : "精细处理"} · ${autoProcess ? "自动进入整理" : "手动选择"}`
+          }
           title={brief.title}
           brief={
             brief.interview?.role
@@ -413,14 +434,14 @@ export default function RecordingView({
               : undefined
           }
         />
-      ) : (
+      ) : !recording ? (
         <div className="recording-session-strip" aria-label="当前录音方案">
           <strong>{brief.title || "本次会议"}</strong>
           <span>{sourceLabel}</span>
           <span>
             {recordOnly
               ? "仅录音与简记"
-              : `${engineName} · ${({ auto: "自动识别", zh: "中文", en: "英文" } as const)[brief.source_language || "zh"]}`}
+              : `${engineName} · ${({ auto: "自动识别（中英）", zh: "中文", en: "英文", ja: "日语（Beta）" } as const)[brief.source_language || "zh"]}`}
           </span>
           <span>
             {postGoal === "minutes" && !recordOnly
@@ -431,7 +452,7 @@ export default function RecordingView({
             运行详情
           </button>
         </div>
-      )}
+      ) : null}
       {state === "idle" && (
         <RecordingReadiness
           nativeCapability={nativeCapability}
@@ -459,6 +480,7 @@ export default function RecordingView({
           savedEngine={savedEngine}
           handoffError={handoffError}
           recordOnly={recordOnly}
+          japaneseBeta={brief.source_language === "ja"}
           completing={completing}
           completionMode={completionMode}
           postGoal={postGoal}
@@ -487,68 +509,6 @@ export default function RecordingView({
           ))}
         </div>
       )}
-      {recording && (
-        <section
-          className="recording-live-status"
-          aria-label="声音、保存与识别"
-        >
-          <RecordingWaveform
-            tracks={
-              captureSource === "browser"
-                ? [
-                    {
-                      label: "麦克风",
-                      levels: microphoneLevels,
-                      color: "#263752",
-                    },
-                  ]
-                : [
-                    {
-                      label: "电脑声音",
-                      levels: systemLevels,
-                      color: "#3968e8",
-                    },
-                    ...(captureSource === "macos-both"
-                      ? [
-                          {
-                            label: "麦克风",
-                            levels: microphoneLevels,
-                            color: "#263752",
-                          },
-                        ]
-                      : []),
-                  ]
-            }
-            active={recording}
-            paused={state === "paused"}
-            status={saveStatus}
-            onRetry={
-              recording &&
-              (failedChunksRef.current.length > 0 ||
-                localSaveFailedRef.current ||
-                /失败|未完成|错误|待重试/.test(saveStatus))
-                ? () => void retrySync().catch((error) => toast(error.message))
-                : undefined
-            }
-          />
-        </section>
-      )}
-      {state !== "idle" && (
-        <RecordingHealthPanel
-          id={sessionRef.current?.id || ""}
-          state={state}
-          native={sessionRef.current?.source === "macos"}
-          tracks={captureHealth}
-          localFailure={localSaveFailedRef.current}
-          memoryOnly={failedChunksRef.current.length}
-          recognitionEnabled={!recordOnly}
-          onDiagnostics={() =>
-            void exportDiagnostics(sessionRef.current!.id).catch((error) =>
-              toast(error.message),
-            )
-          }
-        />
-      )}
       {state !== "idle" && (
         <div
           className={`workbench-history-wrapper${state === "finished" ? (historyOpen ? " ended open" : " ended") : ""}`}
@@ -574,60 +534,67 @@ export default function RecordingView({
                 </button>
                 <button
                   aria-pressed={mobilePane === "overview"}
-                  onClick={() => setMobilePane("overview")}
+                  onClick={() => {
+                    setMobilePane("overview");
+                    setSeenOverview(overviewVersion);
+                    setReturnToOverview(false);
+                  }}
                 >
                   AI 概览
+                  {mobilePane !== "overview" &&
+                    overviewVersion > seenOverview &&
+                    " · 有更新"}
                 </button>
                 <button
+                  className="workbench-notes-tab"
                   aria-pressed={mobilePane === "notes"}
                   onClick={() => setMobilePane("notes")}
                 >
                   我的简记{notes.length ? ` · ${notes.length}` : ""}
                 </button>
-                <button
-                  className="text-btn recording-quick-mark"
-                  disabled={!recording}
-                  onClick={() => markNow()}
-                >
-                  ⚑ 标记此刻
-                </button>
+                {recording && notesCollapsed && (
+                  <button
+                    className="workbench-restore-notes"
+                    onClick={() => setNotesCollapsed(false)}
+                  >
+                    展开简记
+                  </button>
+                )}
               </nav>
               <div
                 className="recording-workspace"
                 data-mobile-pane={mobilePane}
+                data-notes-collapsed={notesCollapsed}
               >
                 <section className="live-draft">
                   <header>
                     <h3>实时文字</h3>
-                    <span>{draftStatus}</span>
-                  </header>
-                  {!recordOnly && draftEngine === "qwen" && streamEnabled && (
-                    <div className="live-correction-bar">
-                      <small>
-                        {liveCorrection.status ||
-                          (contextEnabled
-                            ? "上下文辅助识别已开启 · 临时尾部可修订"
-                            : "临时尾部可修订")}
-                      </small>
+                    {returnToOverview && (
                       <button
                         className="text-btn"
-                        disabled={!correctionSessionId}
-                        onClick={() => setCorrectionReviewOpen(true)}
+                        onClick={() => {
+                          setMobilePane("overview");
+                          setSeenOverview(overviewVersion);
+                          setReturnToOverview(false);
+                        }}
                       >
-                        纠错记录
-                        {liveCorrection.corrections.filter(
-                          (c) => c.state === "suggested",
-                        ).length
-                          ? ` · ${liveCorrection.corrections.filter((c) => c.state === "suggested").length} 待确认`
-                          : ""}
+                        返回概览
                       </button>
-                    </div>
-                  )}
+                    )}
+                  </header>
                   <LiveDraftList
                     active={mobilePane === "transcript"}
+                    subtitleTarget={subtitleTarget}
+                    subtitleEnabled={
+                      recording &&
+                      mobilePane === "overview" &&
+                      !subtitleCollapsed
+                    }
+                    onCollapseSubtitle={() => setSubtitleCollapsed(true)}
                     jump={jumpDraft}
                     drafts={displayDrafts}
                     recordingId={correctionSessionId}
+                    sourceLanguage={brief.source_language || undefined}
                     profiles={environment?.analysis.profiles.filter(
                       (item) => item.provider_type === "local",
                     )}
@@ -637,7 +604,7 @@ export default function RecordingView({
                       recording &&
                       captureSource !== "browser" &&
                       (captureHealth?.stalled || nativeUnavailable)
-                        ? "已保存的原音保留，当前采集状态异常；请检查上方提示。"
+                        ? "已保存的原音保留，当前采集状态异常；请查看底部详情。"
                         : recordOnly
                           ? "本次未开启实时识别，请关注下方音轨与文件状态。会后可配置模型生成文字稿。"
                           : responsiveMode &&
@@ -663,10 +630,14 @@ export default function RecordingView({
                   <LiveOverviewPanel
                     recordingId={correctionSessionId || ""}
                     engine={draftEngine}
+                    timeline={recording}
+                    onVersion={setOverviewVersion}
+                    locateLabel="原话"
                     active={recording && !recordOnly}
                     profiles={environment?.analysis.profiles || []}
                     onModels={onModels}
                     onLocate={(e) => {
+                      setReturnToOverview(true);
                       setMobilePane("transcript");
                       setJumpDraft({ id: e.segment_id, nonce: Date.now() });
                     }}
@@ -678,17 +649,42 @@ export default function RecordingView({
                     <span>
                       {notes.length ? `${notes.length} 条` : "记录此刻的关注"}
                     </span>
+                    {recording && (
+                      <button
+                        className="text-btn workbench-collapse-notes"
+                        onClick={() => setNotesCollapsed(true)}
+                      >
+                        收起
+                      </button>
+                    )}
                   </header>
-                  <div className="note-capture-actions">
-                    <button
-                      className="mark-now"
-                      aria-label="标记此刻 Alt+M"
-                      title="标记此刻（Alt+M）"
+                  <div className="live-note-form">
+                    <textarea
+                      aria-label="会议简记"
+                      placeholder={
+                        recording
+                          ? "写下想法、问题或待办"
+                          : "开始录音后可记下重点"
+                      }
+                      value={noteText}
                       disabled={!recording}
-                      onClick={() => markNow()}
+                      onChange={(event) => setNoteText(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (
+                          (event.metaKey || event.ctrlKey) &&
+                          event.key === "Enter"
+                        )
+                          addNote();
+                      }}
+                    />
+                    <button
+                      disabled={!recording || !noteText.trim()}
+                      onClick={addNote}
                     >
-                      ⚑ 标记
+                      保存简记
                     </button>
+                  </div>
+                  <div className="note-capture-actions">
                     <div className="attention-quick-actions">
                       {(
                         [
@@ -772,32 +768,6 @@ export default function RecordingView({
                       </div>
                     )}
                   </div>
-                  <div className="live-note-form">
-                    <textarea
-                      aria-label="会议简记"
-                      placeholder={
-                        recording
-                          ? "只记关键词，系统会保留对应会议时间…"
-                          : "开始录音后可记下重点"
-                      }
-                      value={noteText}
-                      disabled={!recording}
-                      onChange={(event) => setNoteText(event.target.value)}
-                      onKeyDown={(event) => {
-                        if (
-                          (event.metaKey || event.ctrlKey) &&
-                          event.key === "Enter"
-                        )
-                          addNote();
-                      }}
-                    />
-                    <button
-                      disabled={!recording || !noteText.trim()}
-                      onClick={addNote}
-                    >
-                      保存关注点
-                    </button>
-                  </div>
                   <div
                     className={`live-note-list${!notes.length ? " empty" : ""}`}
                   >
@@ -858,29 +828,60 @@ export default function RecordingView({
         </div>
       )}
       {recording && (
-        <details className="workbench-bottom">
-          <summary>亮屏与后台采集说明</summary>
-          <div className="recording-awake-status">
-            <label>
-              <input
-                type="checkbox"
-                aria-label="录音时保持亮屏"
-                checked={keepAwake}
-                disabled={state === "requesting" || state === "saving"}
-                onChange={(event) => setKeepAwake(event.target.checked)}
-              />{" "}
-              录音时保持亮屏
-            </label>
-            <span role="status">{awakeStatus}</span>
+        <footer className="workbench-footer">
+          <div ref={setSubtitleTarget} />
+          <div className="workbench-status" aria-label="录音状态">
+            {tracks.map((track) => (
+              <span className="workbench-meter" key={track.label}>
+                {track.label}
+                <meter
+                  aria-label={track.label + "音量"}
+                  min={0}
+                  max={1}
+                  value={
+                    state === "paused"
+                      ? 0
+                      : Math.min(
+                          1,
+                          Math.sqrt(Math.max(0, track.levels.at(-1) || 0)) *
+                            2.4,
+                        )
+                  }
+                />
+              </span>
+            ))}
+            <span
+              title={saveStatus}
+              role="status"
+              className={syncFailed ? "health-warning" : undefined}
+            >
+              {syncFailed ? "同步待重试" : saveStatus}
+            </span>
+            {captureWarning && (
+              <span role="alert" className="health-warning">
+                采集待核对
+              </span>
+            )}
+            {syncFailed && <button onClick={retry}>重试同步</button>}
+            <span title={draftStatus}>
+              {recordOnly ? "仅录音" : draftStatus}
+            </span>
+            {overviewVersion > 0 && (
+              <span>概览已更新 · 第 {overviewVersion} 版</span>
+            )}
+            {mobilePane === "overview" && subtitleCollapsed && (
+              <button onClick={() => setSubtitleCollapsed(false)}>
+                显示字幕
+              </button>
+            )}
+            <button
+              className="workbench-details-button"
+              onClick={() => setInspectorOpen(true)}
+            >
+              详情 ⌃
+            </button>
           </div>
-          {captureSource !== "browser" && (
-            <p className="muted">
-              {sessionRef.current?.capture_transport === "broker_v2"
-                ? "独立采集服务持续保存音轨，API 重启后可明确恢复控制；请返回此处主动结束。系统睡眠、设备断开或采集服务退出仍可能中断录音。"
-                : "原生录音由本机服务持续采集，页面进入后台或关闭后仍会继续；请返回此处主动结束。系统睡眠、设备断开或服务退出仍可能中断录音。"}
-            </p>
-          )}
-        </details>
+        </footer>
       )}
       {correctionReviewOpen && correctionSessionId && (
         <LiveCorrectionReview
@@ -905,6 +906,119 @@ export default function RecordingView({
             </div>
             <button onClick={() => setInspectorOpen(false)}>关闭</button>
           </div>{" "}
+          {recording &&
+            captureSource !== "browser" &&
+            (captureHealth?.stalled ||
+              nativeUnavailable ||
+              captureHealth?.tracks.some(
+                (t) => t.state === "no_data" || t.file_state === "unconfirmed",
+              )) && (
+              <section
+                className="recording-end-guide"
+                role="alert"
+                aria-label="采集状态异常"
+              >
+                <div>
+                  <strong>
+                    {nativeUnavailable
+                      ? "暂时无法连接录音服务"
+                      : captureHealth?.stalled
+                        ? "采集心跳停止更新"
+                        : captureHealth?.tracks.some(
+                              (t) => t.file_state === "unconfirmed",
+                            )
+                          ? "音轨保存状态待核对"
+                          : "部分音轨未收到音频"}
+                  </strong>
+                  <span>
+                    采集上报位置 {clock(accruedRef.current)}
+                    。已有音轨文件保留；请检查输入设备、其他软件的设备使用及磁盘空间，状态恢复后会自动更新。
+                  </span>
+                </div>
+                <button onClick={() => setInspectorOpen(true)}>
+                  检查运行详情
+                </button>
+                {!controlRequired && (
+                  <button
+                    disabled={endGuide.pending}
+                    onClick={endGuide.request}
+                  >
+                    结束并检查已存音轨
+                  </button>
+                )}
+              </section>
+            )}
+          <p>
+            {sourceLabel} · {engineName} · {brief.source_language || "auto"}
+          </p>
+          {recording && (
+            <RecordingWaveform
+              tracks={tracks}
+              active={recording}
+              paused={state === "paused"}
+              status={saveStatus}
+              onRetry={syncFailed ? retry : undefined}
+            />
+          )}
+          <RecordingHealthPanel
+            id={sessionRef.current?.id || ""}
+            state={state}
+            native={sessionRef.current?.source === "macos"}
+            tracks={captureHealth}
+            localFailure={localSaveFailedRef.current}
+            memoryOnly={failedChunksRef.current.length}
+            recognitionEnabled={!recordOnly}
+            onDiagnostics={() =>
+              void exportDiagnostics(sessionRef.current!.id).catch((error) =>
+                toast(error.message),
+              )
+            }
+          />
+          {!recordOnly && draftEngine === "qwen" && streamEnabled && (
+            <div className="live-correction-bar">
+              <small>
+                {liveCorrection.status ||
+                  (contextEnabled
+                    ? "上下文辅助识别已开启 · 临时尾部可修订"
+                    : "临时尾部可修订")}
+              </small>
+              <button
+                className="text-btn"
+                disabled={!correctionSessionId}
+                onClick={() => setCorrectionReviewOpen(true)}
+              >
+                纠错记录
+                {liveCorrection.corrections.filter(
+                  (c) => c.state === "suggested",
+                ).length
+                  ? ` · ${liveCorrection.corrections.filter((c) => c.state === "suggested").length} 待确认`
+                  : ""}
+              </button>
+            </div>
+          )}
+          <details className="workbench-bottom">
+            <summary>亮屏与后台采集说明</summary>
+            <div className="recording-awake-status">
+              <label>
+                <input
+                  type="checkbox"
+                  aria-label="录音时保持亮屏"
+                  checked={keepAwake}
+                  disabled={state === "requesting" || state === "saving"}
+                  onChange={(event) => setKeepAwake(event.target.checked)}
+                />{" "}
+                录音时保持亮屏
+              </label>
+              <span role="status">{awakeStatus}</span>
+            </div>
+            {captureSource !== "browser" && (
+              <p className="muted">
+                {sessionRef.current?.capture_transport === "broker_v2"
+                  ? "独立采集服务持续保存音轨，API 重启后可明确恢复控制；请返回此处主动结束。系统睡眠、设备断开或采集服务退出仍可能中断录音。"
+                  : "原生录音由本机服务持续采集，页面进入后台或关闭后仍会继续；请返回此处主动结束。系统睡眠、设备断开或服务退出仍可能中断录音。"}
+              </p>
+            )}
+          </details>
           <p>{draftStatus}</p>
           {managedMode && (
             <p>

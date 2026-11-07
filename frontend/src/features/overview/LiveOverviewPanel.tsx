@@ -22,6 +22,8 @@ export default function LiveOverviewPanel({
   onModels,
   onLocate,
   locateLabel = "查看原文",
+  timeline = false,
+  onVersion,
 }: {
   recordingId: string;
   focusItemId?: string;
@@ -31,6 +33,8 @@ export default function LiveOverviewPanel({
   onModels?: () => void;
   onLocate?: (e: OverviewEvidence) => void;
   locateLabel?: string;
+  timeline?: boolean;
+  onVersion?: (version: number) => void;
 }) {
   const [data, setData] = useState<OverviewStatus | null>(null),
     [error, setError] = useState(""),
@@ -158,16 +162,26 @@ export default function LiveOverviewPanel({
         ...(text === undefined ? {} : { content: text }),
       }),
     );
+  useEffect(() => {
+    onVersion?.(data?.latest_version ?? data?.version ?? 0);
+  }, [data?.latest_version, data?.version, onVersion]);
   const historical = !!version,
     items = (data?.items || []).filter(
       (i) => showIgnored || i.decision !== "dismissed",
     );
   return (
-    <section className="live-overview-panel" aria-label="AI 会中概览">
+    <section
+      className={
+        timeline
+          ? "live-overview-panel overview-timeline"
+          : "live-overview-panel"
+      }
+      aria-label="AI 会中概览"
+    >
       <header className="overview-heading">
         <div>
           <h3>AI 会中概览</h3>
-          <small>AI 整理 · 会中参考</small>
+          {!timeline && <small>AI 整理 · 会中参考</small>}
         </div>
         <div className="overview-header-actions">
           <span
@@ -337,7 +351,7 @@ export default function LiveOverviewPanel({
           </div>
         )}
       </div>
-      {!!data?.topics?.length && (
+      {!timeline && !!data?.topics?.length && (
         <label>
           历史议题{" "}
           <select
@@ -407,7 +421,11 @@ export default function LiveOverviewPanel({
           return (
             !!group.length && (
               <section key={kind} className="overview-group" data-kind={kind}>
-                <h4>{labels[kind]}</h4>
+                {(!timeline || kind === "topic") && (
+                  <h4>
+                    {historical && kind === "topic" ? "历史议题" : labels[kind]}
+                  </h4>
+                )}
                 {group.map((item) => {
                   const evidence = item.evidence.find(
                     (entry) => !(entry.stale ?? item.stale),
@@ -419,6 +437,9 @@ export default function LiveOverviewPanel({
                       className={`overview-item ${item.decision}${item.stale ? " stale" : ""}`}
                     >
                       <div className="overview-item-main">
+                        {timeline && kind !== "topic" && (
+                          <span className="overview-kind">{labels[kind]}</span>
+                        )}
                         <p>{item.content}</p>
                         {onLocate && evidence && (
                           <button
@@ -426,7 +447,8 @@ export default function LiveOverviewPanel({
                             aria-label={`${locateLabel} ${clock(evidence.start)}`}
                             onClick={() => onLocate(evidence)}
                           >
-                            {clock(evidence.start)} · {locateLabel}
+                            {clock(evidence.start)}{" "}
+                            {timeline ? "›" : "· " + locateLabel}
                           </button>
                         )}
                         <button
@@ -553,6 +575,27 @@ export default function LiveOverviewPanel({
             )
           );
         })}
+        {timeline &&
+          data?.topics?.some(
+            (topic) => topic.version !== data.latest_version,
+          ) && (
+            <details className="overview-past-topics">
+              <summary>历史议题</summary>
+              {data.topics
+                .filter((topic) => topic.version !== data.latest_version)
+                .map((topic) => (
+                  <button
+                    key={topic.id}
+                    className="text-btn"
+                    aria-pressed={version === topic.version}
+                    onClick={() => setVersion(topic.version)}
+                  >
+                    {topic.start != null && <time>{clock(topic.start)}</time>}
+                    {topic.title}
+                  </button>
+                ))}
+            </details>
+          )}
       </div>
       {detailsOpen && data?.items.some((i) => i.decision === "dismissed") && (
         <label className="overview-ignored">

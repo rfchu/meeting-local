@@ -155,9 +155,10 @@ export default function RecordingSettingsDialog({
                   })
                 }
               >
-                <option value="auto">自动识别</option>
+                <option value="auto">自动识别（中英）</option>
                 <option value="zh">中文</option>
                 <option value="en">英文</option>
+                <option value="ja">日语（Beta）</option>
               </select>
             </label>
           ) : (

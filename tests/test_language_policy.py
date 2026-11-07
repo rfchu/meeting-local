@@ -15,7 +15,7 @@ from app.providers import QwenMLX, WhisperCpp, checkpoint_identity_matches
 from app.recordings import RecordingStore
 
 
-@pytest.mark.parametrize('language', ['auto', 'zh', 'en'])
+@pytest.mark.parametrize('language', ['auto', 'zh', 'en', 'ja'])
 def test_engines_receive_language_and_identity_prevents_wrong_reuse(tmp_path, monkeypatch, language):
     monkeypatch.setattr(WhisperCpp, 'ready', lambda self: True)
     whisper = configure_asr(WhisperCpp(), language)
@@ -47,7 +47,25 @@ def test_auto_stream_hides_language_header_without_altering_english():
     assert qwen_text('language Engl', 'auto') == ''
     assert qwen_text('language English<asr_text>Hello world.', 'auto') == 'Hello world.'
     assert qwen_text('language Chinese<asr_text>你好。', 'auto') == '你好。'
+    assert qwen_text('language Japanese<asr_text>こんにちは。', 'auto') == ''
+    assert qwen_text('こんにちは。', 'ja') == 'こんにちは。'
     assert qwen_text('Hello world.', 'en') == 'Hello world.'
+
+
+def test_japanese_recording_accepts_metadata_and_starts_live_session(tmp_path):
+    app = create_app(tmp_path, start_worker=False)
+    with TestClient(app) as client:
+        rid = client.post('/api/recordings', json={}).json()['id']
+        path = f'/api/recordings/{rid}'
+        metadata = client.put(path + '/metadata', json={
+            'duration': 5, 'notes': [], 'brief': {'source_language': 'ja'},
+        })
+        assert metadata.status_code == 200, metadata.text
+        live = client.put(path + '/live-session', json={'source_language': 'ja'})
+        assert live.status_code == 200, live.text
+        assert app.state.services.recordings.read(rid)['brief']['source_language'] == 'ja'
+        config = app.state.store.one('SELECT config FROM live_sessions WHERE recording_id=?', (rid,))
+        assert json.loads(config['config'])['source_language'] == 'ja'
 
 
 def test_preparation_and_asr_job_preserve_independent_languages(tmp_path, monkeypatch):
@@ -168,7 +186,7 @@ def test_experimental_language_is_limited_to_reviewable_batch_drafts(tmp_path, m
     store.execute('INSERT INTO meetings(id,title,filename) VALUES(?,?,?)', (mid, 'Draft', 'fixture.wav'))
     with TestClient(app) as client:
         url = f'/api/meetings/{mid}/jobs'
-        assert client.put('/api/meeting-preparation', json={'source_language': 'ja'}).status_code == 422
+        assert client.put('/api/meeting-preparation', json={'source_language': 'ja'}).status_code == 200
         for options in ({'engine': 'whisper'}, {'completion_mode': 'quick'},
                         {'recording_handoff': True}, {'diarization': True}):
             assert client.post(url, json={'source_language': 'ja', 'engine': 'qwen', **options}).status_code == 422

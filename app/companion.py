@@ -44,11 +44,12 @@ def snapshot(services, mode, rid=None):
         latest = max((segment for row in rows for segment in row['segments']), key=lambda s: s['end'], default=None)
         if latest:
             result['lines'] = [latest['text'][:500]]
-            if segment_language(latest['text'], hint) == 'en':
+            language = segment_language(latest['text'], hint)
+            if language in ('en', 'ja'):
                 with services.store.connect() as db:
                     providers = services.retrieval.translation_providers(db)
                 for provider in providers:
-                    path = translation_file(services.store.directory(rid), latest, 'en', provider)
+                    path = translation_file(services.store.directory(rid), latest, language, provider)
                     if translation := saved_translation(path):
                         result['lines'].append(translation[:500])
                         break

@@ -1,3 +1,4 @@
+import pytest
 from fastapi.testclient import TestClient
 from app.main import create_app
 
@@ -40,13 +41,19 @@ def test_companion_observes_only_and_pins_a_single_recording(tmp_path, monkeypat
     assert {r['id'] for r in services.recordings.list()} == {first, second}
 
 
-def test_bilingual_reads_only_the_latest_confirmed_text_and_cached_translation(tmp_path, monkeypatch):
+@pytest.mark.parametrize(('language', 'text'), [
+    ('en', 'We will verify the latest recording.'),
+    ('ja', '最新の録音を確認します。'),
+])
+def test_bilingual_reads_only_the_latest_confirmed_text_and_cached_translation(tmp_path, monkeypatch, language, text):
     from types import SimpleNamespace
     from app.chinese_record import translation_file, write_translation
 
     app = create_app(tmp_path, start_worker=False)
     services = app.state.services
     rid = services.recordings.create('audio/webm')['id']
+    session = services.recordings.read(rid)
+    services.recordings.write(services.recordings.folder(rid)/'session.json', {**session, 'source_language': language})
     original_read = services.recording_runtime.read
 
     def runtime(*args):
@@ -55,7 +62,7 @@ def test_bilingual_reads_only_the_latest_confirmed_text_and_cached_translation(t
         return value
 
     monkeypatch.setattr(services.recording_runtime, 'read', runtime)
-    latest = {'start': 2, 'end': 4, 'text': 'We will verify the latest recording.'}
+    latest = {'start': 2, 'end': 4, 'text': text}
     earlier = {'start': 0, 'end': 2, 'text': 'This is earlier.'}
     monkeypatch.setattr(services.live_results, 'snapshot',
                         lambda *args: [{'segments': [latest, earlier]}])
@@ -66,7 +73,7 @@ def test_bilingual_reads_only_the_latest_confirmed_text_and_cached_translation(t
     params = {'mode': 'bilingual', 'rid': rid}
     path = '/api/runtime/companion'
     assert client.get(path, params=params).json()['snapshot']['lines'] == [latest['text'], '等待工作台译文']
-    write_translation(translation_file(services.store.directory(rid), latest, 'en', provider), '我们会核对最新的录音。')
+    write_translation(translation_file(services.store.directory(rid), latest, language, provider), '我们会核对最新的录音。')
     assert client.get(path, params=params).json()['snapshot']['lines'] == [latest['text'], '我们会核对最新的录音。']
 
 

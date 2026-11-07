@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, APIError } from "../../api";
-import type { LiveDraftSegment } from "../../types";
+import type { LiveDraftSegment, SourceLanguage } from "../../types";
 import type { ChineseResult } from "./ChineseRecordLine";
 
 type Entry = { result?: ChineseResult; error?: string };
@@ -9,12 +9,13 @@ export function liveChineseKey(
   part: LiveDraftSegment,
   recordingId: string,
   profile: string,
+  sourceLanguage?: SourceLanguage,
 ) {
   if (
     !part.live_range_id ||
     part.live_segment_index == null ||
-    !/[A-Za-z]/.test(part.text) ||
-    /[\u3400-\u9fff]/.test(part.text)
+    (sourceLanguage !== "ja" &&
+      (!/[A-Za-z]/.test(part.text) || /[\u3400-\u9fff]/.test(part.text)))
   )
     return "";
   return JSON.stringify([
@@ -31,11 +32,12 @@ export function useLiveChinese(
   recordingId: string,
   profile: string,
   enabled: boolean,
+  sourceLanguage?: SourceLanguage,
 ) {
   const [entries, setEntries] = useState<Record<string, Entry>>({});
   const [busy, setBusy] = useState(false);
   const keys = drafts
-    .map((part) => liveChineseKey(part, recordingId, profile))
+    .map((part) => liveChineseKey(part, recordingId, profile, sourceLanguage))
     .filter(Boolean);
   const next =
     enabled && recordingId && profile

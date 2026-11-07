@@ -1,5 +1,5 @@
-export type SourceLanguage = "auto" | "zh" | "en";
-export type TranscriptionLanguage = SourceLanguage | "ja";
+export type SourceLanguage = "auto" | "zh" | "en" | "ja";
+export type TranscriptionLanguage = SourceLanguage;
 export type OutputLanguage = "zh" | "en";
 export type Workspace =
   "prepare" | "transcript" | "notes" | "analysis" | "minutes";

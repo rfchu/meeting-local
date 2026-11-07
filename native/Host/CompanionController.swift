@@ -2,12 +2,12 @@ import AppKit
 
 final class CompanionController: NSObject, NSWindowDelegate {
     private let panel: NSPanel
-    private let status = NSTextField(labelWithString: "正在查看录音状态…")
+    private let status = NSImageView()
     private let content = NSTextField(wrappingLabelWithString: "")
     private let translation = NSTextField(wrappingLabelWithString: "")
     private let modes = NSSegmentedControl(labels: CompanionMode.allCases.map(\.title), trackingMode: .selectOne, target: nil, action: nil)
     private let client: ServiceClient
-    private let returnButton = NSButton(title: "返回本场", target: nil, action: nil)
+    private let returnButton = NSButton()
     private var observation = CompanionObservation()
     var returnToRecording: (String) -> Void = { _ in }
     private let configuration: HostConfiguration
@@ -28,15 +28,27 @@ final class CompanionController: NSObject, NSWindowDelegate {
         panel.sharingType = .none
         panel.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary]
         modes.target = self; modes.action = #selector(changeMode)
-        status.font = .systemFont(ofSize: 13, weight: .semibold)
+        setStatus("正在查看录音状态…", symbol: "ellipsis.circle")
         content.font = .systemFont(ofSize: 13)
         content.maximumNumberOfLines = 6
         translation.font = .systemFont(ofSize: 12)
         translation.textColor = .secondaryLabelColor
         translation.maximumNumberOfLines = 5
         returnButton.target = self; returnButton.action = #selector(openRecording)
-        returnButton.bezelStyle = .rounded; returnButton.isHidden = true
-        let stack = NSStackView(views: [modes, status, content, translation, returnButton])
+        returnButton.image = NSImage(systemSymbolName: "arrow.up.right.square", accessibilityDescription: "返回本场")
+        returnButton.setAccessibilityLabel("返回本场")
+        returnButton.toolTip = "返回本场"
+        returnButton.isBordered = false
+        returnButton.isHidden = true
+        let spacer = NSView()
+        let header = NSStackView(views: [modes, spacer, status, returnButton])
+        header.spacing = 8
+        header.alignment = .centerY
+        status.widthAnchor.constraint(equalToConstant: 18).isActive = true
+        status.heightAnchor.constraint(equalToConstant: 18).isActive = true
+        returnButton.widthAnchor.constraint(equalToConstant: 28).isActive = true
+        returnButton.heightAnchor.constraint(equalToConstant: 28).isActive = true
+        let stack = NSStackView(views: [header, content, translation])
         stack.orientation = .vertical; stack.alignment = .leading; stack.spacing = 8
         stack.translatesAutoresizingMaskIntoConstraints = false
         let view = NSView(); panel.contentView = view; view.addSubview(stack)
@@ -45,6 +57,7 @@ final class CompanionController: NSObject, NSWindowDelegate {
             stack.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 14),
             stack.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -14),
             stack.bottomAnchor.constraint(equalTo: view.bottomAnchor, constant: -12),
+            header.widthAnchor.constraint(equalTo: stack.widthAnchor),
             content.widthAnchor.constraint(equalTo: stack.widthAnchor),
             translation.widthAnchor.constraint(equalTo: stack.widthAnchor)
         ])
@@ -53,7 +66,7 @@ final class CompanionController: NSObject, NSWindowDelegate {
     func show() {
         guard !panel.isVisible else { panel.orderFrontRegardless(); return }
         recording = nil; observation = CompanionObservation(); returnButton.isHidden = true; modes.selectedSegment = 0
-        status.stringValue = "正在查看录音状态…"
+        setStatus("正在查看录音状态…", symbol: "ellipsis.circle")
         clearContent()
         panel.setContentSize(NSSize(width: 370, height: 78))
         if let screen = NSScreen.screens.first(where: { $0.frame.contains(NSEvent.mouseLocation) }) ?? NSScreen.main {
@@ -96,11 +109,12 @@ final class CompanionController: NSObject, NSWindowDelegate {
     }
 
     private func showUnavailable() {
-        status.stringValue = "暂时无法确认录音状态"
+        var message = "暂时无法确认录音状态"
         if let last = observation.latest {
             let time = Date(timeIntervalSince1970: last.observed_at).formatted(date: .omitted, time: .standard)
-        status.stringValue += " · 最近核对 " + time
+            message += " · 最近核对 " + time
         }
+        setStatus(message, symbol: "exclamationmark.circle", color: .systemOrange)
         clearContent(); returnButton.isHidden = true
         resize()
     }
@@ -112,7 +126,13 @@ final class CompanionController: NSObject, NSWindowDelegate {
         recording = recording ?? snapshot.recording_id
         let issues = [snapshot.storage == "failed" ? "保存失败" : nil,
                           snapshot.asr == "failed" ? "识别失败" : nil].compactMap { $0 }
-        status.stringValue = ([labels[snapshot.phase] ?? "录音状态待确认"] + issues).joined(separator: " · ")
+        let symbols = ["recording": "record.circle.fill", "paused": "pause.circle", "saved": "checkmark.circle",
+                       "idle": "circle", "starting": "ellipsis.circle", "saving": "ellipsis.circle"]
+        let message = ([labels[snapshot.phase] ?? "录音状态待确认"] + issues).joined(separator: " · ")
+        let symbol = issues.isEmpty ? symbols[snapshot.phase] ?? "exclamationmark.circle" : "exclamationmark.circle"
+        let color: NSColor = symbol == "record.circle.fill" ? .systemRed :
+            symbol == "exclamationmark.circle" ? .systemOrange : .secondaryLabelColor
+        setStatus(message, symbol: symbol, color: color)
         clearContent()
         if snapshot.recording_id != nil {
             switch mode {
@@ -128,6 +148,13 @@ final class CompanionController: NSObject, NSWindowDelegate {
         }
         returnButton.isHidden = snapshot.recording_id == nil
         resize()
+    }
+
+    private func setStatus(_ message: String, symbol: String, color: NSColor = .secondaryLabelColor) {
+        status.image = NSImage(systemSymbolName: symbol, accessibilityDescription: message)
+        status.contentTintColor = color
+        status.setAccessibilityLabel(message)
+        status.toolTip = message
     }
 
     private func clearContent() {
@@ -146,7 +173,7 @@ final class CompanionController: NSObject, NSWindowDelegate {
             return total + min(size.height, lineHeight * CGFloat(field.maximumNumberOfLines)) + 8
         }
         let frame = panel.frame
-        panel.setContentSize(NSSize(width: width, height: 78 + textHeight + (returnButton.isHidden ? 0 : 30)))
+        panel.setContentSize(NSSize(width: width, height: 52 + textHeight))
         let visible = panel.screen?.visibleFrame
         let top = visible.map { max(frame.maxY, $0.minY + panel.frame.height) } ?? frame.maxY
         panel.setFrameTopLeftPoint(NSPoint(x: frame.minX, y: top))
