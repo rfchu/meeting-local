@@ -173,7 +173,12 @@ class MinutesJobs:
                 'edited':False,'ai_generated':True,'provider':snapshot['name'],'provider_type':snapshot['provider_type'],'model':config['model'],
                 'source_transcript_revision':config['revision'],'flow_context_hash':context_hash,'reviewed_attention':context['reviewed_attention'],'reviewed_live_overview':context.get('reviewed_live_overview',[]),'composition':settings.model_dump(),
                 'source_analysis_id':config['source_analysis_id'],'parent_minutes_id':config['source_minutes_id'],'source_minutes_dependencies':[source['id']] if source else []}
-            if identity is not None:provenance['chinese_record']=identity
+            if identity is not None:
+                provenance['chinese_record']=identity
+                cited=set(document.basic_info_source_segment_ids)
+                cited.update(sid for item in document.all_items() for sid in item.source_segment_ids)
+                if document.interview:cited.update(e.segment_id for e in document.interview.evidence())
+                provenance['citation_translations']={sid:translations[sid] for sid in sorted(cited & translations.keys())}
             if config['operation']=='polish':
                 provenance['llm_polished']=True
                 original=json.loads(source['provenance'])

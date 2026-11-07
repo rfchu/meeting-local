@@ -42,6 +42,7 @@ def inspect(db,mid,artifact_id=None):
         if isinstance(value,dict):
             for key,child in value.items():
                 if key=='source_segment_ids' and isinstance(child,list):ids.extend(s for s in child if isinstance(s,str))
+                elif key=='segment_id' and isinstance(child,str) and 'quote' in value:ids.append(child)
                 else:citations(child)
         elif isinstance(value,list):
             for child in value:citations(child)
@@ -50,7 +51,9 @@ def inspect(db,mid,artifact_id=None):
         before=old_by.get(sid);now=current_by.get(sid)
         status='missing' if not now else 'unavailable' if not before else 'current' if segment_view(before)==segment_view(now) else 'changed'
         add('segment:'+sid,'segment','原文引用 · '+sid,status,before.get('text') if before else '',now.get('text') if now else '',{'segment_id':sid,'start':now['start']} if now else None,'历史原文未保存，无法比较。' if not before else '同一片段 ID 的历史与当前原文；版本不同仍需核对。')
-        result['items'][-1]['fingerprint']=digest([result['items'][-1]['fingerprint'],segment_view(before),segment_view(now)])
+        translation=provenance.get('citation_translations',{}).get(sid) if before else None
+        if translation:result['items'][-1]['translation_zh']=translation
+        result['items'][-1]['fingerprint']=digest([result['items'][-1]['fingerprint'],segment_view(before),segment_view(now),*([translation] if translation else [])])
     dependency_cache={};dependency_budget=set()
     def dependency_signature(parent_id,seen=None):
         seen=set(seen or ())

@@ -6,6 +6,7 @@ export interface HandoffSource {
   label: string;
   status: "current" | "changed" | "missing" | "unavailable";
   before: string;
+  translation_zh?: string;
   current: string;
   detail: string;
   target: {

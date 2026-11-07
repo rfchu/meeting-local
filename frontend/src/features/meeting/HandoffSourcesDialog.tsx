@@ -218,6 +218,7 @@ export default function HandoffSourcesDialog({
                   <div>
                     <small>生成时／历史依据</small>
                     <p>{item.before || "无可用历史快照"}</p>
+                    {item.translation_zh && <p>生成时的中文译文：{item.translation_zh}</p>}
                   </div>
                   <div>
                     <small>当前来源</small>

@@ -203,7 +203,38 @@ export default function MinutesView(props: Props) {
         i === index ? { ...item, ...patch } : item,
       ),
     );
-  const byId = new Map(meeting.segments.map((item) => [item.id, item]));
+  const byId = new Map(
+    artifact?.revision === meeting.revision && !transcriptDirty
+      ? meeting.segments.map((item) => [item.id, item])
+      : [],
+  );
+  const translations = artifact?.provenance.citation_translations as Record<string, string> | undefined;
+  const itemSources = (item: MinutesItem, required: boolean) => {
+    if (!required && !showCitations && !props.referenceMode) return null;
+    const ids = [...new Set(item.source_segment_ids)];
+    const missing = ids.filter((sid) => !byId.has(sid));
+    return (
+      <div className="citations minutes-table-citations">
+        {(!ids.length || missing.length > 0) && (
+          <small className="muted">{!ids.length ? "原文依据待核对" : "部分或全部原文依据待核对"}</small>
+        )}
+        {ids.map((sid) => {
+          const segment = byId.get(sid);
+          if (!segment) return null;
+          return (
+            <details key={sid}>
+              <summary>原文依据 {clock(segment.start)}</summary>
+              <p>{segment.speaker}：{segment.text}</p>
+              {translations?.[sid] && <p>生成时的中文译文：{translations[sid]}</p>}
+              <button className="citation" onClick={() => props.onSeek(segment.start)}>
+                回听原话 {clock(segment.start)}
+              </button>
+            </details>
+          );
+        })}
+      </div>
+    );
+  };
   const selectedTemplate = templates.find((item) => item.id === templateId);
   const template = draft
     ? draft.template_snapshot || undefined
@@ -693,7 +724,8 @@ export default function MinutesView(props: Props) {
             <InterviewMinutesBody
               document={draft}
               onPreparation={props.onPreparation}
-              segments={meeting.segments}
+              segments={Array.from(byId.values())}
+              translations={translations}
               onChange={props.onDraft}
               onSeek={props.onSeek}
             />
@@ -827,27 +859,7 @@ export default function MinutesView(props: Props) {
                             >
                               删除
                             </button>
-                            {(showCitations || props.referenceMode) &&
-                              item.source_segment_ids.length > 0 && (
-                                <div className="citations minutes-table-citations">
-                                  {item.source_segment_ids
-                                    .map((sid) => byId.get(sid))
-                                    .filter(Boolean)
-                                    .map((segment) => (
-                                      <button
-                                        key={segment!.id}
-                                        className="citation"
-                                        aria-label={`${label} ${index + 1} 原文 ${clock(segment!.start)}`}
-                                        title={`${segment!.speaker}：${segment!.text}`}
-                                        onClick={() =>
-                                          props.onSeek(segment!.start)
-                                        }
-                                      >
-                                        回听依据 {clock(segment!.start)}
-                                      </button>
-                                    ))}
-                                </div>
-                              )}
+                            {itemSources(item, section === "decisions" || section === "action_items")}
                           </Fragment>
                         ) : (
                           <article className="minutes-item" key={index}>
@@ -916,25 +928,7 @@ export default function MinutesView(props: Props) {
                                 删除
                               </button>
                             </div>
-                            {(showCitations || props.referenceMode) && (
-                              <div className="citations">
-                                {item.source_segment_ids
-                                  .map((id) => byId.get(id))
-                                  .filter(Boolean)
-                                  .map((segment) => (
-                                    <button
-                                      key={segment!.id}
-                                      className="citation"
-                                      title={`${segment!.speaker}：${segment!.text}`}
-                                      onClick={() =>
-                                        props.onSeek(segment!.start)
-                                      }
-                                    >
-                                      {clock(segment!.start)}
-                                    </button>
-                                  ))}
-                              </div>
-                            )}
+                            {itemSources(item, section === "decisions" || section === "action_items")}
                           </article>
                         ),
                       )}

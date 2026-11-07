@@ -184,3 +184,16 @@ def test_parent_receipt_expires_when_dependency_changes_again(fixture):
     s.execute("UPDATE meeting_notes SET raw_text='第二次修改' WHERE id=?",(nid,))
     item=next(i for i in read(fixture,artifact_id=a)['items'] if i['kind']=='minutes')
     assert item['feedback']['stale']
+
+
+def test_review_returns_historical_translation_with_real_source_only(fixture):
+    _,store,mid,aid=fixture
+    store.execute('UPDATE artifacts SET provenance=? WHERE id=?',
+                  (encode({'citation_translations':{'s1':'合成辅助译文','missing':'不关联'}}),aid))
+    item=read(fixture)['items'][1]
+    assert item['target']=={'segment_id':'s1','start':0}
+    assert item['before']=='周五提交材料' and item['translation_zh']=='合成辅助译文'
+    store.save_revision(mid,[],'manual')
+    item=read(fixture)['items'][1]
+    assert item['status']=='missing' and item['target'] is None
+    assert item['translation_zh']=='合成辅助译文'

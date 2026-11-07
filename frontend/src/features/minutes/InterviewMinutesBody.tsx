@@ -79,12 +79,14 @@ export function projectInterview(doc: MeetingMinutes): MeetingMinutes {
 export default function InterviewMinutesBody({
   document: doc,
   segments,
+  translations,
   onChange,
   onSeek,
   onPreparation,
 }: {
   document: MeetingMinutes;
   segments: Segment[];
+  translations?: Record<string, string>;
   onChange: (d: MeetingMinutes) => void;
   onSeek: (t: number) => void;
   onPreparation: () => void;
@@ -270,6 +272,8 @@ export default function InterviewMinutesBody({
                     return (
                       <blockquote key={i}>
                         <p>{e.quote}</p>
+                        {translations?.[e.segment_id] && <p>生成时的中文译文：{translations[e.segment_id]}</p>}
+                        {!segment && <small>原文依据待核对</small>}
                         <button
                           disabled={!segment}
                           onClick={() => segment && onSeek(segment.start)}

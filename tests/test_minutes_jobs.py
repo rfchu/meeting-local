@@ -289,3 +289,4 @@ def test_chinese_record_minutes_preserve_original_sources(setup,template,section
     assert document.get('interviewer_evaluation','')==''
     assert calls[0][1]==[{**original,'translation_zh':'周五交付'},missing]
     assert json.loads(artifact['provenance'])['chinese_record']['counts']=={'original':0,'translated':1,'pending':1,'unknown':0}
+    assert json.loads(artifact['provenance'])['citation_translations']=={'s1':'周五交付'}
