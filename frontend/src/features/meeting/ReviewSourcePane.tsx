@@ -7,11 +7,13 @@ export default function ReviewSourcePane({
   focusTime,
   focusVersion,
   onSeek,
+  activeSegment,
   onEdit,
 }: {
   meeting: Meeting;
   focusTime: number | null;
   focusVersion: number;
+  activeSegment?: string;
   onSeek: (time: number) => void;
   onEdit: () => void;
 }) {
@@ -60,6 +62,7 @@ export default function ReviewSourcePane({
       )}
       {meeting.segments.length ? (
         <TranscriptList
+          activeSegment={activeSegment}
           readOnly
           scrollRoot={pane}
           segments={segments}

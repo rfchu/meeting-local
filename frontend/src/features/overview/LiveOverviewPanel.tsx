@@ -8,10 +8,10 @@ import type { OverviewItem, OverviewStatus, OverviewEvidence } from "./types";
 import "./overview.css";
 const labels = {
   topic: "当前议题",
+  decision: "会议结论",
+  action: "下一步",
   point: "关键观点",
-  decision: "讨论中的明确决定",
   question: "待确认问题",
-  action: "可能的待办",
 };
 export default function LiveOverviewPanel({
   recordingId,
@@ -339,7 +339,7 @@ export default function LiveOverviewPanel({
       </div>
       {!!data?.topics?.length && (
         <label>
-          按议题回看{" "}
+          历史议题{" "}
           <select
             aria-label="按议题回看"
             value={version}
@@ -408,133 +408,147 @@ export default function LiveOverviewPanel({
             !!group.length && (
               <section key={kind} className="overview-group" data-kind={kind}>
                 <h4>{labels[kind]}</h4>
-                {group.map((item) => (
-                  <article
-                    key={item.id}
-                    data-overview-item={item.id}
-                    className={`overview-item ${item.decision}${item.stale ? " stale" : ""}`}
-                  >
-                    <div className="overview-item-main">
-                      <p>{item.content}</p>
-                      <button
-                        className="overview-review-toggle text-btn"
-                        aria-label="查看依据与核对"
-                        aria-expanded={expanded === item.id}
-                        onClick={() =>
-                          setExpanded(expanded === item.id ? null : item.id)
-                        }
-                      >
-                        ···
-                      </button>
-                    </div>
-                    {(item.stale || item.decision !== "pending") && (
-                      <small>
-                        {item.stale
-                          ? item.stale_reasons?.length === 1
-                            ? item.stale_reasons[0] === "source"
-                              ? "引用原文已变化，需重新核对"
-                              : "关联简记已变化，需重新核对"
-                            : "依据或关联简记已变化，需重新核对"
-                          : item.decision === "confirmed"
-                            ? "已确认 · 不随 AI 刷新覆盖"
-                            : item.decision === "dismissed"
-                              ? "已忽略"
-                              : "AI 草稿 · 待核对"}
-                        {item.note_ids.length
-                          ? ` · 关联 ${item.note_ids.length} 条简记`
-                          : ""}
-                      </small>
-                    )}
-                    {expanded === item.id && (
-                      <div className="overview-item-actions">
-                        {!historical && (
-                          <>
-                            {item.decision !== "confirmed" && (
+                {group.map((item) => {
+                  const evidence = item.evidence.find(
+                    (entry) => !(entry.stale ?? item.stale),
+                  );
+                  return (
+                    <article
+                      key={item.id}
+                      data-overview-item={item.id}
+                      className={`overview-item ${item.decision}${item.stale ? " stale" : ""}`}
+                    >
+                      <div className="overview-item-main">
+                        <p>{item.content}</p>
+                        {onLocate && evidence && (
+                          <button
+                            className="text-btn overview-locate"
+                            aria-label={`${locateLabel} ${clock(evidence.start)}`}
+                            onClick={() => onLocate(evidence)}
+                          >
+                            {clock(evidence.start)} · {locateLabel}
+                          </button>
+                        )}
+                        <button
+                          className="overview-review-toggle text-btn"
+                          aria-label="查看依据与核对"
+                          aria-expanded={expanded === item.id}
+                          onClick={() =>
+                            setExpanded(expanded === item.id ? null : item.id)
+                          }
+                        >
+                          ···
+                        </button>
+                      </div>
+                      {(item.stale || item.decision !== "pending") && (
+                        <small>
+                          {item.stale
+                            ? item.stale_reasons?.length === 1
+                              ? item.stale_reasons[0] === "source"
+                                ? "引用原文已变化，需重新核对"
+                                : "关联简记已变化，需重新核对"
+                              : "依据或关联简记已变化，需重新核对"
+                            : item.decision === "confirmed"
+                              ? "已确认 · 不随 AI 刷新覆盖"
+                              : item.decision === "dismissed"
+                                ? "已忽略"
+                                : "AI 草稿 · 待核对"}
+                          {item.note_ids.length
+                            ? ` · 关联 ${item.note_ids.length} 条简记`
+                            : ""}
+                        </small>
+                      )}
+                      {expanded === item.id && (
+                        <div className="overview-item-actions">
+                          {!historical && (
+                            <>
+                              {item.decision !== "confirmed" && (
+                                <button
+                                  disabled={busy || item.stale}
+                                  onClick={() => void decide(item, "confirmed")}
+                                >
+                                  确认
+                                </button>
+                              )}
                               <button
                                 disabled={busy || item.stale}
-                                onClick={() => void decide(item, "confirmed")}
+                                onClick={() => {
+                                  setEditing(item);
+                                  setContent(item.content);
+                                }}
                               >
-                                确认
+                                编辑确认
                               </button>
-                            )}
-                            <button
-                              disabled={busy || item.stale}
-                              onClick={() => {
-                                setEditing(item);
-                                setContent(item.content);
-                              }}
-                            >
-                              编辑确认
-                            </button>
-                            {item.decision === "confirmed" ? (
-                              <button
-                                disabled={busy}
-                                onClick={() => void decide(item, "pending")}
-                              >
-                                撤回确认
-                              </button>
-                            ) : item.decision !== "dismissed" ? (
-                              <button
-                                disabled={busy}
-                                onClick={() => void decide(item, "dismissed")}
-                              >
-                                忽略
-                              </button>
-                            ) : (
-                              <button
-                                disabled={busy}
-                                onClick={() => void decide(item, "pending")}
-                              >
-                                重新考虑
-                              </button>
-                            )}
-                          </>
-                        )}
-                      </div>
-                    )}
-                    {expanded === item.id && (
-                      <div className="overview-evidence">
-                        <small>
-                          {item.note_ids.length
-                            ? `关联 ${item.note_ids.length} 条简记 · `
-                            : ""}
-                          以下为原文依据
-                        </small>
-                        {item.review_trace && (
-                          <p>
-                            最近人工核对 ·{" "}
-                            {
-                              {
-                                confirmed: "已确认",
-                                dismissed: "已忽略",
-                                pending: "已恢复待核对",
-                              }[item.review_trace.state]
-                            }
-                            {item.review_trace.snapshot_version
-                              ? ` · 基于 v${item.review_trace.snapshot_version}`
+                              {item.decision === "confirmed" ? (
+                                <button
+                                  disabled={busy}
+                                  onClick={() => void decide(item, "pending")}
+                                >
+                                  撤回确认
+                                </button>
+                              ) : item.decision !== "dismissed" ? (
+                                <button
+                                  disabled={busy}
+                                  onClick={() => void decide(item, "dismissed")}
+                                >
+                                  忽略
+                                </button>
+                              ) : (
+                                <button
+                                  disabled={busy}
+                                  onClick={() => void decide(item, "pending")}
+                                >
+                                  重新考虑
+                                </button>
+                              )}
+                            </>
+                          )}
+                        </div>
+                      )}
+                      {expanded === item.id && (
+                        <div className="overview-evidence">
+                          <small>
+                            {item.note_ids.length
+                              ? `关联 ${item.note_ids.length} 条简记 · `
                               : ""}
-                            {" · "}
-                            {item.review_trace.updated}
-                          </p>
-                        )}
-                        {item.evidence.map((e, index) => (
-                          <blockquote key={index}>
-                            <p>{e.quote}</p>
-                            {onLocate && (
-                              <button
-                                className="text-btn"
-                                disabled={e.stale ?? item.stale}
-                                onClick={() => onLocate(e)}
-                              >
-                                {clock(e.start)} {locateLabel}
-                              </button>
-                            )}
-                          </blockquote>
-                        ))}
-                      </div>
-                    )}
-                  </article>
-                ))}
+                            以下为原文依据
+                          </small>
+                          {item.review_trace && (
+                            <p>
+                              最近人工核对 ·{" "}
+                              {
+                                {
+                                  confirmed: "已确认",
+                                  dismissed: "已忽略",
+                                  pending: "已恢复待核对",
+                                }[item.review_trace.state]
+                              }
+                              {item.review_trace.snapshot_version
+                                ? ` · 基于 v${item.review_trace.snapshot_version}`
+                                : ""}
+                              {" · "}
+                              {item.review_trace.updated}
+                            </p>
+                          )}
+                          {item.evidence.map((e, index) => (
+                            <blockquote key={index}>
+                              <p>{e.quote}</p>
+                              {onLocate && (
+                                <button
+                                  className="text-btn"
+                                  disabled={e.stale ?? item.stale}
+                                  onClick={() => onLocate(e)}
+                                >
+                                  {clock(e.start)} {locateLabel}
+                                </button>
+                              )}
+                            </blockquote>
+                          ))}
+                        </div>
+                      )}
+                    </article>
+                  );
+                })}
               </section>
             )
           );

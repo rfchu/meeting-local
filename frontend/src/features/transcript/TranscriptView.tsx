@@ -16,6 +16,7 @@ interface Props {
   qualityReviewView?: "pending" | "all" | "gaps";
   jumpSegmentId?: string;
   onChange: (segments: Segment[]) => void;
+  activeSegment?: string;
   onSeek: (time: number) => void;
   onSave: () => Promise<void>;
   onRefresh: () => Promise<void>;
@@ -112,6 +113,7 @@ export default function TranscriptView({
   jumpSegmentId,
   onChange,
   onSeek,
+  activeSegment,
   onSave,
   onRefresh,
   toast,
@@ -341,6 +343,7 @@ export default function TranscriptView({
         </select>
       </div>
       <TranscriptList
+        activeSegment={activeSegment}
         key={meeting.id}
         segments={shown}
         onEditingChange={setEditingId}

@@ -13,12 +13,14 @@ export default function ChineseMeetingRecord({
   dirty,
   profiles,
   onSeek,
+  activeSegment,
   onContinue,
 }: {
   id: string;
   revision: number;
   dirty: boolean;
   profiles: LLMConfig[];
+  activeSegment?: string;
   onSeek: (time: number) => void;
   onContinue: (profileId: string) => void;
 }) {
@@ -166,6 +168,11 @@ export default function ChineseMeetingRecord({
                 )}
                 {data.items.map((item) => (
                   <article
+                    className={
+                      activeSegment === item.id
+                        ? "bilingual-playing"
+                        : undefined
+                    }
                     key={JSON.stringify([
                       revision,
                       profile?.id,

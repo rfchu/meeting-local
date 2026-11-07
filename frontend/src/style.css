@@ -3743,3 +3743,14 @@ button.note-options-trigger {
   outline: 2px solid #3968e8;
   outline-offset: 2px;
 }
+
+.minutes-source-link {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 12px;
+}
+.meeting-bilingual-record .bilingual-playing {
+  background: #edf3ff;
+  box-shadow: inset 3px 0 var(--accent);
+}

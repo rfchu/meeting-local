@@ -5,6 +5,7 @@ import { clock } from "../utils";
 
 interface Props {
   initialView?: MeetingView;
+  onActiveSegment?: (id: string | undefined) => void;
   onBookmark?: (bookmark: MeetingView) => void;
   meetingId: string;
   segments: Segment[];
@@ -20,6 +21,7 @@ export default function Player({
   audioTracks = [],
   initialView = {},
   onBookmark,
+  onActiveSegment,
 }: Props) {
   const audio = useRef<HTMLAudioElement>(null);
   const [playing, setPlaying] = useState(false),
@@ -55,19 +57,12 @@ export default function Player({
       if (pauseRef) pauseRef.current = null;
     };
   }, [seekRef, pauseRef]);
+  const activeSegment = segments.find(
+    (segment) => segment.start <= time && segment.end > time,
+  )?.id;
   useEffect(() => {
-    const active = segments.find(
-      (segment) => segment.start <= time && segment.end > time,
-    )?.id;
-    document
-      .querySelectorAll(".segment")
-      .forEach((row) =>
-        row.classList.toggle(
-          "playing",
-          (row as HTMLElement).dataset.id === active,
-        ),
-      );
-  }, [segments, time]);
+    onActiveSegment?.(activeSegment);
+  }, [activeSegment, onActiveSegment]);
   return (
     <div className="player">
       <button

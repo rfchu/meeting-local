@@ -133,6 +133,7 @@ export default function App() {
       persistMinutesOptions(next);
     }
   }, [templatesQuery.data, minutesOptions]);
+  const [activeSegment, setActiveSegment] = useState<string>();
   const [playbackRestore, setPlaybackRestore] = useState<MeetingView>({});
   const restoredMeeting = useRef(false);
   const openingMeeting = useRef(0);
@@ -1351,6 +1352,7 @@ export default function App() {
                 )}
                 {workspace === "transcript" && (
                   <ChineseMeetingRecord
+                    activeSegment={activeSegment}
                     key={`${meeting.id}-${meeting.revision}`}
                     id={meeting.id}
                     revision={meeting.revision}
@@ -1378,6 +1380,7 @@ export default function App() {
                 )}
                 {workspace === "transcript" && (
                   <TranscriptView
+                    activeSegment={activeSegment}
                     qualityReviewView={qualityReviewRequest.view}
                     qualityReviewRequest={
                       qualityReviewRequest.id === meeting.id
@@ -1429,6 +1432,7 @@ export default function App() {
                     </button>
                     {reviewSourceOpen && (
                       <ReviewSourcePane
+                        activeSegment={activeSegment}
                         key={meeting.id}
                         meeting={meeting}
                         focusTime={reviewFocus}
@@ -1482,6 +1486,7 @@ export default function App() {
                     </button>
                     {reviewSourceOpen && (
                       <ReviewSourcePane
+                        activeSegment={activeSegment}
                         key={meeting.id}
                         meeting={meeting}
                         focusTime={reviewFocus}
@@ -1608,6 +1613,7 @@ export default function App() {
               </div>
             </div>
             <Player
+              onActiveSegment={setActiveSegment}
               key={meeting.id}
               initialView={playbackRestore}
               onBookmark={(bookmark) =>

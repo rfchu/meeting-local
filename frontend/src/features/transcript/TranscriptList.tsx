@@ -21,8 +21,10 @@ const Row = memo(function Row({
   segment,
   onUpdate,
   onSeek,
+  playing = false,
   readOnly = false,
 }: {
+  playing?: boolean;
   readOnly?: boolean;
   segment: Segment & { reading_parts?: Segment[] };
   onUpdate: (segment: Segment) => void;
@@ -44,7 +46,10 @@ const Row = memo(function Row({
     return () => observer.disconnect();
   }, []);
   return (
-    <div className="segment" data-id={segment.id}>
+    <div
+      className={playing ? "segment playing" : "segment"}
+      data-id={segment.id}
+    >
       <button
         className="time"
         title={
@@ -123,9 +128,11 @@ export default function TranscriptList({
   jumpSegmentId,
   onEditingChange,
   scrollRoot,
+  activeSegment,
   readOnly = false,
 }: {
   readOnly?: boolean;
+  activeSegment?: string;
   scrollRoot?: RefObject<HTMLElement | null>;
   segments: (Segment & { reading_parts?: Segment[] })[];
   total: number;
@@ -222,7 +229,11 @@ export default function TranscriptList({
     setPendingFocus({ id: segments[index].id, last: event.shiftKey });
     list.scrollToIndex(index, { align: "auto", behavior: "auto" });
   };
-  const renderRow = (segment: Segment, index: number, start = 0) => (
+  const renderRow = (
+    segment: (typeof segments)[number],
+    index: number,
+    start = 0,
+  ) => (
     <div
       key={segment.id}
       data-index={index}
@@ -244,6 +255,10 @@ export default function TranscriptList({
       }
     >
       <Row
+        playing={
+          segment.id === activeSegment ||
+          segment.reading_parts?.some((part) => part.id === activeSegment)
+        }
         readOnly={readOnly}
         segment={segment}
         onUpdate={onUpdate}

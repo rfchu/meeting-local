@@ -236,21 +236,23 @@ export default function MinutesView(props: Props) {
           const segment = byId.get(sid);
           if (!segment) return null;
           return (
-            <details key={sid}>
-              <summary>原文依据 {clock(segment.start)}</summary>
-              <p>
-                {segment.speaker}：{segment.text}
-              </p>
-              {translations?.[sid] && (
-                <p>生成时的中文译文：{translations[sid]}</p>
-              )}
+            <div className="minutes-source-link" key={sid}>
               <button
                 className="citation"
                 onClick={() => props.onSeek(segment.start)}
               >
                 回听原话 {clock(segment.start)}
               </button>
-            </details>
+              <details>
+                <summary>查看原文依据</summary>
+                <p>
+                  {segment.speaker}：{segment.text}
+                </p>
+                {translations?.[sid] && (
+                  <p>生成时的中文译文：{translations[sid]}</p>
+                )}
+              </details>
+            </div>
           );
         })}
       </div>
