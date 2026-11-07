@@ -1,5 +1,5 @@
 """Expose completed transcription work without publishing an incomplete formal revision."""
-from .languages import configure_asr
+from .languages import EXPERIMENTAL_TRANSCRIPTION_LANGUAGES, configure_transcription_asr
 import hashlib,json,math,wave
 from pathlib import Path
 from .db import encode,uid
@@ -11,7 +11,7 @@ from .providers import get_asr_provider,checkpoint_identity_matches,merge_overla
 
 def collect_progress(store,job):
     config=json.loads(job['config']);folder=store.directory(job['meeting_id'])/job['id']
-    provider=configure_asr(get_asr_provider(config.get('engine','whisper')),config.get('source_language'))
+    provider=configure_transcription_asr(get_asr_provider(config.get('engine','whisper')),config.get('source_language'))
     if config.get('engine_identity') and not checkpoint_identity_matches(provider.engine_id,config['engine_identity'],provider.identity()):return None
     try:
         with wave.open(str(folder/'audio.wav')) as wav:duration=wav.getnframes()/wav.getframerate()
@@ -33,7 +33,8 @@ def collect_progress(store,job):
         prefix='fast'
     else:
         seconds=config.get('chunk_seconds',provider.chunk_seconds)
-        windows=[(max(0,i*seconds-2),min(duration,(i+1)*seconds+2)) for i in range(math.ceil(duration/seconds))];prefix='chunk'
+        overlap=config.get('chunk_overlap',2)
+        windows=[(max(0,i*seconds-overlap),min(duration,(i+1)*seconds+overlap)) for i in range(math.ceil(duration/seconds))];prefix='chunk'
     for index,(start,end) in enumerate(windows):
         checkpoint=folder/f'{prefix}-{index}.checkpoint.json'
         if c3:
@@ -63,7 +64,10 @@ def preserve_partial(store,job):
     result=collect_progress(store,job)
     if not result or not result['segments']:return None
     aid=hashlib.sha256(('transcription-progress:'+job['id']).encode()).hexdigest()[:32]
-    provenance={'job':job['id'],'engine':json.loads(job['config']).get('engine','whisper'),'incomplete':True,'completion_mode':json.loads(job['config']).get('completion_mode','full'),
+    config=json.loads(job['config'])
+    language=config.get('source_language')
+    provenance={'job':job['id'],'engine':config.get('engine','whisper'),'incomplete':True,'completion_mode':config.get('completion_mode','full'),
+                **({'experimental':True,'language':language,'timestamp_precision':'chunk'} if language in EXPERIMENTAL_TRANSCRIPTION_LANGUAGES else {}),
                 'missing_ranges':result['missing_ranges'],'duration':result['duration'],'completed_ranges':result['completed_ranges']}
     with store.connect() as db:
         db.execute('BEGIN IMMEDIATE')

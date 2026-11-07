@@ -1,4 +1,4 @@
-from .languages import configure_asr
+from .languages import EXPERIMENTAL_TRANSCRIPTION_LANGUAGES, configure_transcription_asr
 from .resource_policy import sync_live_demand
 from .job_checkpoints import JobCheckpoints,file_digest,validate_segments,ResourceInterrupted,model_files
 import fcntl, hashlib, json, math, os, subprocess, threading, time
@@ -276,7 +276,7 @@ class Worker:
         if config.get('pipeline_version',1)!=2: raise RuntimeError('处理流程已升级，请新建转写任务')
         folder=self.store.directory(mid); work=folder/jid; work.mkdir(exist_ok=True)
         log=work/'worker.log'; run=lambda args:self.run(jid,args,log)
-        provider=configure_asr(get_asr_provider(config.get('engine','whisper')),config.get('source_language'))
+        provider=configure_transcription_asr(get_asr_provider(config.get('engine','whisper')),config.get('source_language'))
         if config.get('engine_identity') and not checkpoint_identity_matches(provider.engine_id,config['engine_identity'],provider.identity()):
             raise RuntimeError('识别模型或引擎已变更，请新建转写任务，不能复用旧检查点')
         meeting=self.store.one('SELECT * FROM meetings WHERE id=?',(mid,))
@@ -297,15 +297,17 @@ class Worker:
         if prepared:checkpoints.save_file('audio',audio,source_identity)
         self.store.execute('UPDATE meetings SET duration=? WHERE id=?',(duration,mid))
         if config.get('completion_mode')!='quick' and not provider.ready(): raise RuntimeError(f'{provider.label} 尚未就绪，请检查运行环境')
+        experimental=config.get('source_language') in EXPERIMENTAL_TRANSCRIPTION_LANGUAGES
         reuse_meta={}
         if config.get('completion_mode')=='quick':
             segments,reuse_meta=self.fast_transcription(config,duration,audio,work,provider,run,jid,checkpoints,source_identity)
         else:
             # Fixed chunks with context overlap; merge using both timing and text.
             chunk_seconds=config.get('chunk_seconds',provider.chunk_seconds); count=math.ceil(duration/chunk_seconds); chunks=[]
+            overlap=config.get('chunk_overlap',2)
             for i in range(count):
                 self.update(jid,f'识别与对齐片段 {i+1}/{count}' if provider.engine_id=='qwen' else f'转写片段 {i+1}/{count}',.08+.78*i/count)
-                start=max(0,i*chunk_seconds-2); end=min(duration,(i+1)*chunk_seconds+2)
+                start=max(0,i*chunk_seconds-overlap); end=min(duration,(i+1)*chunk_seconds+overlap)
                 inputs=[source_identity,provider.identity(),start,end]
                 part=checkpoints.load(f'chunk-{i}',inputs,lambda value:validate_segments(value,duration))
                 if part is None:
@@ -343,17 +345,19 @@ class Worker:
         self.check(jid)
         if file_digest(source)!=source_identity['sha256']:raise ValueError('原音文件已变化，结果未发布；请核对音频后重试')
         # Save a candidate artifact if the user changed the transcript during inference.
+        if experimental and not segments:raise ValueError('未识别到可保存的草稿文字，请核对原始录音')
         source_meta=encode({'engine':provider.engine_id,'engine_label':provider.label,'model':Path(provider.model).name,
                             'aligner':Path(provider.aligner).name if hasattr(provider,'aligner') else None,
-                            'language':config.get('source_language') or 'zh','job':jid,**reuse_meta})
+                            'language':config.get('source_language') or 'zh','job':jid,
+                            **({'experimental':True,'timestamp_precision':'chunk'} if experimental else {}),**reuse_meta})
         with self.store.connect() as db:
             db.execute('BEGIN IMMEDIATE')
             state=db.execute('SELECT state FROM jobs WHERE id=?',(jid,)).fetchone()
             if state['state']!='running': raise Cancelled()
             current=db.execute('SELECT revision FROM meetings WHERE id=?',(mid,)).fetchone()['revision']
-            if current != config['base_revision']:
+            if experimental or current != config['base_revision']:
                 db.execute('INSERT INTO artifacts(id,meeting_id,revision,kind,payload,provenance) VALUES(?,?,?,?,?,?)',(uid(),mid,current,'transcript_candidate',encode(segments),source_meta))
-                db.execute("UPDATE jobs SET stage=?,state='completed',progress=1 WHERE id=?",('已生成候选稿，校对内容已保留'+('；自动纪要未启动' if config.get('minutes_followup') else ''),jid))
+                db.execute("UPDATE jobs SET stage=?,state='completed',progress=1 WHERE id=?",(('实验性原文草稿已生成' if experimental else '已生成候选稿，校对内容已保留')+('；自动纪要未启动' if config.get('minutes_followup') else ''),jid))
             else:
                 rev=current+1; payload=encode(segments)
                 db.execute('INSERT INTO revisions(meeting_id,revision,segments,source) VALUES(?,?,?,?)',(mid,rev,payload,source_meta))

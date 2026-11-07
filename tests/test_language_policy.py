@@ -157,3 +157,24 @@ def test_editorial_job_freezes_output_language(tmp_path, monkeypatch):
         assert document['output_language'] == 'en'
         assert seen[0]['composition']['output_language'] == 'en'
         assert not document['title'].endswith('会议纪要')
+
+
+def test_experimental_language_is_limited_to_reviewable_batch_drafts(tmp_path, monkeypatch):
+    monkeypatch.setattr(QwenMLX, 'ready', lambda self: True)
+    app = create_app(tmp_path, start_worker=False)
+    store = app.state.store
+    mid = uid()
+    store.directory(mid).mkdir()
+    store.execute('INSERT INTO meetings(id,title,filename) VALUES(?,?,?)', (mid, 'Draft', 'fixture.wav'))
+    with TestClient(app) as client:
+        url = f'/api/meetings/{mid}/jobs'
+        assert client.put('/api/meeting-preparation', json={'source_language': 'ja'}).status_code == 422
+        for options in ({'engine': 'whisper'}, {'completion_mode': 'quick'},
+                        {'recording_handoff': True}, {'diarization': True}):
+            assert client.post(url, json={'source_language': 'ja', 'engine': 'qwen', **options}).status_code == 422
+        response = client.post(url, json={'source_language': 'ja', 'engine': 'qwen'})
+        assert response.status_code == 201, response.text
+        config = json.loads(store.one('SELECT config FROM jobs WHERE id=?', (response.json()['id'],))['config'])
+        assert identity_language(config['engine_identity']) == 'ja'
+        assert (config['chunk_seconds'], config['chunk_overlap']) == (30, 0)
+        assert client.get(f'/api/meetings/{mid}').json()['flow']['brief'].get('source_language') != 'ja'

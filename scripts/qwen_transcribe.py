@@ -8,7 +8,9 @@ os.environ['TRANSFORMERS_OFFLINE']='1'
 os.environ['HF_HUB_DISABLE_TELEMETRY']='1'
 os.environ['HF_HOME']=str(ROOT/'models/hf-cache')
 from app.alignment import aligned_or_chunk
-from app.languages import ASR_NAMES, qwen_text
+from app.languages import ASR_NAMES, EXPERIMENTAL_TRANSCRIPTION_LANGUAGES, qwen_text
+
+BATCH_ASR_NAMES = ASR_NAMES | EXPERIMENTAL_TRANSCRIPTION_LANGUAGES
 
 
 MAX_TOKENS=4096
@@ -33,7 +35,7 @@ def quiet_split(samples,rate):
 def transcribe_adaptive(model,samples,rate,max_tokens=MAX_TOKENS,depth=0,language="zh"):
     """Retry a capped decode as smaller audio pieces using the loaded model."""
     if not len(samples) or not samples.any():return '',[{'depth':depth,'duration':len(samples)/rate,'generation_tokens':0,'capped':False,'silent':True}]
-    result=model.generate(samples,language=ASR_NAMES[language],max_tokens=max_tokens,temperature=0.0,verbose=False)
+    result=model.generate(samples,language=BATCH_ASR_NAMES[language],max_tokens=max_tokens,temperature=0.0,verbose=False)
     tokens=int(getattr(result,'generation_tokens',0) or 0)
     duration=len(samples)/rate
     attempt={'depth':depth,'duration':duration,'generation_tokens':tokens,'capped':tokens>=max_tokens,'detected_languages':getattr(result,'language',[]) or []}
@@ -73,12 +75,13 @@ def transcribe_streamed(model,samples,rate,max_tokens=MAX_TOKENS,emit=None,conte
 
 def main():
     p=argparse.ArgumentParser()
-    p.add_argument("--language",choices=["auto","zh","en"],default="zh")
+    p.add_argument("--language",choices=BATCH_ASR_NAMES,default="zh")
     for name in ('model','aligner','audio','output'):p.add_argument('--'+name,required=True)
     p.add_argument('--draft',action='store_true',help='实时草稿跳过强制对齐，时间戳仅表示音频块范围')
     p.add_argument('--stream-events',action='store_true')
     p.add_argument('--context-file')
     args=p.parse_args()
+    if args.draft and args.language in EXPERIMENTAL_TRANSCRIPTION_LANGUAGES:p.error('实验性语言仅支持会后草稿')
     if args.stream_events and not args.draft:p.error('--stream-events 必须配合 --draft')
     for directory in (args.model,args.aligner):
         if not Path(directory).is_dir():raise RuntimeError('只接受已下载的本地模型目录')
@@ -101,7 +104,7 @@ def main():
     items=[]
     if not args.draft and text and any(c.isalnum() for c in text):
         detected={name for attempt in attempts for name in attempt.get('detected_languages',[]) if name}
-        align_language=ASR_NAMES[args.language] if args.language!='auto' else next(iter(detected)) if len(detected)==1 else None
+        align_language=BATCH_ASR_NAMES[args.language] if args.language!='auto' else next(iter(detected)) if len(detected)==1 else None
         if align_language in ('Chinese','English'):
             aligner=load(str(Path(args.aligner).resolve()))
             alignment=aligner.generate(audio=samples,text=text,language=align_language)

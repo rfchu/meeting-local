@@ -2,6 +2,8 @@
 from typing import Literal
 
 SourceLanguage = Literal['auto', 'zh', 'en']
+TranscriptionLanguage = Literal['auto', 'zh', 'en', 'ja']
+EXPERIMENTAL_TRANSCRIPTION_LANGUAGES = {'ja': 'Japanese'}
 OutputLanguage = Literal['zh', 'en']
 ASR_NAMES = {'auto': None, 'zh': 'Chinese', 'en': 'English'}
 
@@ -16,6 +18,15 @@ def source_language(value=None):
 def configure_asr(provider, language):
     provider.language = source_language(language)
     return provider
+
+
+def configure_transcription_asr(provider, language):
+    if language in EXPERIMENTAL_TRANSCRIPTION_LANGUAGES:
+        if provider.engine_id != 'qwen':
+            raise ValueError('实验性语言草稿仅支持千问会后转写')
+        provider.language = language
+        return provider
+    return configure_asr(provider, language)
 
 
 def identity_language(identity):

@@ -1,5 +1,5 @@
 """HTTP input contracts, independent of application construction."""
-from .languages import SourceLanguage, OutputLanguage
+from .languages import SourceLanguage, OutputLanguage, TranscriptionLanguage
 from .interview import InterviewPreparation
 from typing import Literal
 from pydantic import BaseModel, Field, model_validator
@@ -34,7 +34,7 @@ class RevisionInput(BaseModel):
 
 
 class JobInput(BaseModel):
-    source_language: SourceLanguage | None=None
+    source_language: TranscriptionLanguage | None=None
     recording_handoff: bool=False
     minutes_followup: MinutesFollowupInput | None=None
     completion_mode: Literal["full","quick"]="full"

@@ -1,6 +1,6 @@
 """Meetings HTTP routes; shared services are supplied by the composition root."""
 from ..chinese_record import MeetingTranslationInput, meeting_source, read_meeting_record, translate_segment
-from ..languages import configure_asr, meeting_languages
+from ..languages import EXPERIMENTAL_TRANSCRIPTION_LANGUAGES, configure_transcription_asr, meeting_languages
 from ..resources import optional_slot
 from ..task_management import retry_blocker, classify
 from ..model_preferences import resolve_profile
@@ -426,6 +426,10 @@ def register_routes(app,services:ApplicationServices):
     @app.post('/api/meetings/{mid}/jobs',status_code=201)
     def enqueue(mid:str,body:JobInput):
         row=meeting(mid)
+        experimental=body.source_language in EXPERIMENTAL_TRANSCRIPTION_LANGUAGES
+        if experimental and (body.engine != 'qwen' or body.completion_mode != 'full'
+                             or body.recording_handoff or body.minutes_followup or body.diarization):
+            raise HTTPException(422,'实验性语言仅支持千问会后原文草稿，请关闭快速完成、自动区分发言人与自动纪要')
         # One durable handoff per recording. Retries after response loss return the
         # original job, even after completion/cancellation; explicit reprocessing
         # continues to use ordinary jobs and never silently changes the first plan.
@@ -435,7 +439,7 @@ def register_routes(app,services:ApplicationServices):
             existing=store.one('SELECT id FROM jobs WHERE id=? AND meeting_id=?',(jid,mid))
             if existing:return {'id':existing['id'],'reused':True}
         language=body.source_language or meeting_languages(store,mid)['source_language']
-        provider=configure_asr(get_asr_provider(body.engine),language)
+        provider=configure_transcription_asr(get_asr_provider(body.engine),language)
         if body.completion_mode!='quick' and not provider.ready(): raise HTTPException(409,f'{provider.label} 尚未就绪，请先安装对应模型')
         if body.completion_mode=='quick' and not (recordings.root/mid/'session.json').exists():raise HTTPException(409,'快速完成仅适用于本机实时录音')
         if body.completion_mode!='quick' and body.diarization and not LocalDiarization().ready(): raise HTTPException(409,'尚未配置本地发言人模型')
@@ -447,10 +451,10 @@ def register_routes(app,services:ApplicationServices):
             db.execute('BEGIN IMMEDIATE')
             if body.recording_handoff and db.execute('SELECT id FROM jobs WHERE id=?',(jid,)).fetchone():return {'id':jid,'reused':True}
             if db.execute("SELECT 1 FROM jobs WHERE meeting_id=? AND state IN ('running','queued')",(mid,)).fetchone(): raise HTTPException(409,'已有任务正在处理')
-            if body.source_language is not None:
+            if body.source_language is not None and not experimental:
                 current_brief=meeting_flow.brief(db,mid)
                 meeting_flow.save_brief(db,mid,{**current_brief,'source_language':language})
-            db.execute('INSERT INTO jobs(id,meeting_id,state,stage,config) VALUES(?,?,?,?,?)',(jid,mid,'queued','等待处理',encode({'engine':body.engine,'source_language':language,'chunk_seconds':provider.chunk_seconds,'punctuation':provider.needs_punctuation,'diarization':body.diarization,'num_speakers':body.num_speakers,'base_revision':row['revision'],'engine_identity':provider.identity(),'pipeline_version':2,'minutes_followup':followup,'completion_mode':body.completion_mode,'live_snapshot':live_results.snapshot(mid,body.engine,language) if body.completion_mode=='quick' else []})))
+            db.execute('INSERT INTO jobs(id,meeting_id,state,stage,config) VALUES(?,?,?,?,?)',(jid,mid,'queued','等待处理',encode({'engine':body.engine,'source_language':language,'chunk_seconds':30 if experimental else provider.chunk_seconds,'chunk_overlap':0 if experimental else 2,'punctuation':provider.needs_punctuation,'diarization':body.diarization,'num_speakers':body.num_speakers,'base_revision':row['revision'],'engine_identity':provider.identity(),'pipeline_version':2,'minutes_followup':followup,'completion_mode':body.completion_mode,'live_snapshot':live_results.snapshot(mid,body.engine,language) if body.completion_mode=='quick' else []})))
         return {'id':jid,'reused':False}
 
 
