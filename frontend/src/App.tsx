@@ -1216,22 +1216,19 @@ export default function App() {
                   </details>
                 )}
                 {item.provenance.experimental === true &&
-                  Array.isArray(item.payload) && (
-                    <details>
-                      <summary>查看日语草稿与回听</summary>
-                      {(item.payload as Segment[]).map((segment) => (
-                        <div key={segment.id}>
-                          <button
-                            className="text-btn"
-                            onClick={() => seekRef.current?.(segment.start)}
-                          >
-                            回听音频块 {clock(segment.start)}–
-                            {clock(segment.end)}
-                          </button>
-                          <p lang="ja">{segment.text}</p>
-                        </div>
-                      ))}
-                    </details>
+                  !item.provenance.incomplete && (
+                    <ChineseMeetingRecord
+                      id={meeting.id}
+                      revision={item.revision}
+                      draftId={item.id}
+                      dirty={false}
+                      profiles={
+                        environment?.analysis.profiles.filter(
+                          (profile) => profile.provider_type === "local",
+                        ) || []
+                      }
+                      onSeek={(time) => seekRef.current?.(time)}
+                    />
                   )}
                 <button
                   onClick={() => {

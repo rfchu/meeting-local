@@ -38,5 +38,25 @@
     ],
     "finding": "Kyoko and Reed retained the checked facts. Flo had a surname substitution and changed 12 to 13. Each transcript retained a single audio-block time range.",
     "decision": "Open the limited after-meeting draft path. Require separate validation before enabling bilingual workflows or real-time support."
+  },
+  "t18c": {
+    "model": "Local Qwen3.6 configured in LM Studio",
+    "samples": [
+      {
+        "source": "見積金額は二百四十万円です。山田さんが四月十日に確認します。",
+        "translation": "估算金额为二百四十万日元。山田先生将于四月十日进行确认。"
+      },
+      {
+        "source": "鈴木さんが6月23日に大阪へ出張します。会議は午後3時からです。",
+        "translation": "铃木先生将于6月23日前往大阪出差。会议从下午3点开始。"
+      },
+      {
+        "source": "坂橋さんは資料を8月2日に提出します。参加者は13人です。",
+        "translation": "坂桥先生将于8月2日提交资料。参与者共13人。"
+      }
+    ],
+    "draft_bilingual": "Opened for completed Japanese experimental drafts. Isolated browser verified a translation failure and retry, original and translated text, and audio-block playback.",
+    "chinese_retrieval": "Held. The draft translation retained the erroneous surname and headcount from ASR. Isolated search confirmed that draft-only translated text did not enter formal retrieval.",
+    "source_citations": "Held. The source was timed to whole audio blocks. Isolated question preparation returned no draft-only evidence."
   }
 }

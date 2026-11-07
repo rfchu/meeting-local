@@ -877,7 +877,12 @@ export const api = {
     request<MeetingReview>(`/meetings/${id}/review/${step}`, {
       method: "DELETE",
     }),
-  chineseMeetingRecord: (id: string, profile: string, offset: number) =>
+  chineseMeetingRecord: (
+    id: string,
+    profile: string,
+    offset: number,
+    draftId?: string,
+  ) =>
     request<{
       revision: number;
       counts: Record<ChineseResult["status"] | "pending", number>;
@@ -888,7 +893,7 @@ export const api = {
         status: ChineseResult["status"] | "pending";
       })[];
     }>(
-      `/meetings/${id}/chinese-record?${new URLSearchParams({ profile_id: profile, offset: String(offset) })}`,
+      `/meetings/${id}${draftId ? `/experimental-drafts/${encodeURIComponent(draftId)}` : ""}/chinese-record?${new URLSearchParams({ profile_id: profile, offset: String(offset) })}`,
     ),
   translateMeetingSegment: (
     id: string,
@@ -897,11 +902,16 @@ export const api = {
     profile: string,
     text: string,
     signal: AbortSignal,
+    draftId?: string,
   ) =>
     request<ChineseResult>(
-      `/meetings/${id}/chinese-record/${encodeURIComponent(segment)}`,
+      `/meetings/${id}${draftId ? `/experimental-drafts/${encodeURIComponent(draftId)}` : ""}/chinese-record/${encodeURIComponent(segment)}`,
       {
-        ...json("POST", { revision, profile_id: profile, expected_text: text }),
+        ...json("POST", {
+          ...(draftId ? {} : { revision }),
+          profile_id: profile,
+          expected_text: text,
+        }),
         signal: AbortSignal.any([signal, AbortSignal.timeout(30000)]),
       },
     ),

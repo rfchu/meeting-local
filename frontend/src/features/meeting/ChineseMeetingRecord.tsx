@@ -10,6 +10,7 @@ const pageSize = 50;
 export default function ChineseMeetingRecord({
   id,
   revision,
+  draftId,
   dirty,
   profiles,
   onSeek,
@@ -18,11 +19,12 @@ export default function ChineseMeetingRecord({
 }: {
   id: string;
   revision: number;
+  draftId?: string;
   dirty: boolean;
   profiles: LLMConfig[];
   activeSegment?: string;
   onSeek: (time: number) => void;
-  onContinue: (profileId: string) => void;
+  onContinue?: (profileId: string) => void;
 }) {
   const [open, setOpen] = useState(false);
   const [selected, setSelected] = useState("");
@@ -31,6 +33,7 @@ export default function ChineseMeetingRecord({
   const scope = JSON.stringify([
     id,
     revision,
+    draftId,
     profile?.id,
     profile?.model,
     profile?.base_url,
@@ -40,7 +43,8 @@ export default function ChineseMeetingRecord({
   const [waiting, setWaiting] = useState(false);
   const record = useQuery({
     queryKey: ["chinese-record", scope],
-    queryFn: () => api.chineseMeetingRecord(id, profile?.id || "", offset),
+    queryFn: () =>
+      api.chineseMeetingRecord(id, profile?.id || "", offset, draftId),
     enabled: open && !dirty,
   });
   const data = record.data?.revision === revision ? record.data : undefined;
@@ -71,6 +75,7 @@ export default function ChineseMeetingRecord({
           profileId,
           nextOriginal,
           controller.signal,
+          draftId,
         );
         if (controller.signal.aborted) return;
         const refreshed = await refetch();
@@ -96,16 +101,21 @@ export default function ChineseMeetingRecord({
       controller.abort();
       window.clearTimeout(timer);
     };
-  }, [id, revision, profileId, scope, nextId, nextOriginal, refetch]);
+  }, [id, revision, draftId, profileId, scope, nextId, nextOriginal, refetch]);
 
   return (
     <details onToggle={(event) => setOpen(event.currentTarget.open)}>
-      <summary>双语视图</summary>
+      <summary>{draftId ? "查看日语原文与中文译文" : "双语视图"}</summary>
       {open &&
         (dirty ? (
           <p>请先保存文字稿修改，再打开双语视图。</p>
         ) : (
           <section className="meeting-bilingual-record" aria-label="双语视图">
+            {draftId && (
+              <p>
+                译文依据实验性识别稿生成。请按音频块回听核对姓名、数字和日期。
+              </p>
+            )}
             <label>
               本地翻译模型{" "}
               <select
@@ -159,7 +169,7 @@ export default function ChineseMeetingRecord({
                   </p>
                 )}
                 {!data.total && <p>生成文字稿后可打开双语视图。</p>}
-                {data.total > 0 && (
+                {data.total > 0 && onContinue && (
                   <button onClick={() => onContinue(profile?.id || "")}>
                     {missing
                       ? "使用当前可用内容，继续整理纪要"
@@ -185,7 +195,8 @@ export default function ChineseMeetingRecord({
                       className="text-btn"
                       onClick={() => onSeek(item.start)}
                     >
-                      回听 {clock(item.start)}–{clock(item.end)}
+                      {draftId ? "回听音频块" : "回听"} {clock(item.start)}–
+                      {clock(item.end)}
                     </button>
                     <ChineseRecordLine
                       original={item.original}
