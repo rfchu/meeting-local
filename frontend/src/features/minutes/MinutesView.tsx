@@ -222,7 +222,20 @@ export default function MinutesView(props: Props) {
   const translations = artifact?.provenance.citation_translations as
     Record<string, string> | undefined;
   const itemSources = (item: MinutesItem, required: boolean) => {
-    if (!required && !showCitations && !props.referenceMode) return null;
+    const expandedSources = required || showCitations || props.referenceMode;
+    if (!expandedSources) {
+      const first = item.source_segment_ids
+        .map((id) => byId.get(id))
+        .find(Boolean);
+      return first ? (
+        <button
+          className="citation minutes-table-citations"
+          onClick={() => props.onSeek(first.start)}
+        >
+          回听原话 {clock(first.start)}
+        </button>
+      ) : null;
+    }
     const ids = [...new Set(item.source_segment_ids)];
     const missing = ids.filter((sid) => !byId.has(sid));
     return (

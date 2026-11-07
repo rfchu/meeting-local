@@ -280,67 +280,74 @@ export default function TranscriptView({
           placeholder="搜索文字…"
           aria-label="搜索文字"
         />
-        <button
-          onClick={() => {
-            setFind(search);
-            setReplaceOpen(true);
-          }}
-        >
-          替换
-        </button>
-        <button
-          onClick={() => {
-            const first = counts.keys().next().value || "";
-            if (!first) return toast("请先完成转写");
-            setSpeakerFrom(first);
-            setSpeakerTo(first);
-            setSpeakerOpen(true);
-          }}
-        >
-          管理发言人
-        </button>
-        <button
-          onClick={() => {
-            void onSave()
-              .then(() => setTermsOpen(true))
-              .catch((e) => toast(e.message));
-          }}
-        >
-          术语管理
-        </button>
-        <button onClick={mergeShort}>合并连续短句</button>
-        {hasLiveReview && (
-          <button onClick={() => setLiveReviewOpen(true)}>实时纠错记录</button>
-        )}
-        <button
-          disabled={!meeting.segments.length}
-          onClick={() => setReviewOpen(true)}
-        >
-          AI 校对发言人
-        </button>
-        <button
-          onClick={() =>
-            meeting.revisions.length < 2
-              ? toast("先用另一个引擎重新转写，再对比两个版本")
-              : setCompareOpen(true)
-          }
-        >
-          对比版本
-        </button>
-        <select
-          aria-label="文稿历史"
-          value=""
-          onChange={(e) => {
-            if (e.target.value) void restore(Number(e.target.value));
-          }}
-        >
-          <option value="">版本历史</option>
-          {meeting.revisions.map((item) => (
-            <option key={item.revision} value={item.revision}>
-              v{item.revision} · {revisionLabel(item.source)}
-            </option>
-          ))}
-        </select>
+        <details className="transcript-tools-more">
+          <summary>校对工具</summary>
+          <div className="config-actions">
+            <button
+              onClick={() => {
+                setFind(search);
+                setReplaceOpen(true);
+              }}
+            >
+              替换
+            </button>
+            <button
+              onClick={() => {
+                const first = counts.keys().next().value || "";
+                if (!first) return toast("请先完成转写");
+                setSpeakerFrom(first);
+                setSpeakerTo(first);
+                setSpeakerOpen(true);
+              }}
+            >
+              管理发言人
+            </button>
+            <button
+              onClick={() => {
+                void onSave()
+                  .then(() => setTermsOpen(true))
+                  .catch((e) => toast(e.message));
+              }}
+            >
+              术语管理
+            </button>
+            <button onClick={mergeShort}>合并连续短句</button>
+            {hasLiveReview && (
+              <button onClick={() => setLiveReviewOpen(true)}>
+                实时纠错记录
+              </button>
+            )}
+            <button
+              disabled={!meeting.segments.length}
+              onClick={() => setReviewOpen(true)}
+            >
+              AI 校对发言人
+            </button>
+            <button
+              onClick={() =>
+                meeting.revisions.length < 2
+                  ? toast("先用另一个引擎重新转写，再对比两个版本")
+                  : setCompareOpen(true)
+              }
+            >
+              对比版本
+            </button>
+            <select
+              aria-label="文稿历史"
+              value=""
+              onChange={(e) => {
+                if (e.target.value) void restore(Number(e.target.value));
+              }}
+            >
+              <option value="">版本历史</option>
+              {meeting.revisions.map((item) => (
+                <option key={item.revision} value={item.revision}>
+                  v{item.revision} · {revisionLabel(item.source)}
+                </option>
+              ))}
+            </select>
+          </div>
+        </details>
       </div>
       <TranscriptList
         activeSegment={activeSegment}

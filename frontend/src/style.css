@@ -3754,3 +3754,12 @@ button.note-options-trigger {
   background: #edf3ff;
   box-shadow: inset 3px 0 var(--accent);
 }
+
+.transcript-tools-more summary {
+  cursor: pointer;
+  padding-block: 6px;
+}
+.transcript-tools-more .config-actions {
+  flex-wrap: wrap;
+  margin: 6px 0 0;
+}
