@@ -172,13 +172,14 @@ export default function LiveDraftList({
                     original={part.text}
                     translate={
                       part.live_range_id && part.live_segment_index != null
-                        ? () =>
+                        ? (signal) =>
                             api.translateLiveSegment(
                               recordingId,
                               part.live_range_id!,
                               part.live_segment_index!,
                               profile,
                               part.text,
+                              signal,
                             )
                         : undefined
                     }

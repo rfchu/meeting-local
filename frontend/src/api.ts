@@ -825,12 +825,13 @@ export const api = {
     index: number,
     profile: string,
     text: string,
+    signal: AbortSignal,
   ) =>
     request<ChineseResult>(
       `/recordings/${id}/chinese-record/${range}/${index}`,
       {
         ...json("POST", { profile_id: profile, expected_text: text }),
-        signal: AbortSignal.timeout(30000),
+        signal: AbortSignal.any([signal, AbortSignal.timeout(30000)]),
       },
     ),
   upload: (file: File) => {

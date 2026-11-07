@@ -302,8 +302,7 @@ def register_routes(app,services:ApplicationServices):
     @app.post('/api/recordings/{rid}/chinese-record/{aid}/{index}')
     def translate_live_segment(rid:str,aid:str,index:int,body:TranslationInput):
         try:
-            source,hint=live_source(services,rid,aid,index)
-            return translate_segment(services,rid,source,hint,body,'live_translation')
+            return translate_segment(services,rid,lambda:live_source(services,rid,aid,index),body,'live_translation')
         except FileNotFoundError:raise HTTPException(404,'录音会话不存在')
         except HTTPException:raise
         except (ValueError,RuntimeError) as error:raise HTTPException(409,str(error))

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 export type ChineseResult = {
   status: "original" | "unknown" | "translated";
@@ -12,30 +12,52 @@ export default function ChineseRecordLine({
   translate,
 }: {
   original: string;
-  translate?: () => Promise<ChineseResult>;
+  translate?: (signal: AbortSignal) => Promise<ChineseResult>;
 }) {
   const [result, setResult] = useState<ChineseResult>();
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
+  const request = useRef<AbortController | null>(null);
+  useEffect(() => () => request.current?.abort(), []);
   return (
     <div>
       <span>{result?.text ?? original}</span>{" "}
       {result?.status === "translated" && <small>中文译文</small>}
       {result?.status === "unknown" && <small>语言待确认</small>}
       {error && <small role="alert">{error}</small>}
+      {pending && (
+        <button
+          className="text-btn"
+          onClick={() => {
+            request.current?.abort();
+            request.current = null;
+            setPending(false);
+            setError("已取消等待，原文保留。");
+          }}
+        >
+          取消等待
+        </button>
+      )}
       {translate && !result && (
         <button
           className="text-btn"
           disabled={pending}
           onClick={async () => {
+            if (request.current) return;
+            const controller = new AbortController();
+            request.current = controller;
             setPending(true);
             setError("");
             try {
-              setResult(await translate());
+              const value = await translate(controller.signal);
+              if (!controller.signal.aborted) setResult(value);
             } catch (e) {
-              setError((e as Error).message);
+              if (!controller.signal.aborted) setError((e as Error).message);
             } finally {
-              setPending(false);
+              if (request.current === controller) {
+                request.current = null;
+                if (!controller.signal.aborted) setPending(false);
+              }
             }
           }}
         >

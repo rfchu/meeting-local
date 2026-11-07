@@ -48,3 +48,41 @@ def test_changed_or_unconfirmed_source_is_not_sent(live):
     store.execute("UPDATE live_asr_ranges SET state='preview' WHERE id=?", (aid,))
     assert client.post(url, json={'profile_id': 'local', 'expected_text': 'We will deliver on Friday.'}).status_code == 409
     assert not calls
+
+
+def test_retry_reuses_result_and_changed_source_or_model_does_not(live):
+    client, store, rid, aid, texts, calls = live
+    url = f'/api/recordings/{rid}/chinese-record/{aid}/1'
+    body = {'profile_id': 'local', 'expected_text': texts[1]}
+    assert client.post(url, json=body).status_code == 200
+    assert client.post(url, json=body).status_code == 200
+    assert len(calls) == 1
+    store.execute("UPDATE llm_configs SET model='second' WHERE id='local'")
+    assert client.post(url, json=body).status_code == 200
+    assert len(calls) == 2
+    segments = json.loads(store.one('SELECT segments FROM live_asr_ranges WHERE id=?', (aid,))['segments'])
+    segments[1]['text'] = 'We will deliver on Monday.'
+    store.execute('UPDATE live_asr_ranges SET segments=? WHERE id=?', (json.dumps(segments), aid))
+    assert client.post(url, json=body).status_code == 409
+    assert client.post(url, json=dict(body, expected_text=segments[1]['text'])).status_code == 200
+    assert calls[-1] == segments[1]['text'] and len(calls) == 3
+
+
+def test_failure_and_late_result_are_not_published(live, monkeypatch):
+    client, store, rid, aid, texts, _ = live
+    url = f'/api/recordings/{rid}/chinese-record/{aid}/1'
+    body = {'profile_id': 'local', 'expected_text': texts[1]}
+
+    def interrupted(*args, **kwargs):
+        raise TimeoutError()
+
+    monkeypatch.setattr('app.chinese_record.request_once', interrupted)
+    assert client.post(url, json=body).status_code == 503
+
+    def stale(*args, **kwargs):
+        store.execute("UPDATE live_asr_ranges SET state='preview' WHERE id=?", (aid,))
+        return {'choices': [{'message': {'content': '{"translation":"过期译文"}'}}]}
+
+    monkeypatch.setattr('app.chinese_record.request_once', stale)
+    assert client.post(url, json=body).status_code == 409
+    assert not list(store.directory(rid).glob('chinese-record/*.json'))
