@@ -167,7 +167,10 @@ def test_dual_quick_completion_reuses_each_track_and_patches_both_tails(setup):
     recordings.write(folder/'session.json',recordings.read(rid)|{'source':'browser'})
     finish(client,rid)
     target=services.store.directory(rid)
-    for track in ('system','microphone'):(target/(track+'.wav')).write_bytes(audio(18))
+    (target/'system.wav').write_bytes(audio(18))
+    with wave.open(str(target/'microphone.wav'),'wb') as mic:
+        mic.setparams((1,2,16000,0,'NONE','not compressed'))
+        mic.writeframes(b'\x00\x08\x00\xf8'*(18*8000))
     process(client,rid)
     segments=client.get(f'/api/meetings/{rid}').json()['segments']
     assert [(s['start'],s['text'],s['source_track']) for s in segments]==[

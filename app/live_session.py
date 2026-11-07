@@ -205,7 +205,7 @@ class LiveSessions:
         factory=self.batch_provider if engine=='whisper' else self.provider
         if not factory:raise ValueError('实时识别引擎尚未配置')
         provider=configure_asr(factory(),config['source_language'])
-        from .track_audio import ECHO_VERSION, reduce_echo_wav
+        from .track_audio import ECHO_VERSION, reduce_echo_wav, remove_echo_duplicates, wav_echo_dominated
         identity={'model':provider.identity(),'track_mode':'dual-v1','echo_version':ECHO_VERSION}
         duration=window['next_offset']-window['offset']
         aid,cached=self.cache.begin(rid,'native',engine,window['offset'],duration,
@@ -214,6 +214,7 @@ class LiveSessions:
         try:
             if cached is None:
                 segments=[]
+                original_mic=payloads['microphone']
                 payloads['microphone']=await asyncio.to_thread(reduce_echo_wav,payloads['system'],payloads['microphone'])
                 for track,payload in payloads.items():
                     common=(provider,self.cache,self.asr_lock,payload,window['offset'],rid,'native',self.store.root,window)
@@ -227,6 +228,9 @@ class LiveSessions:
                                 segments.extend(dict(part,source_track=track) for part in event['result']['segments'])
                                 break
                         else:raise RuntimeError('独立音轨未返回识别结果')
+                offset=window['offset']
+                segments=await asyncio.to_thread(remove_echo_duplicates,segments,lambda start,end:
+                    wav_echo_dominated(io.BytesIO(payloads['system']),io.BytesIO(original_mic),start-offset,end-offset))
                 segments.sort(key=lambda item:item['start'])
                 self.cache.complete(aid,segments)
                 cached=[dict(part,live_range_id=aid,live_segment_index=i) for i,part in enumerate(segments)]

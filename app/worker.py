@@ -6,7 +6,7 @@ from pathlib import Path
 from .db import uid, encode
 from .resources import request_for,ResourceYielded as Yielded,PRIORITIES,REASONS
 from .live_results import plan_ranges, RATE, is_dual_identity
-from .track_audio import ECHO_VERSION, reduce_echo_wav
+from .track_audio import ECHO_VERSION, reduce_echo_wav, remove_echo_duplicates, wav_echo_dominated
 from .providers import WhisperCpp, get_asr_provider, LocalDiarization, LocalPunctuation, attach_speakers, merge_overlapping_chunks, checkpoint_identity_matches
 from .analysis import LMStudioProvider,OpenAICompatibleProvider,MeetingAnalysis,chunk_segments,save_meeting_analysis,validate_citations,TEMPLATE_VERSION
 
@@ -361,6 +361,9 @@ class Worker:
                         if segment['speaker']!='未分配':segment['speaker']=('电脑声 · ' if track=='system' else '麦克风 · ')+segment['speaker']
             combined.extend(segments)
         segments=sorted(combined,key=lambda segment:segment['start'])
+        if dual:
+            segments=remove_echo_duplicates(segments,lambda start,end:
+                wav_echo_dominated(str(folder/'system.wav'),str(folder/'microphone.wav'),start,end))
         if dual and reuse_meta:
             tracks=reuse_meta['tracks'].values()
             reuse_meta.update(kind='live_reuse',completion_mode='quick',timestamp_precision='draft',

@@ -14,3 +14,25 @@ def test_correlated_echo_is_removed_without_dropping_overlapping_local_voice():
     assert np.corrcoef(cleaned, local)[0, 1] > 0.96
     assert np.array_equal(_reduce_echo(system, local), local)
     assert np.array_equal(mixed, local + echo)
+
+
+def test_duplicate_requires_timing_and_acoustic_evidence():
+    from app.track_audio import echo_dominated, remove_echo_duplicates
+
+    rng = np.random.default_rng(42)
+    system = rng.integers(-5000, 5000, size=RATE * 2, dtype=np.int16)
+    echo = np.r_[np.zeros(417), system[:-417] * 0.08].astype(np.int16)
+    voice = rng.integers(-1300, 1300, size=len(system), dtype=np.int16)
+    assert echo_dominated(system, echo)
+    assert not echo_dominated(system, echo + voice)
+
+    online = {'start': 0, 'end': 2, 'text': '周五交付蓝色版本。', 'source_track': 'system'}
+    mic = dict(online, text='周五交付蓝色版本', source_track='microphone')
+    separate = dict(mic, start=3, end=5)
+    edited = dict(mic, live_correction_id='reviewed')
+    independent = dict(mic, text='周四检查红色名单')
+    segments = [online, mic, separate, edited, independent]
+    assert remove_echo_duplicates(segments, lambda *_: echo_dominated(system, echo)) == [
+        online, separate, edited, independent,
+    ]
+    assert remove_echo_duplicates(segments, lambda *_: echo_dominated(system, echo + voice)) == segments
