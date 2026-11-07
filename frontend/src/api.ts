@@ -336,6 +336,52 @@ export const api = {
     ),
   environment: () => request<Environment>("/status"),
   meetings: () => request<MeetingSummary[]>("/meetings"),
+  privateQualitySamples: () =>
+    request<
+      import("./features/management/QualitySamplesPanel").PrivateQualityInventory
+    >("/runtime/quality-samples"),
+  privateQualitySample: (id: string) =>
+    request<import("./features/management/QualitySamplesPanel").PrivateSample>(
+      `/runtime/quality-samples/${id}`,
+    ),
+  addPrivateQualitySample: (
+    file: File,
+    tags: string,
+    rights: boolean,
+    real: boolean,
+  ) => {
+    const form = new FormData();
+    form.append("file", file);
+    form.append("tags", tags);
+    form.append("rights_confirmed", String(rights));
+    form.append("real_speech", String(real));
+    return request<
+      import("./features/management/QualitySamplesPanel").PrivateSample
+    >("/runtime/quality-samples", {
+      method: "POST",
+      body: form,
+      signal: AbortSignal.timeout(45000),
+    });
+  },
+  annotatePrivateQualitySample: (
+    id: string,
+    version: number,
+    reference: string,
+    heard: boolean,
+  ) =>
+    request(
+      `/runtime/quality-samples/${id}/annotation`,
+      json("PUT", {
+        expected_version: version,
+        reference,
+        audio_reviewed: heard,
+      }),
+    ),
+  freezePrivateQualityDataset: (members: { id: string; version: number }[]) =>
+    request<{ id: string; samples: number }>(
+      "/runtime/quality-datasets",
+      json("POST", { members }),
+    ),
   qualityBaseline: () =>
     request<
       import("./features/management/QualityBaselinePanel").QualityBaseline

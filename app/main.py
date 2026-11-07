@@ -3,6 +3,8 @@ from .task_management import register_task_management
 from .model_preferences import register_model_preferences
 from .runtime_management import register_runtime_management
 from .recording_acceptance import RecordingAcceptance,register_acceptance
+from .quality_samples import QualitySamples
+from .quality_sample_routes import register_quality_samples
 import os
 from pathlib import Path
 from fastapi import FastAPI
@@ -108,6 +110,9 @@ def _create_app(data_dir=None,start_worker=True):
         setattr(app.state,name,getattr(services,name))
     register_local_only(app)
     register_onboarding(app,store,native_capture,capture_probes)
+    quality_samples=QualitySamples(store.root)
+    app.state.quality_samples=quality_samples
+    register_quality_samples(app,quality_samples)
     acceptance=RecordingAcceptance(recording_validation)
     app.state.recording_acceptance=acceptance
     register_acceptance(app,acceptance)

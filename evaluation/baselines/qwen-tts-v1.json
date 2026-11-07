@@ -1,0 +1,98 @@
+{
+  "schema_version": 1,
+  "suite_id": "tingji-quality-v1",
+  "suite_fingerprint": "6aaeac1f8756404876e8fb6c53dafc12371cd8e43338704f101fecfe1539a814",
+  "rubric_version": 1,
+  "rubric_fingerprint": "ef669129c193a9a70c484416631e671d26f881020938a21c37856b014674ee55",
+  "scope": "self_authored_synthetic_only",
+  "mode": "asr_text_quality",
+  "subject": {
+    "implementation_fingerprint": "b199d80f5d3e0eb087bd7ac3864b04b6d8d09c60879d1894c158d1dbe161436a",
+    "engine": "qwen",
+    "model_label": "千问 Qwen3-ASR-1.7B · 8-bit",
+    "provider_identity_fingerprint": "6810c5e1e39730eeb0a79e7fa41858ce32a5271eb09e23cf87a734f086f4841a",
+    "identity_scope": "provider_paths_sizes_mtimes_not_weight_checksum",
+    "generation": "local_model_on_fixed_TTS_audio",
+    "request_mode": "production_transcribe_separate_process_per_sample",
+    "machine": "arm64",
+    "macos": "27.0.1"
+  },
+  "created_utc": "2026-11-07T01:15:11.841632+00:00",
+  "rows": [
+    {
+      "id": "asr-proposal",
+      "track": "asr_text",
+      "reference_characters": 25,
+      "hypothesis_characters": 25,
+      "character_errors": 0,
+      "cer": 0.0,
+      "output_fingerprint": "a9b3d334e2beac3508a4babd09c92b521e0ca8470c41e29cb43dd1e4b88ed023",
+      "audio_sha256": "f267957ff47b4e8b2279e0cfe9b8763b98d0459784725263b52dca4b3bffb056",
+      "hypothesis": "建议下周一上线日期尚未确定。陈明负责周五前交付预览稿。"
+    },
+    {
+      "id": "asr-change",
+      "track": "asr_text",
+      "reference_characters": 28,
+      "hypothesis_characters": 28,
+      "character_errors": 0,
+      "cer": 0.0,
+      "output_fingerprint": "b7140dfa9f07b754061f3c3def840c3a21d2e0dd80cfe05e4084d0ed5710ec07",
+      "audio_sha256": "02fcf0fb4026fafffa7fe125847f7a17b3ddba46b19c1fbf22c4d4b894478dc3",
+      "hypothesis": "刚才的方案需要调整，大家同意下周三上线预览稿，改为下周一交付。"
+    },
+    {
+      "id": "asr-domain",
+      "track": "asr_text",
+      "reference_characters": 34,
+      "hypothesis_characters": 34,
+      "character_errors": 0,
+      "cer": 0.0,
+      "output_fingerprint": "6668588669d9b4ea8b33e1982f1670a5ea8ca99df882e42405b88beb035683c8",
+      "audio_sha256": "d4f0d07bd67ac74fee4134f2020c86ffae5ba441a51e8d3425a54bde8e2529d4",
+      "hypothesis": "听记使用千问语音识别模型，保留原始音轨。识别中断后，从最后确认位置继续处理。"
+    },
+    {
+      "id": "asr-numbers",
+      "track": "asr_text",
+      "reference_characters": 35,
+      "hypothesis_characters": 35,
+      "character_errors": 0,
+      "cer": 0.0,
+      "output_fingerprint": "85b415fca76d5278345362efef7e101177e9e7ef6b85d1bac1b8120c708af488",
+      "audio_sha256": "91b8fbd30dc02c3a0aa9754ba7f3fe3828d41aadc348e54743b3dc20c3e8a5bb",
+      "hypothesis": "星河项目预算为五万元，服务器有三台，备份保留七天。本次只讨论方案，没有决定采购。"
+    }
+  ],
+  "metrics": {
+    "samples": 4,
+    "reference_characters": 122,
+    "character_errors": 0,
+    "micro_cer": 0.0,
+    "exact_normalized_samples": 4
+  },
+  "limitations": [
+    "合成样本，不代表真实长会议／多说话人／噪声质量",
+    "引用存在不自动证明语义充分",
+    "CER 保留数值书写差异，不进行中文数字等价折算；延迟仅作观察"
+  ],
+  "report_fingerprint": "bffa2629b8d6180c53a1537d5b789e532d3641359aeb698b995f7e4b9e80c22f",
+  "timings": [
+    {
+      "id": "asr-proposal",
+      "processing_seconds": 2.087
+    },
+    {
+      "id": "asr-change",
+      "processing_seconds": 1.383
+    },
+    {
+      "id": "asr-domain",
+      "processing_seconds": 1.443
+    },
+    {
+      "id": "asr-numbers",
+      "processing_seconds": 1.43
+    }
+  ]
+}

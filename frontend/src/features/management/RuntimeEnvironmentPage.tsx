@@ -1,3 +1,4 @@
+import QualitySamplesPanel from "./QualitySamplesPanel";
 import QualityBaselinePanel from "./QualityBaselinePanel";
 import ReleaseReadinessPanel from "./ReleaseReadinessPanel";
 import ServiceLifecyclePanel from "./ServiceLifecyclePanel";
@@ -17,6 +18,7 @@ export default function RuntimeEnvironmentPage({
     <>
       <ReleaseReadinessPanel />
       <QualityBaselinePanel />
+      <QualitySamplesPanel />
       <ServiceLifecyclePanel />
       <RecordingValidationPanel />
       <section className="management-section">
