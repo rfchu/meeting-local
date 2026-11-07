@@ -1,3 +1,4 @@
+import AudienceTemplateEditor from "./AudienceTemplateEditor";
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../../api";
@@ -55,6 +56,7 @@ export default function AudienceDeliveryPreview({
           <option value="internal">内部版</option>
         </select>
       </label>
+      <AudienceTemplateEditor key={audience} audience={audience} />
       {audience === "external" && (
         <p>逐项选入可分享的内容。对外版使用通用标题，不附原文或引用。</p>
       )}

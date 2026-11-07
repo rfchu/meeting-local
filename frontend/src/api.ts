@@ -757,6 +757,25 @@ export const api = {
     request(`/meetings/${mid}/tasks/${tid}/carry`, json("POST")),
   unlinkTask: (mid: string, tid: string) =>
     request(`/meetings/${mid}/tasks/${tid}/link`, { method: "DELETE" }),
+  audienceTemplate: (audience: "internal" | "external") =>
+    request<{
+      version: number;
+      columns: string[];
+      allowed: Record<string, string>;
+    }>(`/audience-templates/${audience}`),
+  saveAudienceTemplate: (
+    audience: "internal" | "external",
+    columns: string[],
+    expectedVersion: number,
+  ) =>
+    request<{
+      version: number;
+      columns: string[];
+      allowed: Record<string, string>;
+    }>(
+      `/audience-templates/${audience}`,
+      json("PUT", { columns, expected_version: expectedVersion }),
+    ),
   audiencePreview: (mid: string, body: AudiencePreviewInput) =>
     request<{
       candidates: { id: string; label: string; content: string }[];

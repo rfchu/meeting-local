@@ -1,4 +1,6 @@
 """Minutes HTTP routes; shared services are supplied by the composition root."""
+from typing import Literal
+from ..minutes_templates import AudienceTemplateUpdate, audience_template, save_audience_template
 from ..languages import meeting_languages
 from ..minutes import set_output_language
 from ..resources import optional_slot
@@ -35,6 +37,16 @@ def register_routes(app,services:ApplicationServices):
         if not artifact:raise HTTPException(409,'请先为当前文字稿生成会议分析')
         return artifact
 
+
+    @app.get('/api/audience-templates/{audience}')
+    def read_audience_template(audience:Literal['internal','external']):
+        with store.connect() as db:
+            return audience_template(db,audience)
+
+    @app.put('/api/audience-templates/{audience}')
+    def update_audience_template(audience:Literal['internal','external'],body:AudienceTemplateUpdate):
+        try:return save_audience_template(store,audience,body)
+        except ValueError as error:raise HTTPException(409,str(error))
 
     @app.post('/api/meetings/{mid}/minutes',status_code=201)
     def generate_minutes(mid:str,body:MinutesGenerateInput):

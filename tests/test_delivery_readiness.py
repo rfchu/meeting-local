@@ -232,3 +232,19 @@ def test_external_action_requires_confirmed_matching_wording(setup):
     assert audience_preview(setup,selection=selection).status_code==200
     setup[1].execute("UPDATE note_todos SET content=? WHERE id=?",('另有已核对措辞',tid))
     assert audience_preview(setup,selection=selection).status_code==409
+
+
+def test_audience_template_versions_validate_columns_and_keep_audiences_separate(setup):
+    client,store,*_=setup
+    root='/api/audience-templates/'
+    assert client.get(root+'external').json()['version']==0
+    for columns in (['summary'],['overview','overview']):
+        assert client.put(root+'external',json={'columns':columns,'expected_version':0}).status_code==409
+    assert client.put(root+'external',json={'columns':['decisions','overview'],'expected_version':0}).json()['version']==1
+    assert client.put(root+'external',json={'columns':['overview'],'expected_version':0}).status_code==409
+    assert client.put(root+'external',json={'columns':['overview'],'expected_version':1}).json()['version']==2
+    assert client.get(root+'external').json()['columns']==['overview']
+    assert client.put(root+'internal',json={'columns':['summary'],'expected_version':0}).json()['version']==1
+    assert client.get(root+'internal').json()['columns']==['summary']
+    assert len(store.all("SELECT id FROM minutes_templates WHERE status='audience'"))==3
+    assert all(not row['id'].startswith('audience:') for row in client.get('/api/minutes-templates').json())

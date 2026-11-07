@@ -93,3 +93,43 @@ def builtin_template(template_id: str | None = None) -> MinutesTemplate:
 
 def template_snapshot(template: MinutesTemplate) -> dict:
     return deepcopy(template.model_dump())
+
+
+AUDIENCE_COLUMNS = {
+    'overview': '概况', 'conclusions': '讨论要点', 'decisions': '决定',
+    'action_items': '行动项', 'open_questions': '风险与待确认', 'summary': '总结',
+}
+
+
+class AudienceTemplateUpdate(BaseModel):
+    columns: list[str] = Field(min_length=1, max_length=6)
+    expected_version: int = Field(ge=0)
+
+
+def audience_template(db, audience):
+    import json
+    row = db.execute("SELECT definition FROM minutes_templates WHERE status='audience' AND category=? ORDER BY version DESC LIMIT 1",
+                     (audience,)).fetchone()
+    allowed = dict(AUDIENCE_COLUMNS)
+    if audience == 'external':
+        for key in ('open_questions', 'summary'):
+            allowed.pop(key)
+    current = json.loads(row['definition']) if row else {'version': 0, 'columns': list(allowed)}
+    return {**current, 'allowed': allowed}
+
+
+def save_audience_template(store, audience, body):
+    from .db import encode
+    with store.connect() as db:
+        db.execute('BEGIN IMMEDIATE')
+        current = audience_template(db, audience)
+        if len(set(body.columns)) != len(body.columns) or not set(body.columns) <= current['allowed'].keys():
+            raise ValueError('栏目不可重复，且必须属于当前受众允许的栏目')
+        if current['version'] != body.expected_version:
+            raise ValueError('模板已变化，请刷新后重试')
+        version = current['version'] + 1
+        definition = {'version': version, 'columns': body.columns}
+        db.execute("""INSERT INTO minutes_templates(id,name,category,version,builtin,definition,status)
+                      VALUES(?,?,?,?,0,?,'audience')""",
+                   (f'audience:{audience}:{version}', f'{audience} v{version}', audience, version, encode(definition)))
+        return {**definition, 'allowed': current['allowed']}
