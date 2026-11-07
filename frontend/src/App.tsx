@@ -942,6 +942,7 @@ export default function App() {
                   会议资料 / {meeting.created.slice(0, 10)}
                 </div>
                 <h1>{meeting.title}</h1>
+                <small className="muted">音频文件：{meeting.filename}</small>
               </div>
               <button
                 className="text-btn danger"
@@ -1791,12 +1792,12 @@ function Welcome({
         }}
       >
         <span className="upload-icon">↥</span>
-        <strong>拖放录音到这里，或点击选择</strong>
+        <strong>导入已有录音 · 拖放或点击选择</strong>
         <span>WAV / MP3 / M4A / MP4 等 · 最大 4GB</span>
       </button>
       <button className="welcome-record" onClick={onRecord}>
         <span>●</span>
-        <strong>直接开始会议录音</strong>
+        <strong>开始线上或现场会议</strong>
         <small>录音时可随手记下重点、问题、决策和待办</small>
       </button>
       <button className="text-btn" onClick={() => setSampleOpen(true)}>

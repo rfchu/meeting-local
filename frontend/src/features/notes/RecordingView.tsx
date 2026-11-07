@@ -351,6 +351,30 @@ export default function RecordingView({
             )}
           </section>
         )}
+      {state === "idle" && (
+        <label className="recording-session-strip">
+          会议场景与音源
+          <select
+            value={captureSource}
+            onChange={(event) =>
+              setCaptureSource(event.target.value as typeof captureSource)
+            }
+          >
+            <option
+              value="macos-system"
+              disabled={!nativeCapability?.available}
+            >
+              线上会议 · 电脑声音
+            </option>
+            <option value="macos-both" disabled={!nativeCapability?.available}>
+              现场／混合会议 · 电脑声音 + 麦克风
+            </option>
+            <option value="browser" disabled={!browserCaptureAllowed()}>
+              现场会议 · 浏览器麦克风
+            </option>
+          </select>
+        </label>
+      )}
       {state === "idle" ? (
         <RecordingSetupBar
           source={sourceLabel}
