@@ -337,6 +337,7 @@ export const api = {
     mode: string;
     meeting_id: string | null;
     kind: string | null;
+    include_personal?: boolean;
   }) =>
     request<{ results: SearchHit[]; pending: number }>(
       "/retrieval/search",

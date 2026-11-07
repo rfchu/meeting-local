@@ -19,6 +19,8 @@ export interface SearchHit {
   revision: number;
   kind: string;
   content: string;
+  translation_zh?: string;
+  source_language?: string;
   start: number | null;
   end: number | null;
   source_segment_ids: string[];
@@ -75,6 +77,7 @@ export default function SearchDialog({
     [mode, setMode] = useState("keyword"),
     [meetingId, setMeetingId] = useState(""),
     [kind, setKind] = useState("");
+  const [includePersonal, setIncludePersonal] = useState(false);
   const [status, setStatus] = useState<SearchStatus | null>(null);
   const [results, setResults] = useState<SearchHit[]>([]),
     [busy, setBusy] = useState(false),
@@ -118,6 +121,7 @@ export default function SearchDialog({
         mode,
         meeting_id: meetingId || null,
         kind: kind || null,
+        include_personal: includePersonal,
       });
       setResults(response.results);
       setPending(response.pending);
@@ -217,6 +221,19 @@ export default function SearchDialog({
                 ))}
               </select>
             </div>
+            <label>
+              <input
+                type="checkbox"
+                checked={includePersonal}
+                onChange={(event) => {
+                  setIncludePersonal(event.target.checked);
+                  setResults([]);
+                  setSearched(false);
+                }}
+                disabled={busy}
+              />
+              包含个人备注
+            </label>
           </form>
           <div className="search-index-summary">
             <span>
@@ -259,7 +276,11 @@ export default function SearchDialog({
                     {hit.note_scope === "personal" ? " · 个人备注" : ""}
                   </small>
                 </div>
-                <p>{hit.content}</p>
+                {hit.translation_zh && <p>中文译文：{hit.translation_zh}</p>}
+                <p>
+                  {hit.source_language === "en" && "英文原文："}
+                  {hit.content}
+                </p>
                 <button
                   disabled={busy}
                   onClick={() => void action(() => onOpen(hit))}

@@ -120,3 +120,54 @@ def test_semantic_language_scope_is_not_inferred_from_external_model_name(data):
     assert language_support({'model':'sounds-multilingual'})['semantic_scope']=='model_dependent'
     status=data[0].get('/api/retrieval').json()
     assert status['language_support']['keyword_languages']==['zh','en']
+
+
+def translated_source(data):
+    from app.analysis import OpenAICompatibleProvider
+    from app.chinese_record import translation_file, write_translation
+
+    client, store, _, pid = data
+    mid = uid()
+    store.execute('INSERT INTO meetings(id,title,filename) VALUES(?,?,?)',(mid,'翻译测试','sample.wav'))
+    original = {'id':'translated','start':12,'end':16,'speaker':'Alice','text':'We will ship the prototype by Tuesday.'}
+    store.save_revision(mid,[
+        {'id':'earlier','start':0,'end':3,'speaker':'Bob','text':'开场说明。'}, original,
+    ],'manual')
+    provider = OpenAICompatibleProvider(store.one('SELECT * FROM llm_configs WHERE id=?',(pid,)))
+    path = translation_file(store.directory(mid),original,'en',provider)
+    write_translation(path,'我们将在星期二发运样机。')
+    return mid, original, path
+
+
+def test_translation_keyword_matches_one_original_and_rejects_stale_result(data):
+    client, store, _, _ = data
+    mid, original, path = translated_source(data)
+    def search(query, **filters):
+        response = client.post('/api/retrieval/search', json={'query':query,'meeting_id':mid,**filters})
+        assert response.status_code == 200, response.text
+        return response.json()['results']
+
+    hit, = search('发运样机')
+    assert search('prototype 发运样机')[0]['id'] == hit['id']
+    assert len(search('prototype 发运样机')) == 1
+    assert hit['source_segment_ids'] == ['translated'] and hit['start'] == 12
+    assert hit['translation_zh'] == '我们将在星期二发运样机。' and hit['source_language'] == 'en'
+    assert original['text'] in hit['content']
+    token = {key:hit[key] for key in ('id','fingerprint')}
+    assert client.post('/api/retrieval/resolve',json=token).status_code == 200
+
+    note = client.post(f'/api/meetings/{mid}/notes',json={'raw_text':'个人样机备注','note_scope':'personal'})
+    assert note.status_code == 201, note.text
+    assert not search('个人样机备注')
+    assert search('个人样机备注',include_personal=True)[0]['note_scope']=='personal'
+
+    path.unlink()
+    assert not search('发运样机')
+    assert client.post('/api/retrieval/resolve',json=token).status_code == 409
+    assert search('prototype')
+    from app.chinese_record import write_translation
+    write_translation(path,'我们将在星期二发运样机。')
+    assert search('发运样机')
+    store.save_revision(mid,[{**original,'text':'We will inspect the prototype by Tuesday.'}],'manual')
+    assert not search('发运样机')
+    assert 'inspect' in search('prototype')[0]['content']

@@ -51,6 +51,7 @@ def test_http_contract_matches_pre_split_v22(tmp_path):
     assert schema['paths'].pop('/api/meetings/{mid}/minutes/jobs')
     assert schema['components']['schemas'].pop('MinutesTaskInput')
     schema['paths']['/api/runtime/tasks']['get']['parameters']=[parameter for parameter in schema['paths']['/api/runtime/tasks']['get']['parameters'] if parameter['name'] not in ('meeting_id','job_id')]
+    assert schema['components']['schemas']['SearchInput']['properties'].pop('include_personal')['default'] is False
     payload=json.dumps(schema,sort_keys=True,separators=(',',':'),ensure_ascii=False)
     # Captured from the running v22 service before splitting: 116 paths, 135 operations.
     assert hashlib.sha256(payload.encode()).hexdigest()=='fac4d2387540dd6ea2f8f29205390b870e6d7a8695f1f743831ce1f2ec026b90'

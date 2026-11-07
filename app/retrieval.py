@@ -1,5 +1,6 @@
 """Local, versioned retrieval units and sqlite-vec cosine search."""
 from . import minutes_versions
+from .chinese_record import meeting_record_in, saved_translation, segment_language, translation_file
 import hashlib,json,math,sqlite3,urllib.request,urllib.error
 from .analysis import OpenAICompatibleProvider
 from .db import encode
@@ -93,27 +94,60 @@ class Retrieval:
         if config.get('provider')=='builtin':return local_embedding().encode(texts,query=query)
         prefix=config.get('query_prefix' if query else 'document_prefix','')
         return embeddings(profile,config['model'],[prefix+text for text in texts],config['dimension'])
+    def translation_providers(self, db):
+        providers = []
+        for profile in db.execute("SELECT * FROM llm_configs WHERE provider_type='local' ORDER BY id"):
+            try:
+                provider = OpenAICompatibleProvider(profile)
+                provider.resolve_model()
+            except (ValueError, RuntimeError):
+                continue
+            providers.append(provider)
+        return providers
+
     def units(self,db):
         units=[]
+        providers=self.translation_providers(db)
         for meeting in db.execute('SELECT * FROM meetings ORDER BY created,id').fetchall():
             # Interview records stay outside the general cross-meeting library in this first release.
             from .meeting_flow import brief
             if brief(db,meeting['id']).get('interview') or db.execute("SELECT 1 FROM artifacts WHERE meeting_id=? AND kind='meeting_minutes' AND json_extract(payload,'$.template_id')='online-interview'",(meeting['id'],)).fetchone():continue
             mid=meeting['id'];revision=meeting['revision'];segments=json.loads(meeting['segments']);by_id={s['id']:s for s in segments}
-            def add(key,kind,text,ids,start=None,end=None,artifact_id=None,note_scope=None):
+            def add(key,kind,text,ids,start=None,end=None,artifact_id=None,note_scope=None,translation=None):
                 if not text.strip():return
                 # Bound model input, while retaining every text part and its provenance.
-                for offset in range(0,len(text),700):
-                    part=text[offset:offset+700]
+                for offset in (0,) if translation else range(0,len(text),700):
+                    part=text if translation else text[offset:offset+700]
                     uid=mid+':'+key+':'+str(offset)
                     meta={'meeting_id':mid,'title':meeting['title'],'date':meeting['created'][:10],'revision':revision,
                           'kind':kind,'source_segment_ids':ids,'start':start,'end':end,'artifact_id':artifact_id,'note_scope':note_scope}
                     fp=digest([UNIT_VERSION,revision,kind,part,ids,start,end,artifact_id,note_scope])
+                    if translation:
+                        translation_text, cache_key = translation
+                        meta.update(translation_zh=translation_text, source_language='en')
+                        fp=digest([fp,cache_key,translation_text])
                     units.append((uid,mid,part,encode(meta),fp))
             group=[];size=0
             def flush():
                 if group:add('transcript:'+group[0]['id'],'transcript','\n'.join(s['speaker']+'：'+s['text'] for s in group),[s['id'] for s in group],group[0]['start'],group[-1]['end'])
+            directory=self.store.directory(mid)
+            hint=meeting_record_in(db,mid)[2] if providers and (directory/'chinese-record').is_dir() else None
+            def translation_for(segment):
+                if not hint or segment_language(segment['text'],hint)!='en':
+                    return None
+                for provider in providers:
+                    path=translation_file(directory,segment,'en',provider)
+                    if translated:=saved_translation(path):
+                        return translated,path.stem
+                return None
+
             for segment in segments:
+                translation=translation_for(segment)
+                if translation:
+                    flush();group=[];size=0
+                    add('transcript:'+segment['id'],'transcript',segment['text'],[segment['id']],
+                        segment['start'],segment['end'],translation=translation)
+                    continue
                 if group and (size+len(segment['text'])>650 or segment['end']-group[0]['start']>90):flush();group=[];size=0
                 group.append(segment);size+=len(segment['text'])
             flush()
@@ -184,7 +218,7 @@ class Retrieval:
         import sqlite_vec
         for offset in range(0,len(pending),16):
             getattr(worker,'boundary',worker.check)(jid);worker.update(jid,f'建立本地索引 {min(offset+16,len(pending))}/{len(pending)}',offset/max(1,len(pending)))
-            batch=pending[offset:offset+16];vectors=self.vectorize(config,[row['content'] for row in batch])
+            batch=pending[offset:offset+16];vectors=self.vectorize(config,[(json.loads(row['metadata']).get('translation_zh') or row['content'])[:700] for row in batch])
             with self.store.connect() as db:
                 db.execute('BEGIN IMMEDIATE');worker.check(jid)
                 if self.config()!=config:raise ValueError('索引配置已变化')
@@ -218,11 +252,13 @@ class Retrieval:
             for term in db.execute("SELECT * FROM terminology WHERE status='confirmed'"):
                 scoped.setdefault(term['scope'],[]).append(unpack(term))
             for row in rows:
-                text=normalize(json.loads(row['metadata'])['title']+' '+row['content'])
-                score=sum(occurrences(text,token) for token in tokens)
-                mid=json.loads(row['metadata'])['meeting_id']
+                metadata=json.loads(row['metadata'])
+                texts=[normalize(metadata['title']+' '+row['content'])]
+                if metadata.get('translation_zh'):texts.append(normalize(metadata['translation_zh']))
+                score=max(sum(occurrences(text,token) for token in tokens) for text in texts)
+                mid=metadata['meeting_id']
                 forms=search_forms(query,scoped.get('library',[])+scoped.get(mid,[]))
-                score=max(score,max((occurrences(text,form) for form in forms),default=0))
+                score=max(score,max((occurrences(text,form) for form in forms for text in texts),default=0))
                 if score:lexical.append((row['id'],score))
             lexical.sort(key=lambda pair:(-pair[1],pair[0]))
             semantic=[]

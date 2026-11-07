@@ -127,7 +127,7 @@ def register_routes(app,services:ApplicationServices):
                 if worker.busy_jid or not claim.acquire(blocking=False):raise HTTPException(409,'正在处理录音或正式任务，请先使用关键词搜索')
                 acquired=True
                 if worker.release_model:worker.release_model()
-            return retrieval.search(body.query,body.mode,meeting_id=body.meeting_id,kind=body.kind)
+            return retrieval.search(body.query,body.mode,meeting_id=body.meeting_id,kind=body.kind,include_personal=body.include_personal)
         except (RuntimeError,ValueError,ImportError,sqlite3.Error) as error:raise HTTPException(409,str(error))
         finally:
             claim.close()

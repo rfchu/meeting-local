@@ -97,6 +97,7 @@ class RetrievalConfigInput(BaseModel):
 
 
 class SearchInput(BaseModel):
+    include_personal: bool=False
     query: str=Field(min_length=1,max_length=500)
     mode: Literal['keyword','semantic','hybrid']='keyword'
     meeting_id: str | None=None
