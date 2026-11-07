@@ -8,7 +8,7 @@ import wave
 import numpy as np
 
 RATE = 16000
-ECHO_VERSION = 3
+ECHO_VERSION = 4
 
 
 def _reduce_echo(system, microphone, fitted_blocks=None):
@@ -31,7 +31,11 @@ def _reduce_echo(system, microphone, fitted_blocks=None):
         cross = np.fft.irfft(np.fft.rfft(aligned, fft_size) * np.fft.rfft(ref, fft_size).conj(), fft_size)
         candidates = cross[:max_lag + 1]
         lag = int(np.argmax(np.abs(candidates)))
-        if abs(candidates[lag]) < 0.36 * np.linalg.norm(ref) * np.linalg.norm(mic):
+        # Normalize against the samples that actually overlap the microphone.
+        # The extra reference history helps find the lag but is not part of
+        # the matched window's energy.
+        matched = system[max(0, start-lag):end-lag].astype(np.float64) if end > lag else np.empty(0)
+        if abs(candidates[lag]) < 0.36 * np.linalg.norm(matched) * np.linalg.norm(mic):
             continue
         # Learn a short impulse response on top of the direct path. A small
         # ridge term avoids unstable gains on tonal sounds.
@@ -88,7 +92,10 @@ def echo_evidence(system, mic):
     coverage = sum(energy[start:end].sum() for start, end in fitted) / energy.sum()
     if coverage >= 0.85 and peak_frame_rms(residual) < 450:
         return 'dominant'
-    if sum(end-start for start,end in fitted) >= RATE:
+    matched_seconds = sum(end-start for start,end in fitted) / RATE
+    if matched_seconds >= 3 and matched_seconds * RATE >= 0.6 * len(mic):
+        return 'sustained'
+    if matched_seconds >= 1:
         return 'mixed'
     return 'none'
 
@@ -105,6 +112,39 @@ def limit_asr_repetition(text):
     return _ASR_LOOP.sub(lambda match: match[1] + '，' + match[1], text)
 
 
+def _text_positions(text):
+    chars, positions = [], []
+    for index, char in enumerate(text):
+        for folded in unicodedata.normalize('NFKC', char).casefold():
+            if folded.isalnum():
+                chars.append(folded)
+                positions.append(index)
+    return ''.join(chars), positions
+
+
+def _anchored_insertions(microphone, positions, matcher):
+    """Keep substantial interjections bounded by matching text on both sides."""
+    insertions = []
+    blocks = matcher.get_matching_blocks()
+    matched = sum(block.size for block in blocks)
+    extracted = 0
+    for left, right in zip(blocks, blocks[1:]):
+        mic_start = left.b + left.size
+        if min(left.size, right.size) < 6 or not 5 <= right.b - mic_start <= 48:
+            continue
+        # Require the microphone to add a phrase, rather than replace words
+        # whose two recognitions merely disagree.
+        if right.a - (left.a + left.size) > 1:
+            continue
+        snippet = microphone[positions[mic_start]:positions[right.b]].strip()
+        if snippet:
+            insertions.append(snippet)
+            extracted += right.b - mic_start
+    if len(matcher.a) - matched > 3 or len(matcher.b) - matched - extracted > 3:
+        return ''
+    return ' '.join(insertions)
+
+
 def remove_echo_duplicates(segments, corroborate, *, mark_mixed=False):
     """Compare overlapping text, then use audio evidence to decide whether to keep it."""
     def normalized(text):
@@ -113,27 +153,38 @@ def remove_echo_duplicates(segments, corroborate, *, mark_mixed=False):
     online = [(part, normalized(part['text'])) for part in segments if part.get('source_track') == 'system']
     kept = []
     for part in segments:
-        if part.get('source_track') != 'microphone' or part.get('live_correction_id') or part.get('speaker_locked'):
+        if part.get('source_track') != 'microphone' or part.get('live_correction_id') or part.get('speaker_locked') or part.get('echo_original_text'):
             kept.append(part)
             continue
-        text = normalized(part['text'])
+        text, positions = _text_positions(part['text'])
         start, end = part['start'], part['end']
         evidence = 'none'
+        insertion = ''
         for source, source_text in online:
             overlap = min(end, source['end']) - max(start, source['start'])
             if overlap <= 0 or overlap < 0.8 * (end - start):
                 continue
             similar = len(text) >= 4 and text == source_text
+            matcher = None
             if not similar and min(len(text), len(source_text)) >= 16:
-                similar = SequenceMatcher(None, text, source_text, autojunk=False).ratio() >= 0.72
+                matcher = SequenceMatcher(None, source_text, text, autojunk=False)
+                similar = matcher.ratio() >= 0.72
             if similar:
                 evidence = corroborate(start, end)
                 if evidence is True:  # Existing exact-audio callers.
                     evidence = 'dominant'
+                if evidence in ('mixed', 'sustained') and matcher:
+                    insertion = _anchored_insertions(part['text'], positions, matcher)
+                if evidence == 'sustained' and text == source_text:
+                    evidence = 'dominant'
                 break
         if evidence == 'dominant':
             continue
-        kept.append(dict(part, possible_echo=True) if mark_mixed and evidence == 'mixed' else part)
+        if insertion:
+            part = dict(part, text=insertion, echo_original_text=part['text'], possible_echo=False)
+        elif mark_mixed and evidence in ('mixed','sustained'):
+            part = dict(part, possible_echo=True)
+        kept.append(part)
     return kept
 
 
