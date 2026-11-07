@@ -21,16 +21,16 @@ def message_candidates(payload):
         if isinstance(content,str) and content.strip():result.append((key,content.strip()))
     return result
 
-def extract_json(payload):
+def extract_json(payload, *, strict=True):
     errors=[]
     for _,content in message_candidates(payload):
         if content.startswith('```'):
-            content=content.split('\n',1)[1].rsplit('```',1)[0].strip()
-        try:return json.loads(content)
+            content=content.partition('\n')[2].rsplit('```',1)[0].strip()
+        try:return json.loads(content,strict=strict)
         except json.JSONDecodeError as original:
             errors.append(original)
             # Some reasoning models add prose or thinking before an otherwise valid object.
-            decoder=json.JSONDecoder()
+            decoder=json.JSONDecoder(strict=strict)
             for index,char in enumerate(content):
                 if char!='{':continue
                 try:value,end=decoder.raw_decode(content,index)

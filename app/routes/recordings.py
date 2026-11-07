@@ -1,4 +1,5 @@
 """Recordings HTTP routes; shared services are supplied by the composition root."""
+from ..resources import ResourceBusy
 from ..chinese_record import TranslationInput, live_source, translate_segment
 from ..languages import configure_asr, recording_language, SourceLanguage
 import sqlite3, io, json, subprocess, tempfile, time, wave
@@ -305,6 +306,8 @@ def register_routes(app,services:ApplicationServices):
             return translate_segment(services,rid,lambda:live_source(services,rid,aid,index),body,'live_translation')
         except FileNotFoundError:raise HTTPException(404,'录音会话不存在')
         except HTTPException:raise
+        except ResourceBusy as error:
+            raise HTTPException(409,{'code':'translation_busy','message':'本地模型忙碌，将自动继续'}) from error
         except (ValueError,RuntimeError) as error:raise HTTPException(409,str(error))
         except (OSError,TypeError):raise HTTPException(503,'本地翻译暂不可用，原文已保留')
 

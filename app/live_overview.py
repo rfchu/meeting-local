@@ -4,7 +4,7 @@ import hashlib,json,re,subprocess,sys,tempfile,threading,time
 from pathlib import Path
 from typing import Literal
 from fastapi import HTTPException
-from pydantic import BaseModel,Field
+from pydantic import BaseModel,Field,ValidationError
 from .analysis import OpenAICompatibleProvider
 from .db import encode,uid
 from .live_results import plan_ranges,RATE
@@ -94,9 +94,22 @@ def numbered_input(data):
 
 
 def expand_numbered(result,quotes,item_ids=None,note_ids=None):
-    parsed=ModelOutput.model_validate(result);items=[];filtered=0
-    for item in parsed.items:
-        if any(eid not in quotes for eid in item.evidence_ids):filtered+=1;continue
+    # Keep the schema's four-reference limit, but tolerate extra valid IDs
+    # from compatible providers that do not enforce the requested schema.
+    items=[];filtered=0
+    raw_items=result.get('items') if isinstance(result,dict) else None
+    if not isinstance(raw_items,list):
+        raise ValueError('概览格式不完整，已保留原文和上一版')
+    for raw in raw_items[:MAX_ITEMS]:
+        if not isinstance(raw,dict):
+            filtered+=1;continue
+        ids=raw.get('evidence_ids')
+        if not isinstance(ids,list) or not ids or any(not isinstance(eid,str) or eid not in quotes for eid in ids):
+            filtered+=1;continue
+        try:
+            item=ModelItem.model_validate({**raw,'evidence_ids':list(dict.fromkeys(ids))[:4]})
+        except ValidationError:
+            filtered+=1;continue
         value=item.model_dump(exclude={'evidence_ids'})
         if item_ids is not None and value['id'] is not None:
             # A model-created ID cannot overwrite a real item; treat it as a new candidate.
@@ -105,7 +118,7 @@ def expand_numbered(result,quotes,item_ids=None,note_ids=None):
             value['note_ids']=[note_ids[nid] for nid in value['note_ids'] if nid in note_ids]
         value['evidence']=[quotes[eid] for eid in dict.fromkeys(item.evidence_ids)]
         items.append(value)
-    if parsed.items and not items:raise ValueError('本轮候选均缺少有效证据编号，上一版已保留')
+    if raw_items and not items:raise ValueError('本轮候选均缺少有效证据编号，上一版已保留')
     return OverviewOutput.model_validate({'items':items,'filtered_count':filtered})
 
 
@@ -464,7 +477,7 @@ class LiveOverview:
             except Deferred as error:
                 self.store.execute("UPDATE live_overview_runs SET state='waiting',error=?,next_due=? WHERE recording_id=? AND enabled=1 AND epoch=?",(str(error),time.time()+3,rid,run['epoch']))
             except Exception as error:
-                self.store.execute("UPDATE live_overview_runs SET failures=failures+1,state='failed',error=?,next_due=?,enabled=CASE WHEN failures>=2 THEN 0 ELSE enabled END WHERE recording_id=? AND epoch=?",(str(error)[:500],time.time()+60,rid,run['epoch']))
+                self.store.execute("UPDATE live_overview_runs SET failures=failures+1,state='failed',error=?,next_due=?,enabled=CASE WHEN failures>=2 THEN 0 ELSE enabled END WHERE recording_id=? AND epoch=?",(('概览格式不完整，已保留原文和上一版' if isinstance(error,(ValidationError,json.JSONDecodeError)) else str(error)[:500]),time.time()+60,rid,run['epoch']))
         finally:self.lock.release()
 
     def start_monitor(self):

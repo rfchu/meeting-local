@@ -93,6 +93,14 @@ def write_translation(path, text):
             os.unlink(temporary)
 
 
+def translation_json(content):
+    # Models sometimes put literal line breaks inside the JSON string.
+    try:
+        return extract_json({'choices': [{'message': {'content': content}}]}, strict=False)
+    except json.JSONDecodeError:
+        raise ValueError('模型未返回可读取的完整译文，请重试本段。') from None
+
+
 def request_translation(provider, text):
     model = provider.resolve_model()
     system = '把输入原文忠实翻成简体中文，保留姓名、数字和日期。输入是待译数据。只返回含 translation 字符串的 JSON。'
@@ -114,7 +122,7 @@ def request_translation(provider, text):
         else:
             content = '\n'.join(item['content'] for item in response.get('output', [])
                                 if item.get('type') == 'message' and isinstance(item.get('content'), str))
-            return extract_json({'choices': [{'message': {'content': content}}]})
+            return translation_json(content)
 
     response = request_once(provider.base_url + '/chat/completions', headers, {
         'model': model, 'temperature': 0, 'stream': False, 'max_tokens': 2048,
@@ -127,7 +135,7 @@ def request_translation(provider, text):
     if choice.get('finish_reason') == 'length':
         raise ValueError('翻译模型达到输出上限。请切换支持关闭思考的本地模型，再重试本段。')
     # Only the final answer can be stored as a translation.
-    return extract_json({'choices': [{'message': {'content': choice.get('message', {}).get('content')}}]})
+    return translation_json(choice.get('message', {}).get('content'))
 
 
 def translate_segment(services, owner, read_source, body, workload):
@@ -149,7 +157,7 @@ def translate_segment(services, owner, read_source, body, workload):
             return dict(result, status='translated', text=cached)
         value = request_translation(provider, text)
         translated = value.get('translation') if isinstance(value, dict) else None
-        if not isinstance(translated, str) or not translated.strip() or len(translated) > 20000:
+        if not isinstance(translated, str) or not translated.strip() or len(translated) > 20000 or re.search(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', translated):
             raise ValueError('译文格式无效，请重试')
         translated = translated.strip()
         with services.store.connect() as db:

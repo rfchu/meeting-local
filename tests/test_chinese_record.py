@@ -162,3 +162,31 @@ def test_qwen_translation_disables_reasoning_and_ignores_thinking(live, monkeypa
     response = client.post(url,json=body)
     assert response.status_code == 409 and '输出上限' in response.json()['detail']
     assert len(list(store.directory(rid).glob('chinese-record/*.json'))) == 1
+
+
+def test_translation_repairs_literal_newlines_and_marks_model_contention(live, monkeypatch):
+    from app.resources import ResourceBusy
+
+    client, store, rid, aid, texts, _ = live
+    url = f'/api/recordings/{rid}/chinese-record/{aid}/1'
+    body = {'profile_id':'local','expected_text':texts[1]}
+
+    def occupied(*args, **kwargs):
+        raise ResourceBusy('等待模型资源')
+
+    monkeypatch.setattr('app.chinese_record.request_once', occupied)
+    busy = client.post(url,json=body)
+    assert busy.status_code == 409
+    assert busy.json()['detail']['code'] == 'translation_busy'
+
+    def model(content):
+        return lambda *args, **kwargs: {'choices':[{'finish_reason':'stop','message':{'content':content}}]}
+
+    monkeypatch.setattr('app.chinese_record.request_once',model('{"translation":"断开的译文'))
+    invalid = client.post(url,json=body)
+    assert invalid.status_code == 409 and '完整译文' in invalid.json()['detail']
+    assert not list(store.directory(rid).glob('chinese-record/*.json'))
+
+    monkeypatch.setattr('app.chinese_record.request_once',model('{"translation":"我们已确认。\n星期五交付。"}'))
+    fixed = client.post(url,json=body)
+    assert fixed.status_code == 200 and fixed.json()['text'] == '我们已确认。\n星期五交付。'

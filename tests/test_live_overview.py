@@ -375,3 +375,15 @@ def test_resource_busy_defers_without_model_call_or_losing_published_overview(se
         assert service.read(rid)['items'][0]['id']==existing['id']
         assert recordings.read(rid)['state']=='recording'
     assert not scheduler.snapshot()['requests']
+
+
+def test_excess_valid_overview_references_do_not_break_update():
+    from app.live_overview import expand_numbered
+
+    ids = [f'e{i}' for i in range(1,7)]
+    quotes = {key:{'segment_id':key,'quote':f'原文 {key}'} for key in ids}
+    item = {'kind':'point','content':'已核对的讨论要点','evidence_ids':ids}
+    wrong = {**item,'evidence_ids':ids[:5]+['missing']}
+    result = expand_numbered({'items':[item,wrong]},quotes)
+    assert [e.segment_id for e in result.items[0].evidence] == ids[:4]
+    assert result.filtered_count == 1

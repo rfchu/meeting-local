@@ -1,5 +1,4 @@
-import ChineseRecordLine from "./ChineseRecordLine";
-import { api } from "../../api";
+import { liveChineseKey, useLiveChinese } from "./useLiveChinese";
 import { draftSourceId } from "../overview/notes";
 import { useLayoutEffect, useRef, useState } from "react";
 import type { LiveDraftSegment } from "../../types";
@@ -66,6 +65,16 @@ export default function LiveDraftList({
   const profile = profiles.some((item) => item.id === model)
     ? model
     : profiles[0]?.id || "";
+  const translation = useLiveChinese(
+    drafts,
+    recordingId || "",
+    profile,
+    chinese,
+  );
+  useLayoutEffect(() => {
+    if (chinese && active && following.current && list.current)
+      list.current.scrollTop = list.current.scrollHeight;
+  }, [translation.entries, chinese, active]);
   const groups = paragraphs(drafts);
   return (
     <>
@@ -76,7 +85,7 @@ export default function LiveDraftList({
             aria-pressed={chinese}
             onClick={() => setChinese(!chinese)}
           >
-            {chinese ? "查看原文" : "中文视图"}
+            {chinese ? "中文视图已开启 · 切回原文" : "开启中文视图"}
           </button>
         )}
         {chinese && (
@@ -110,6 +119,17 @@ export default function LiveDraftList({
             : `回到最新${unread ? `（${unread} 条新结果）` : ""}`}
         </button>
       </div>
+      {chinese && (
+        <small role="status">
+          {!profile
+            ? "请选择本地翻译模型，当前显示原文。"
+            : translation.busy
+              ? "本地模型忙碌，空闲后自动继续翻译。"
+              : translation.remaining
+                ? `自动翻译已确认片段 · ${translation.remaining} 段待处理`
+                : "已确认的英文片段自动翻译 · 临时文字保留原文"}
+        </small>
+      )}
       <div
         className="live-draft-list"
         ref={list}
@@ -158,33 +178,39 @@ export default function LiveDraftList({
             <b>{clock(draft.start)}</b>
             {chinese && recordingId ? (
               <div>
-                {draft.parts.map((part) => (
-                  <ChineseRecordLine
-                    key={JSON.stringify([
-                      recordingId,
-                      part.live_range_id,
-                      part.live_segment_index,
-                      part.start,
-                      part.end,
-                      part.text,
-                      profile,
-                    ])}
-                    original={part.text}
-                    translate={
-                      part.live_range_id && part.live_segment_index != null
-                        ? (signal) =>
-                            api.translateLiveSegment(
-                              recordingId,
-                              part.live_range_id!,
-                              part.live_segment_index!,
-                              profile,
-                              part.text,
-                              signal,
-                            )
-                        : undefined
-                    }
-                  />
-                ))}
+                {draft.parts.map((part, partIndex) => {
+                  const key = liveChineseKey(part, recordingId, profile);
+                  const entry = translation.entries[key];
+                  return (
+                    <p key={partIndex}>
+                      {entry?.result?.text ?? part.text}{" "}
+                      {entry?.result?.status === "translated" && (
+                        <small>中文译文</small>
+                      )}
+                      {entry?.result?.status === "unknown" && (
+                        <small>语言待确认</small>
+                      )}
+                      {key && profile && !entry && (
+                        <small>
+                          {translation.next === key && !translation.busy
+                            ? "翻译中"
+                            : "等待翻译 · 原文"}
+                        </small>
+                      )}
+                      {entry?.error && (
+                        <>
+                          <small role="alert">{entry.error}</small>{" "}
+                          <button
+                            className="text-btn"
+                            onClick={() => translation.retry(key)}
+                          >
+                            重试本段
+                          </button>
+                        </>
+                      )}
+                    </p>
+                  );
+                })}
               </div>
             ) : (
               <p>
