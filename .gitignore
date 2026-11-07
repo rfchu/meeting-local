@@ -4,7 +4,22 @@ __pycache__/
 data/
 models/
 vendor/
-docs/
+# Keep local notes private. Track only the maintained documentation below.
+/docs/*
+!/docs/README.md
+!/docs/USER_GUIDE.md
+!/docs/PROJECT_ROADMAP.md
+!/docs/engineering/
+!/docs/evaluation/
+/docs/engineering/*
+!/docs/engineering/CAPTURE_PROTOCOL.md
+!/docs/engineering/DEVELOPMENT.md
+!/docs/engineering/DELIVERY_HISTORY.md
+!/docs/engineering/HARDWARE_ACCEPTANCE.md
+!/docs/engineering/WORKSPACE.md
+/docs/evaluation/*
+!/docs/evaluation/README.md
+!/docs/evaluation/PRIVATE_SAMPLES.md
 *.log
 
 .venv-qwen/
