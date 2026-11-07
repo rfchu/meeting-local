@@ -1,3 +1,5 @@
+import ChineseRecordLine from "./ChineseRecordLine";
+import { api } from "../../api";
 import { draftSourceId } from "../overview/notes";
 import { useLayoutEffect, useRef, useState } from "react";
 import type { LiveDraftSegment } from "../../types";
@@ -12,8 +14,12 @@ export default function LiveDraftList({
   canAddNote = true,
   active = true,
   jump,
+  recordingId,
+  profiles = [],
 }: {
   drafts: LiveDraftSegment[];
+  recordingId?: string;
+  profiles?: { id: string; name: string }[];
   partial?: LiveDraftSegment | null;
   emptyText?: string;
   canAddNote?: boolean;
@@ -55,10 +61,40 @@ export default function LiveDraftList({
     if (active && following.current && list.current)
       list.current.scrollTop = list.current.scrollHeight;
   }, [active]);
+  const [chinese, setChinese] = useState(false);
+  const [model, setModel] = useState("");
+  const profile = profiles.some((item) => item.id === model)
+    ? model
+    : profiles[0]?.id || "";
   const groups = paragraphs(drafts);
   return (
     <>
       <div className="live-draft-follow">
+        {recordingId && (
+          <button
+            className="text-btn"
+            aria-pressed={chinese}
+            onClick={() => setChinese(!chinese)}
+          >
+            {chinese ? "查看原文" : "中文视图"}
+          </button>
+        )}
+        {chinese && (
+          <label>
+            本地翻译模型
+            <select
+              value={profile}
+              onChange={(event) => setModel(event.target.value)}
+            >
+              {!profiles.length && <option value="">未配置本地模型</option>}
+              {profiles.map((item) => (
+                <option key={item.id} value={item.id}>
+                  {item.name}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
         <span>{follow ? "自动跟随最新结果" : "正在回看 · 已暂停跟随"}</span>
         <button
           className="text-btn"
@@ -120,17 +156,48 @@ export default function LiveDraftList({
               .join(" ")}
           >
             <b>{clock(draft.start)}</b>
-            <p>
-              {draft.text}
-              {draft.parts.length > 1 && (
-                <small className="live-continuation-label">
-                  连续发言 · {draft.parts.length} 个音频片段
-                </small>
-              )}
-              {draft.parts.some((part) => part.live_correction_id) && (
-                <small className="live-corrected-badge">已校对</small>
-              )}
-            </p>
+            {chinese && recordingId ? (
+              <div>
+                {draft.parts.map((part) => (
+                  <ChineseRecordLine
+                    key={JSON.stringify([
+                      recordingId,
+                      part.live_range_id,
+                      part.live_segment_index,
+                      part.start,
+                      part.end,
+                      part.text,
+                      profile,
+                    ])}
+                    original={part.text}
+                    translate={
+                      part.live_range_id && part.live_segment_index != null
+                        ? () =>
+                            api.translateLiveSegment(
+                              recordingId,
+                              part.live_range_id!,
+                              part.live_segment_index!,
+                              profile,
+                              part.text,
+                            )
+                        : undefined
+                    }
+                  />
+                ))}
+              </div>
+            ) : (
+              <p>
+                {draft.text}
+                {draft.parts.length > 1 && (
+                  <small className="live-continuation-label">
+                    连续发言 · {draft.parts.length} 个音频片段
+                  </small>
+                )}
+                {draft.parts.some((part) => part.live_correction_id) && (
+                  <small className="live-corrected-badge">已校对</small>
+                )}
+              </p>
+            )}
             <button
               className="text-btn"
               disabled={!canAddNote}

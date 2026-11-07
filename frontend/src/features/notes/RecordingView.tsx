@@ -622,6 +622,10 @@ export default function RecordingView({
                     active={mobilePane === "transcript"}
                     jump={jumpDraft}
                     drafts={displayDrafts}
+                    recordingId={correctionSessionId}
+                    profiles={environment?.analysis.profiles.filter(
+                      (item) => item.provider_type === "local",
+                    )}
                     canAddNote={recording}
                     partial={partialDraft}
                     emptyText={

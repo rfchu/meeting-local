@@ -1,4 +1,5 @@
 """Recordings HTTP routes; shared services are supplied by the composition root."""
+from ..chinese_record import TranslationInput, live_source, translate_segment
 from ..languages import configure_asr, recording_language, SourceLanguage
 import sqlite3, io, json, subprocess, tempfile, time, wave
 from pathlib import Path
@@ -296,6 +297,17 @@ def register_routes(app,services:ApplicationServices):
         await live_sessions.finish(rid)
         try:return live_sessions.snapshot(rid)
         except (FileNotFoundError,ValueError):return {'status':'stopped'}
+
+
+    @app.post('/api/recordings/{rid}/chinese-record/{aid}/{index}')
+    def translate_live_segment(rid:str,aid:str,index:int,body:TranslationInput):
+        try:
+            source,hint=live_source(services,rid,aid,index)
+            return translate_segment(services,rid,source,hint,body,'live_translation')
+        except FileNotFoundError:raise HTTPException(404,'录音会话不存在')
+        except HTTPException:raise
+        except (ValueError,RuntimeError) as error:raise HTTPException(409,str(error))
+        except (OSError,TypeError):raise HTTPException(503,'本地翻译暂不可用，原文已保留')
 
 
     @app.get('/api/recordings/{rid}/corrections')

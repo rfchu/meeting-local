@@ -1,3 +1,4 @@
+import type { ChineseResult } from "./features/notes/ChineseRecordLine";
 import type { DeliveryReadiness } from "./features/minutes/deliveryReadiness";
 import type {
   HandoffSources,
@@ -818,6 +819,20 @@ export const api = {
     request<MeetingReview>(`/meetings/${id}/review/${step}`, {
       method: "DELETE",
     }),
+  translateLiveSegment: (
+    id: string,
+    range: string,
+    index: number,
+    profile: string,
+    text: string,
+  ) =>
+    request<ChineseResult>(
+      `/recordings/${id}/chinese-record/${range}/${index}`,
+      {
+        ...json("POST", { profile_id: profile, expected_text: text }),
+        signal: AbortSignal.timeout(30000),
+      },
+    ),
   upload: (file: File) => {
     const data = new FormData();
     data.append("file", file);

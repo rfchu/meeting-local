@@ -6,8 +6,8 @@ from contextlib import contextmanager
 
 CAPACITIES={'legacy_inference':1,'asr':1,'local_llm':1,'cloud_llm':1,'embedding':1}
 LABELS={'legacy_inference':'共享推理通道','asr':'语音识别','local_llm':'本地 LLM','cloud_llm':'云端 LLM 请求','embedding':'向量计算'}
-WORKLOADS={'live_asr','transcription','analysis','minutes','note_expansion','terminology','index','qa','semantic_search','embedding_config','live_overview','live_correction','speaker_review','legacy'}
-PRIORITIES={name:(0 if name=='live_asr' else 10 if name in ('live_overview','live_correction') else 20 if name in ('semantic_search','embedding_config','speaker_review') else 40 if name=='index' else 30) for name in WORKLOADS}
+WORKLOADS={'live_asr','transcription','analysis','minutes','note_expansion','terminology','index','qa','semantic_search','embedding_config','live_overview','live_correction','live_translation','speaker_review','legacy'}
+PRIORITIES={name:(0 if name=='live_asr' else 10 if name in ('live_overview','live_correction','live_translation') else 20 if name in ('semantic_search','embedding_config','speaker_review') else 40 if name=='index' else 30) for name in WORKLOADS}
 REASONS={key+'_busy':'等待'+label+'资源' for key,label in LABELS.items()}|{'realtime_index_yield':'实时识别期间暂缓索引，录音结束后继续','closed':'资源协调器已关闭','realtime_priority':'会中识别优先，等待实时识别暂停或结束','priority_queue':'等待更高优先级或较早的资源请求'}
 
 class ResourceBusy(ValueError):pass
@@ -36,7 +36,7 @@ class ResourceScheduler:
 
     def should_yield(self,workload,requirements):
         with self.condition:
-            return bool(self.live_owners and workload not in ('live_asr','live_overview','live_correction') and
+            return bool(self.live_owners and workload not in ('live_asr','live_overview','live_correction','live_translation') and
                         ('legacy_inference' in requirements or 'local_llm' in requirements))
 
     def _reason(self,claim):
@@ -155,7 +155,7 @@ class ResourceScheduler:
                 'requests':values,'history':list(self.history),'finished_count':self.finished,'rejected_count':self.rejected,
                 'request_limit':self.max_requests,'deferred_limit':self.max_requests,'observed_limit':self.max_requests,'deferred_total':self.deferred_total,'deferred_truncated':self.deferred_total>len(self.deferred),
                 'capture_independent':True,'memory_bytes_estimated':False,
-                'coverage':['worker_jobs','editorial_jobs','live_asr','live_overview','live_correction','retrieval_api','inline_minutes','inline_speaker_review'],
+                'coverage':['worker_jobs','editorial_jobs','live_asr','live_overview','live_correction','live_translation','retrieval_api','inline_minutes','inline_speaker_review'],
                 'excluded':['model_connection_tests','model_residency','external_processes']}
 
     def close(self):
