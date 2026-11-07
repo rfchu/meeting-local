@@ -1,3 +1,8 @@
+import {
+  defaultDeliveryFilters,
+  matchesDelivery,
+  type DeliveryFilters,
+} from "./deliveryHistory";
 import DeliveryHistoryRow from "./DeliveryHistoryRow";
 import AudienceDeliveryPreview from "./AudienceDeliveryPreview";
 import { recordingQualityAttention } from "../notes/recordingQuality";
@@ -27,6 +32,7 @@ export default function MinutesDeliveryPanel({
   onRefresh: () => Promise<void>;
 }) {
   const [open, setOpen] = useState(false);
+  const [filters, setFilters] = useState(defaultDeliveryFilters);
   const details = useRef<HTMLDetailsElement>(null);
   useEffect(() => {
     if (!focusRequested) return;
@@ -64,6 +70,9 @@ export default function MinutesDeliveryPanel({
     (stage) => stage.key === "delivery",
   )?.source;
   const deliveries = meeting.deliveries || [];
+  const visible = deliveries
+    .map((delivery, index) => ({ delivery, number: deliveries.length - index }))
+    .filter(({ delivery }) => matchesDelivery(delivery, filters));
   return (
     <section className="minutes-delivery" aria-label="纪要交付">
       <details
@@ -141,8 +150,68 @@ export default function MinutesDeliveryPanel({
             }}
           />
         )}
-        {deliveries.length > 0 && <h4>已保存版本 · 历史快照保持不变</h4>}
-        {deliveries.map((d, i) => (
+        {deliveries.length > 0 && (
+          <>
+            <h4>交付历史</h4>
+            <fieldset>
+              <legend>筛选交付件</legend>
+              <label>
+                受众{" "}
+                <select
+                  value={filters.audience}
+                  onChange={(e) =>
+                    setFilters({
+                      ...filters,
+                      audience: e.target.value as DeliveryFilters["audience"],
+                    })
+                  }
+                >
+                  <option value="">全部受众</option>
+                  <option value="internal">内部版（含旧交付）</option>
+                  <option value="external">对外版</option>
+                </select>
+              </label>{" "}
+              <label>
+                起始日期{" "}
+                <input
+                  type="date"
+                  value={filters.from}
+                  onChange={(e) =>
+                    setFilters({ ...filters, from: e.target.value })
+                  }
+                />
+              </label>{" "}
+              <label>
+                截止日期{" "}
+                <input
+                  type="date"
+                  value={filters.through}
+                  onChange={(e) =>
+                    setFilters({ ...filters, through: e.target.value })
+                  }
+                />
+              </label>{" "}
+              <button
+                type="button"
+                onClick={() => setFilters(defaultDeliveryFilters)}
+              >
+                清除筛选
+              </button>
+            </fieldset>
+            {filters.from &&
+            filters.through &&
+            filters.from > filters.through ? (
+              <p role="status">截止日期不能早于起始日期。</p>
+            ) : (
+              <p role="status">
+                {visible.length
+                  ? `显示 ${visible.length} / ${deliveries.length} 个交付件（本地日期）`
+                  : "没有符合筛选条件的交付件。"}
+              </p>
+            )}
+          </>
+        )}
+        {visible.map(({ delivery: d, number }) => (
           <DeliveryHistoryRow
             key={d.id}
             delivery={d}
@@ -153,7 +222,7 @@ export default function MinutesDeliveryPanel({
               handoffDelivery?.current_external_delivery_id === d.id
             }
             onRefresh={onRefresh}
-            number={deliveries.length - i}
+            number={number}
           />
         ))}
       </details>

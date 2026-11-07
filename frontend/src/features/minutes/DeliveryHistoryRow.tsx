@@ -1,3 +1,4 @@
+import { deliveryLocalDate } from "./deliveryHistory";
 import { useState } from "react";
 import { api, downloadDelivery, downloadUrl } from "../../api";
 import type { MinutesDelivery } from "../../types";
@@ -38,7 +39,8 @@ export default function DeliveryHistoryRow({
           {current ? "· 当前交付" : "· 历史快照"}
         </strong>
         <small>
-          交付 {number} · {delivery.created} ·{" "}
+          交付 {number} ·{" "}
+          {deliveryLocalDate(delivery.created) || delivery.created} ·{" "}
           {delivery.include_citations ? "含原文引用" : "不含原文引用"}
           {!!delivery.template_version &&
             ` · 自定义模板 v${delivery.template_version}`}
