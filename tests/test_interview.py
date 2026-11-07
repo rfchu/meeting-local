@@ -137,10 +137,10 @@ def test_provider_uses_dedicated_schema_exact_quotes_and_aliases(tmp_path):
  with pytest.raises(ValueError):bad.interview.validate_sources(SEGMENTS)
 
 
-def test_interview_generation_requires_current_roles_and_rejects_wrong_speaker(setup):
+def test_interview_roles_are_optional_and_current_roles_reject_wrong_speaker(setup):
  c,store,mid,_=setup
  body={'template_id':'online-interview','method':'ai','audience':'internal'}
- assert c.post(f'/api/meetings/{mid}/minutes/compose',json=body).status_code==409
+ assert c.post(f'/api/meetings/{mid}/minutes/compose',json=body).status_code==201
  artifact=generate(c,mid)
  qa=artifact['payload']['interview']['qa'][0]
  assert qa['question_evidence'][0]['segment_id']=='q' and qa['evidence'][0]['segment_id']=='a'
@@ -150,4 +150,6 @@ def test_interview_generation_requires_current_roles_and_rejects_wrong_speaker(s
  bad.qa[0].evidence=bad.qa[0].question_evidence
  with pytest.raises(ValueError,match='非候选人'):bad.validate_sources(SEGMENTS,roles)
  store.save_revision(mid,SEGMENTS,'manual')
- assert c.post(f'/api/meetings/{mid}/minutes/compose',json=body).status_code==409
+ refreshed=c.post(f'/api/meetings/{mid}/minutes/compose',json=body)
+ assert refreshed.status_code==201
+ assert refreshed.json()['artifact']['payload']['interview_context']['speaker_roles'] is None

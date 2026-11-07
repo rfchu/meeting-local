@@ -412,7 +412,7 @@ export default function RecordingView({
           title={brief.title}
           brief={
             brief.interview?.role
-              ? `线上面试 · ${brief.interview.role}`
+              ? `面试 · ${brief.interview.role}`
               : brief.purpose
           }
           editable={state === "idle"}

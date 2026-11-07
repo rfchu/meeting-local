@@ -19,9 +19,9 @@ class InterviewSpeakerRoles(BaseModel):
                 for sid,name in speakers.items() if name==self.candidate or name in interviewers}
 
 
-def require_speaker_roles(context,segments):
+def confirmed_speaker_roles(context,segments):
     value=context.get('interview_speaker_roles')
-    if not value:raise ValueError('请先确认当前文字稿的候选人和面试官，再生成面试纪要')
+    if not value:return None
     return InterviewSpeakerRoles.model_validate(value).segment_roles(segments)
 
 
@@ -67,12 +67,14 @@ class InterviewResult(BaseModel):
         for item in self.items():
             yield from item.evidence
             if isinstance(item,InterviewQA):yield from item.question_evidence
-    def validate_sources(self,segments,roles=None):
+    def validate_sources(self,segments,roles=None,*,require_questions=False):
         by_id={s['id']:s['text'] for s in segments}
         for item in self.items():
             if isinstance(item,Competency) and item.coverage!='not_discussed' and not item.evidence:raise ValueError('能力证据缺少原文依据')
         for evidence in self.evidence():
             if evidence.segment_id not in by_id or evidence.quote not in by_id[evidence.segment_id]:raise ValueError('面试结果引用或原文摘录不匹配，请重新生成或核对')
+        if require_questions and any(not item.question_evidence for item in self.qa):
+            raise ValueError('面试问题缺少原文依据，请核对后重新生成')
         if roles is not None:
             for item in [*self.background,*self.qa]:
                 if any(roles.get(source.segment_id)!='candidate' for source in item.evidence):

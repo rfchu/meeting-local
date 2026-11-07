@@ -97,7 +97,7 @@ interface Props {
   generating: boolean;
   onOptions: (value: MinutesOptions) => void;
   onConfirmInterviewRoles: (
-    roles: import("../../types").InterviewSpeakerRoles,
+    roles: import("../../types").InterviewSpeakerRoles | null,
   ) => Promise<void>;
   onPreparation: () => void;
   onSelect: (id: string) => void;
@@ -357,10 +357,7 @@ export default function MinutesView(props: Props) {
         className="minutes-generation-settings"
         aria-label="生成纪要设置"
       >
-        <summary>
-          {draft ? "生成新草稿" : "生成会议纪要"} ·{" "}
-          {selectedTemplate?.name || "选择模板"}
-        </summary>
+        <summary>{draft ? "生成新草稿" : "生成会议纪要"}</summary>
         <div className="minutes-toolbar">
           <label>
             会议模板
@@ -384,6 +381,36 @@ export default function MinutesView(props: Props) {
               ))}
             </select>
           </label>
+          <button
+            className="primary"
+            disabled={
+              generating ||
+              !meeting.segments.length ||
+              !model ||
+              (options.method === "current" && !current)
+            }
+            onClick={props.onGenerate}
+          >
+            {generating ? "正在生成…" : draft ? "生成新草稿" : "生成会议纪要"}
+          </button>
+        </div>
+        {options.template_id === "online-interview" && (
+          <InterviewRolesForm
+            key={`${meeting.id}:${meeting.revision}`}
+            meeting={meeting}
+            disabled={transcriptDirty || generating}
+            onConfirm={props.onConfirmInterviewRoles}
+            onPreparation={props.onPreparation}
+          />
+        )}
+        <details className="minutes-advanced">
+          <summary>
+            高级设置 ·{" "}
+            {options.method === "ai" ? "AI 整理全文" : "从当前纪要派生"} ·{" "}
+            {profiles.find((p) => p.id === model)?.name ||
+              model ||
+              "尚未配置模型"}
+          </summary>
           <label>
             纪要输出语言
             <select
@@ -439,46 +466,6 @@ export default function MinutesView(props: Props) {
               <option value="internal">内部工作</option>
             </select>
           </label>
-          <button
-            className="primary"
-            disabled={
-              generating ||
-              !meeting.segments.length ||
-              !model ||
-              (options.template_id === "online-interview" &&
-                (transcriptDirty ||
-                  meeting.flow?.brief.interview?.speaker_roles?.revision !==
-                    meeting.revision)) ||
-              (options.method === "current" && !current)
-            }
-            onClick={props.onGenerate}
-          >
-            {generating ? "正在生成…" : draft ? "生成新草稿" : "生成会议纪要"}
-          </button>
-        </div>
-        {options.template_id === "online-interview" && (
-          <InterviewRolesForm
-            key={`${meeting.id}:${meeting.revision}`}
-            meeting={meeting}
-            disabled={transcriptDirty || generating}
-            onConfirm={props.onConfirmInterviewRoles}
-          />
-        )}
-        {options.template_id === "online-interview" && (
-          <p>
-            <button onClick={props.onPreparation}>填写面试准备</button>
-            可选填岗位与考察重点；本模板仅使用 AI 整理全文。
-          </p>
-        )}
-        <p>生成后另存草稿，核对后采用。</p>
-        <details className="minutes-advanced">
-          <summary>
-            高级设置 ·{" "}
-            {options.method === "ai" ? "AI 整理全文" : "从当前纪要派生"} ·{" "}
-            {profiles.find((p) => p.id === model)?.name ||
-              model ||
-              "尚未配置模型"}
-          </summary>
           <label>
             生成方法
             <select

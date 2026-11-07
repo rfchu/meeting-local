@@ -109,7 +109,7 @@ export default function MeetingBriefForm({
       </label>
       <details className="interview-preparation">
         <summary>
-          线上面试准备（可选）
+          面试准备（可选）
           {value.interview?.role ? ` · ${value.interview.role}` : ""}
         </summary>
         <p>

@@ -627,14 +627,7 @@ export default function App() {
           const profile = envQuery.data?.analysis.profiles.find(
             (p) => p.id === minutesModel,
           );
-          const interviewNeedsRoles =
-            options.goal === "minutes" &&
-            minutesOptions.template_id === "online-interview";
-          const requested = options.goal === "minutes" && !interviewNeedsRoles;
-          if (interviewNeedsRoles)
-            followUpErrors.push(
-              "面试文字稿完成后，请先确认候选人和面试官，再生成纪要",
-            );
+          const requested = options.goal === "minutes";
           const consent =
             !requested ||
             profile?.provider_type !== "cloud" ||
@@ -793,14 +786,6 @@ export default function App() {
     };
     if (fromAnalysis && (!currentAnalysis(target) || transcriptDirty))
       return toast("请先生成当前文字稿的分析");
-    if (
-      !fromAnalysis &&
-      options.template_id === "online-interview" &&
-      (transcriptDirty ||
-        target.flow?.brief.interview?.speaker_roles?.revision !==
-          target.revision)
-    )
-      return toast("请先保存文字稿并确认候选人与面试官");
     if (
       !minutesModel &&
       !(options.method === "analysis" && currentAnalysis(target))
@@ -1644,7 +1629,7 @@ export default function App() {
                             !target ||
                             !brief ||
                             transcriptDirty ||
-                            target.revision !== roles.revision
+                            (roles && target.revision !== roles.revision)
                           )
                             throw new Error("请先保存并刷新文字稿");
                           const flow = await api.saveBrief(target.id, {

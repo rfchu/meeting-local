@@ -76,8 +76,11 @@ def ai_context(db,mid):
         preparation.pop(key,None)
     role_selection=(preparation.get('interview') or {}).get('speaker_roles')
     payload={'preparation':preparation,'reviewed_attention':approved}
-    if role_selection and role_selection['revision']==row['revision']:
-        payload['interview_speaker_roles']=role_selection
+    if role_selection:
+        if role_selection['revision']==row['revision']:
+            payload['interview_speaker_roles']=role_selection
+        else:
+            preparation['interview'].pop('speaker_roles',None)
     from .terminology import confirmed_context
     terms=confirmed_context(db,mid)
     if terms:payload['confirmed_terminology']=terms

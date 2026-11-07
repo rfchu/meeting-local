@@ -115,7 +115,10 @@ export default function InterviewMinutesBody({
     });
   };
   const headings: [keyof InterviewResult, string][] = [
-    ["background", "候选人经历与项目"],
+    [
+      "background",
+      doc.interview_context?.speaker_roles ? "候选人经历与项目" : "经历与项目",
+    ],
     ["qa", "核心问答记录"],
     ["competencies", "岗位能力证据"],
     ["concerns", "AI 关注与待追问"],
@@ -137,16 +140,11 @@ export default function InterviewMinutesBody({
           本轮计划考察：{doc.interview_context.focus}
         </p>
       )}
-      {new Set(
-        segments.map((s) => s.speaker).filter((s) => s && s !== "未分配"),
-      ).size < 2 && (
-        <p className="analysis-notice">
-          发言人归属尚不明确，请回听核对问题与回答的对应关系。
-        </p>
-      )}
       <p className="interview-hint">
-        问答与经历保留候选人自述归属。能力栏目表示证据覆盖，不代表评分；AI
-        关注点仅在人工保留后进入导出。
+        {doc.interview_context?.speaker_roles
+          ? "已按确认角色校验问题和回答的原文依据。"
+          : "发言人角色未确认。可通过原文依据回听核对发言归属。"}
+        AI 关注点经人工保留后进入导出。
       </p>
       {headings.map(([key, title]) => (
         <section className="minutes-section" key={key}>

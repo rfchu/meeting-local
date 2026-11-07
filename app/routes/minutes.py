@@ -55,7 +55,7 @@ def register_routes(app,services:ApplicationServices):
         segments=json.loads(row['segments'])
         analysis=MeetingAnalysis.model_validate(json.loads(source['payload']))
         template=minutes_template(body.template_id)
-        if template.id=='online-interview':raise HTTPException(409,'线上面试模板请使用 AI 整理全文')
+        if template.id=='online-interview':raise HTTPException(409,'面试模板请使用 AI 整理全文')
         document=build_minutes(row['title'],row['created'],segments,analysis,body.style,template)
         aid=uid();provenance={'source_analysis_id':source['id'],'minutes_version':MINUTES_VERSION,'style':body.style,
                               'template_id':template.id,'template_version':template.version,'edited':False}
@@ -131,7 +131,7 @@ def register_routes(app,services:ApplicationServices):
         row=meeting(mid);settings=CompositionSettings.model_validate(body.model_dump())
         from ..minutes_composition import semantic_template
         template=semantic_template(settings.template_id,minutes_template(settings.template_id))
-        if template.id=='online-interview' and settings.method!='ai':raise HTTPException(409,'线上面试模板请使用 AI 整理全文，问答与证据不能由普通会议分析代替')
+        if template.id=='online-interview' and settings.method!='ai':raise HTTPException(409,'面试模板请使用 AI 整理全文，问答与证据不能由普通会议分析代替')
         if body.source_minutes_id and not store.one("SELECT id FROM artifacts WHERE id=? AND meeting_id=? AND kind='meeting_minutes'",(body.source_minutes_id,mid)):raise HTTPException(404,'来源纪要不存在')
         if settings.method=='analysis':
             if settings.output_language=='en':raise HTTPException(409,'规则纪要沿用分析原文，转换输出语言请使用 AI 整理')
@@ -191,15 +191,11 @@ def register_routes(app,services:ApplicationServices):
         if body.composition:
             from ..minutes_composition import semantic_template
             template=semantic_template(template.id,template)
-        if template.id=='online-interview' and body.composition and body.composition.method!='ai':raise HTTPException(409,'线上面试模板仅支持 AI 整理全文')
+        if template.id=='online-interview' and body.composition and body.composition.method!='ai':raise HTTPException(409,'面试模板仅支持 AI 整理全文')
         source_analysis=minutes_source(mid,row) if body.mode=='full' and template.id!='online-interview' else None
         try:
             with store.connect() as db:context,context_hash=meeting_flow.ai_context(db,mid)
         except ValueError as error:raise HTTPException(409,str(error))
-        if template.id=='online-interview':
-            from ..interview import require_speaker_roles
-            try:require_speaker_roles(context,segments)
-            except ValueError as error:raise HTTPException(409,str(error))
         source_document=None;source_ids=None
         if body.composition:
             context['composition']=body.composition.model_dump()
@@ -244,7 +240,8 @@ def register_routes(app,services:ApplicationServices):
             document=build_from_ai(row['created'],result,body.composition,source_document,template) if body.composition else build_ai_minutes(row['created'],result,template)
             document=set_output_language(document,output_language)
             if template.id=='online-interview':
-                document.interview.validate_sources(segments,require_speaker_roles(context,segments))
+                from ..interview import confirmed_speaker_roles
+                document.interview.validate_sources(segments,confirmed_speaker_roles(context,segments),require_questions=True)
                 document.interview_context=InterviewPreparation.model_validate(context['preparation']['interview']) if context['preparation'].get('interview') else None
                 from ..interview import project
                 document=project(document)
