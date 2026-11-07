@@ -190,21 +190,31 @@ def exchange(a,b):
 
 
 class Delivery:
+    app_name='Tingji.app'
+    history_name='.tingji-host-releases'
+    def verify(self,app):return verify_bundle(app)
+    def runtime(self,app):return runtime_check(app)
+    def running(self,app):return reject_running(app)
+    def state_dirs(self,app,info):return state_directories(app,info)
+    def extra_locks(self):return []
+    def compile(self,stage):
+        env=os.environ.copy();env['TINGJI_HOST_COMPILE_APP']=str(stage)
+        subprocess.run(['bash',str(ROOT/'scripts/compile_host.sh')],cwd=ROOT,env=env,check=True)
     def __init__(self,target):
         raw = Path(target).expanduser().absolute()
-        if raw.name != 'Tingji.app' or raw.is_symlink():raise DeliveryError('目标必须是非符号链接的 Tingji.app')
+        if raw.name != self.app_name or raw.is_symlink():raise DeliveryError('目标必须是非符号链接的 Tingji.app')
         self.target = raw.parent.resolve()/raw.name
         # Refuse any target that could replace the project or workspace itself.
         if self.target == ROOT or ROOT.is_relative_to(self.target):raise DeliveryError('不能覆盖源码目录')
-        self.history = self.target.parent/'.tingji-host-releases'
+        self.history = self.target.parent/self.history_name
         self.journal = self.history/'transaction.json'
 
     def status(self):
         report = {'target_exists':self.target.exists(),'host_version':None,'history':[],
                   'pending_transaction':False,'automatic_service_control':False,'data_or_models_bundled':False}
         if self.target.exists():
-            info = verify_bundle(self.target);report['host_version']=info['CFBundleShortVersionString']
-            report['runtime']=runtime_check(self.target)
+            info = self.verify(self.target);report['host_version']=info.get('CFBundleShortVersionString',info.get('CFBundleVersion'))
+            report['runtime']=self.runtime(self.target)
         if self.journal.exists():report['pending_transaction']=read_json(self.journal).get('state')=='prepared'
         active_digest = digest_tree(self.target) if self.target.exists() else None
         if self.history.exists():
@@ -231,7 +241,7 @@ class Delivery:
         if not isinstance(release,str) or len(release)!=32 or any(c not in '0123456789abcdef' for c in release):raise DeliveryError('回退版本编号无效')
         folder=self.history/release
         if folder.is_symlink():raise DeliveryError('版本目录不能是符号链接')
-        return folder/'Tingji.app'
+        return folder/self.app_name
 
     def publish(self,stage,record):
         old_exists=self.target.exists()
@@ -251,10 +261,11 @@ class Delivery:
         with lease(self.history,'delivery.lock'):
             if self.journal.exists() and read_json(self.journal).get('state')=='prepared':
                 raise DeliveryError('存在未完成交付，请先执行 recover 核对，未开始新替换')
-            info = verify_bundle(self.target) if self.target.exists() else {}
-            reject_running(self.target)
+            info = self.verify(self.target) if self.target.exists() else {}
+            self.running(self.target)
             with contextlib.ExitStack() as locks:
-                directories = set(state_directories(self.target,info))
+                for gate in self.extra_locks():locks.enter_context(gate)
+                directories = set(self.state_dirs(self.target,info))
                 # New defaults may use a different test state directory; hold both through publication.
                 for directory in sorted(directories):locks.enter_context(lease(directory,'host.lock'))
                 release = uuid.uuid4().hex;stage=self.stage_path(release);private_folder(stage.parent)
@@ -265,12 +276,11 @@ class Delivery:
                     if digest_tree(self.target)!=record['new_digest']:raise DeliveryError('当前应用已变化，不能应用这条回退记录')
                     shutil.copytree(archived,stage)
                 else:
-                    env=os.environ.copy();env['TINGJI_HOST_COMPILE_APP']=str(stage)
-                    subprocess.run(['bash',str(ROOT/'scripts/compile_host.sh')],cwd=ROOT,env=env,check=True)
-                verify_bundle(stage);runtime_check(stage)
-                for directory in state_directories(stage,bundle_info(stage)):
+                    self.compile(stage)
+                self.verify(stage);self.runtime(stage)
+                for directory in self.state_dirs(stage,self.verify(stage)):
                     if directory not in directories:locks.enter_context(lease(directory,'host.lock'));directories.add(directory)
-                reject_running(self.target)
+                self.running(self.target)
                 return self.publish(stage,{'id':release,'action':'rollback' if rollback else 'build','from_release':rollback})
 
 

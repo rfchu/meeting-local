@@ -1,3 +1,4 @@
+import CaptureControlPanel from "./CaptureControlPanel";
 import { clock } from "../../utils";
 import type { RuntimeOverview, ManagementPage } from "./types";
 
@@ -57,6 +58,7 @@ export default function RuntimeOverviewPage({
           <button onClick={() => onPage("environment")}>查看运行环境</button>
         </section>
       )}
+      <CaptureControlPanel />
       <section className="management-section">
         <h3>实时识别会话</h3>
         {!data.sessions.length ? (

@@ -261,13 +261,16 @@ if arguments.contains("--diagnostics-self-test") {
 if arguments.contains("--probe") {
     jsonLine(["screen_permission": CGPreflightScreenCaptureAccess(),
               "microphone_permission": AVCaptureDevice.authorizationStatus(for: .audio) == .authorized,
-              "supported": ProcessInfo.processInfo.operatingSystemVersion.majorVersion >= 15, "diagnostics_version": 1, "helper_build": 3, "ownership_protocol_version": 1])
+              "supported": ProcessInfo.processInfo.operatingSystemVersion.majorVersion >= 15, "diagnostics_version": 1, "helper_build": 4, "ownership_protocol_version": 1, "artifact_guard_version": 1])
     exit(0)
 }
 guard let option = arguments.firstIndex(of: "--output"), arguments.indices.contains(option + 1) else {
     jsonLine(["error": "需要指定 --output"]); exit(2)
 }
 guard let identityOption = arguments.firstIndex(of:"--incarnation"), arguments.indices.contains(identityOption+1) else { jsonLine(["error":"缺少采集会话身份，请从工作台启动"]); exit(2) }
+let artifactLease: CaptureArtifactLease
+do { artifactLease = try CaptureArtifactLease(executable:CommandLine.arguments[0]) }
+catch { jsonLine(["error":"采集器更新锁无法取得，未打开设备"]); exit(4) }
 let ownerLease: CaptureOwnerLease
 do { ownerLease = try CaptureOwnerLease(folder:URL(fileURLWithPath:arguments[option+1]),incarnation:arguments[identityOption+1]) }
 catch { jsonLine(["error":"采集所有权无法取得，未打开设备"]); exit(3) }
@@ -293,4 +296,4 @@ Task {
         exit(1)
     }
 }
-withExtendedLifetime(ownerLease) { RunLoop.main.run() }
+withExtendedLifetime((ownerLease,artifactLease)) { RunLoop.main.run() }

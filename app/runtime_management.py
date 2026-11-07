@@ -4,7 +4,27 @@ from fastapi import HTTPException,Query
 from fastapi.responses import JSONResponse
 from .providers import engine_catalog,LocalDiarization,LocalPunctuation
 
-def register_runtime_management(app,store,native,resident,probes,runtime=None,resources=None):
+def register_runtime_management(app,store,native,resident,probes,runtime=None,resources=None,live_sessions=None):
+    @app.get('/api/runtime/capture-control')
+    def capture_control():
+        sessions=[]
+        if live_sessions:
+            for row in store.all('SELECT recording_id FROM live_sessions ORDER BY updated DESC LIMIT 50'):
+                try:
+                    value=live_sessions.recovery_status(row['recording_id'])
+                    if value['task_active'] or value['recoverable']:sessions.append(value)
+                except (OSError,ValueError,KeyError):pass
+        control=None
+        try:
+            from .capture_broker import Client,endpoint,read_private
+            folder,_,_=endpoint(native.recordings.root);registry=read_private(folder/'broker.json')
+            observer=Client(native.recordings.root,registry['recording_id'],registry['incarnation'])
+            observed=observer.status()
+            control={key:observed.get(key) for key in ('recording_id','incarnation','broker_build','source_digest','started_at','alive','state','generation','can_claim','exit_code','exit_reason','pending_commands')}
+        except (OSError,ValueError,KeyError):pass
+        return JSONResponse({'passive':True,'sessions':sessions,'control':control,
+            'upgrade':{'requires_idle':True,'policy':'结束录音和试录后升级；退出工作区不会结束独立采集，更新不会接管或停止录音。'}},headers={'Cache-Control':'no-store'})
+
     @app.get('/api/runtime/resources')
     def resource_status():
         if resources is None:raise HTTPException(503,'资源状态暂不可用')

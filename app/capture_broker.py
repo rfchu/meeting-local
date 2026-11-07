@@ -132,19 +132,21 @@ class Client:
 
 
 class Broker:
-    def __init__(self,root,rid,incarnation,args,lease_seconds=LEASE_SECONDS,awake_enabled=True):
+    def __init__(self,root,rid,incarnation,args,lease_seconds=LEASE_SECONDS,awake_enabled=True,helper_path=None):
+        self.build='E7';self.started_at=time.time();self.source_digest=hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
         self.root=Path(root).resolve();self.rid=rid;self.incarnation=incarnation;self.args=args
         self.folder,self.path,self.fingerprint=endpoint(self.root,rid,incarnation)
         self.lease_seconds=lease_seconds;self.generation=0;self.controller=None;self.deadline=0;self.sequence=0
-        self.receipts={};self.child=None;self.lockfd=None;self.awake=None;self.awake_requested=False;self.awake_enabled=awake_enabled;self.writer_guard=None;self.terminal_written=False
+        self.receipts={};self.child=None;self.lockfd=None;self.awake=None;self.awake_requested=False;self.awake_enabled=awake_enabled;self.writer_guard=None;self.terminal_written=False;self.binary_guard=None;self.helper_path=helper_path
     def release_writer_guard(self):
         if self.writer_guard is not None:os.close(self.writer_guard);self.writer_guard=None
     def terminal(self):
         code=self.child.poll()
         if code is None:return
         self.release_writer_guard()
+        if self.binary_guard:self.binary_guard.close();self.binary_guard=None
         if not self.terminal_written:
-            atomic(self.folder/'terminal.json',{'version':2,'workspace':self.fingerprint,'recording_id':self.rid,'incarnation':self.incarnation,'ok':True,'alive':False,'exit_code':code,'state':self.state(),'generation':self.generation,'control_valid':False,'can_claim':False,'awake_active':False})
+            atomic(self.folder/'terminal.json',{'version':2,'workspace':self.fingerprint,'recording_id':self.rid,'incarnation':self.incarnation,'broker_build':self.build,'source_digest':self.source_digest,'started_at':self.started_at,'pending_commands':sum(r.get('outcome')!='confirmed' for r in self.receipts.values()),'exit_reason':None if self.child.poll() is None else 'normal_stop' if self.stopped_confirmed() else 'abnormal_or_unconfirmed','ok':True,'alive':False,'exit_code':code,'state':self.state(),'generation':self.generation,'control_valid':False,'can_claim':False,'awake_active':False})
             self.terminal_written=True
 
     def sync_awake(self):
@@ -187,7 +189,7 @@ class Broker:
             if not alive:self.terminal()
             if op=='status':
                 if valid:self.deadline=time.monotonic()+self.lease_seconds
-                return base|{'ok':True,'alive':alive,'exit_code':self.child.poll(),'state':self.state(),'generation':self.generation,'control_valid':valid,'awake_active':self.awake is not None and self.awake.poll() is None,'can_claim':self.controller is None or time.monotonic()>=self.deadline}
+                return base|{'broker_build':self.build,'source_digest':self.source_digest,'started_at':self.started_at,'pending_commands':sum(r.get('outcome')!='confirmed' for r in self.receipts.values()),'exit_reason':None if self.child.poll() is None else 'normal_stop' if self.stopped_confirmed() else 'abnormal_or_unconfirmed','ok':True,'alive':alive,'exit_code':self.child.poll(),'state':self.state(),'generation':self.generation,'control_valid':valid,'awake_active':self.awake is not None and self.awake.poll() is None,'can_claim':self.controller is None or time.monotonic()>=self.deadline}
             if op=='claim':
                 if type(m.get('expected_generation')) is not int or m['expected_generation']!=self.generation:raise BrokerError('控制代次已变化，请重新检查')
                 if not alive:raise BrokerError('采集器已退出，只能整理已保存音轨')
@@ -264,6 +266,9 @@ class Broker:
                 if launch.exists() or launch.is_symlink():raise BrokerError('此采集实例已经启动过，未重新采集或覆盖音轨')
                 atomic(launch,{'version':2,'recording_id':self.rid,'incarnation':self.incarnation})
                 logpath=self.root/self.rid/'capture.log'
+                if self.helper_path:
+                    from .capture_binary import BinaryLease
+                    self.binary_guard=BinaryLease(self.helper_path).acquire()
                 with logpath.open('ab') as log:self.child=subprocess.Popen(self.args,stdin=subprocess.PIPE,stdout=log,stderr=log,close_fds=True)
                 metadata={'version':2,'workspace':self.fingerprint,'recording_id':self.rid,'incarnation':self.incarnation}
                 atomic(self.folder/'broker.json',metadata);atomic(workspace/'broker.json',metadata)
@@ -285,6 +290,7 @@ class Broker:
                         except (OSError,ValueError):continue
         finally:
             self.release_writer_guard()
+            if self.binary_guard:self.binary_guard.close();self.binary_guard=None
             if self.awake and self.awake.poll() is None:
                 self.awake.terminate()
                 with contextlib.suppress(subprocess.TimeoutExpired):self.awake.wait(timeout=2)
@@ -324,6 +330,6 @@ def main():
     if session.get('id')!=args.recording_id or session.get('capture_incarnation')!=args.incarnation or session.get('capture_transport')!='broker_v2':parser.error('会话身份不匹配')
     command=[str(args.helper),'--output',str(folder),'--incarnation',args.incarnation]
     if args.microphone:command.append('--microphone')
-    Broker(args.root,args.recording_id,args.incarnation,command).run()
+    Broker(args.root,args.recording_id,args.incarnation,command,helper_path=args.helper).run()
 
 if __name__=='__main__':main()

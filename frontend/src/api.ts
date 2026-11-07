@@ -194,6 +194,15 @@ export const api = {
   runtimeTasks: (state: string, focus?: import("./types").TaskFocus) =>
     request<RuntimeTasks>(taskQuery(state, focus)),
   runtimeResources: () => request<ResourceStatus>("/runtime/resources"),
+  captureControl: () =>
+    request<
+      import("./features/management/CaptureControlPanel").CaptureControlStatus
+    >("/runtime/capture-control", { signal: AbortSignal.timeout(10000) }),
+  recoverLiveSession: (id: string, seq: number) =>
+    request(
+      `/recordings/${id}/live-session/recover`,
+      json("POST", { expected_seq: seq }),
+    ),
   runtimeOverview: () => request<RuntimeOverview>("/runtime/overview"),
   serviceLifecycle: () =>
     request<{

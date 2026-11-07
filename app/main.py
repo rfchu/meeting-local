@@ -107,7 +107,7 @@ def _create_app(data_dir=None,start_worker=True):
         setattr(app.state,name,getattr(services,name))
     register_local_only(app)
     register_onboarding(app,store,native_capture,capture_probes)
-    register_runtime_management(app,store,native_capture,resident,capture_probes,recording_runtime,resources)
+    register_runtime_management(app,store,native_capture,resident,capture_probes,recording_runtime,resources,live_sessions)
     register_model_preferences(app,store)
     register_task_management(app,store,worker,resources)
     register_recording_validation(app,recording_validation)

@@ -292,3 +292,6 @@ class DeliveryFinalizeInput(DeliveryInput):
 
 class RecoverCaptureControl(BaseModel):
     expected_generation:int=Field(ge=0,le=9007199254740991)
+
+class RecoverLiveSession(BaseModel):
+    expected_seq:int=Field(ge=0,le=9007199254740991)

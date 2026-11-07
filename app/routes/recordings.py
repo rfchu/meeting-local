@@ -8,7 +8,7 @@ from starlette.concurrency import run_in_threadpool
 from ..db import uid, encode
 from ..live_stream import inspect_audio, qwen_events
 from ..recording_completion import completion_report, recording_quality
-from ..http_schemas import RecoverCaptureControl, CaptureStateInput, KeepAwakeInput, LiveCorrectionDecision, LiveCorrectionInput, LiveSessionInput, LiveSessionState, NativeCommandInput, NativeDraftInput, NativeRecordingInput, RecordingFinish, RecordingInput, RecordingMetadata, RecordingQualityReviewInput
+from ..http_schemas import RecoverLiveSession, RecoverCaptureControl, CaptureStateInput, KeepAwakeInput, LiveCorrectionDecision, LiveCorrectionInput, LiveSessionInput, LiveSessionState, NativeCommandInput, NativeDraftInput, NativeRecordingInput, RecordingFinish, RecordingInput, RecordingMetadata, RecordingQualityReviewInput
 from ..application_services import ApplicationServices
 
 def register_routes(app,services:ApplicationServices):
@@ -250,6 +250,13 @@ def register_routes(app,services:ApplicationServices):
     def live_session_snapshot(rid:str):
         try:return live_sessions.snapshot(rid)
         except (FileNotFoundError,ValueError) as error:raise HTTPException(404,str(error))
+
+
+    @app.post('/api/recordings/{rid}/live-session/recover')
+    async def recover_live_session(rid:str,body:RecoverLiveSession):
+        try:return await live_sessions.recover(rid,body.expected_seq)
+        except FileNotFoundError as error:raise HTTPException(404,str(error))
+        except ValueError as error:raise HTTPException(409,str(error))
 
 
     @app.get('/api/recordings/{rid}/live-session/events')

@@ -74,3 +74,21 @@ def test_process_permission_failure_is_unknown_not_stopped(tmp_path,monkeypatch)
     state=service.detached_status()
     assert state['loaded'] and state['running'] is None
     with pytest.raises(ValueError,match='第二个'):service.start(detached=True)
+
+
+def test_stop_checks_independent_writer_even_without_recent_session(tmp_path,monkeypatch):
+    import fcntl,os
+    service=manager(tmp_path,monkeypatch);folder=service.data/'recordings';folder.mkdir(parents=True)
+    lock=folder/'capture-owner.lock'
+    with lock.open('w') as handle:
+        os.chmod(lock,0o600);fcntl.flock(handle,fcntl.LOCK_EX|fcntl.LOCK_NB)
+        assert service.busy()
+        monkeypatch.setattr(service,'status',lambda:{'loaded':True,'running':True})
+        with pytest.raises(ValueError,match='录音'):service.stop()
+    assert not service.busy()
+
+
+def test_uncertain_writer_blocks_normal_service_stop(tmp_path,monkeypatch):
+    service=manager(tmp_path,monkeypatch)
+    monkeypatch.setattr('app.capture_ownership.inspect',lambda root:{'lease':'unknown'})
+    assert service.busy()

@@ -5,6 +5,7 @@ from pathlib import Path
 from .db import uid
 from .native_capture import HELPER
 from .recordings import RecordingStore
+from .capture_binary import BinaryLease
 
 class CaptureProbe:
     def __init__(self,native):
@@ -21,10 +22,13 @@ class CaptureProbe:
             RecordingStore.write(folder/'session.json',{'id':key,'capture_incarnation':incarnation,'source':'macos','state':'starting'})
             log=(folder/'capture.log').open('ab');args=[str(HELPER),'--output',str(folder),'--incarnation',incarnation]
             if source=='macos-both':args.append('--microphone')
-            try:process=(self.process_factory or subprocess.Popen)(args,stdin=subprocess.PIPE,stdout=log,stderr=log)
-            except BaseException:log.close();temporary.cleanup();raise
+            gate=BinaryLease(HELPER)
+            try:
+                gate.acquire()
+                process=(self.process_factory or subprocess.Popen)(args,stdin=subprocess.PIPE,stdout=log,stderr=log)
+            except BaseException:gate.close();log.close();temporary.cleanup();raise
             self.items[key]={'id':key,'state':'starting','source':source,'duration':0,'error':'',
-                'created':time.monotonic(),'finished':None,'temporary':temporary,'folder':folder,'process':process,'log':log}
+                'created':time.monotonic(),'finished':None,'temporary':temporary,'folder':folder,'process':process,'log':log,'binary_guard':gate}
             return self.public(self.items[key])
 
     @staticmethod
@@ -40,6 +44,7 @@ class CaptureProbe:
                 try:process.wait(timeout=2)
                 except subprocess.TimeoutExpired:process.kill();process.wait()
         if process.stdin:process.stdin.close()
+        if item.get('binary_guard'):item['binary_guard'].close()
         item['log'].close();item['finished']=time.monotonic()
         if item['state']!='failed':item['state']='completed'
 

@@ -103,7 +103,7 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, 
         feedback.setAccessibilityIdentifier("host-open-feedback"); root.addArrangedSubview(feedback)
         feedback.widthAnchor.constraint(equalTo: root.widthAnchor).isActive = true
         root.addArrangedSubview(label("内嵌页面支持会议整理与导出；浏览器工作台仍可独立使用。", size: 13))
-        let note = label("关闭窗口后可从菜单栏重新打开。退出宿主不会停止本机服务；浏览器录音仍由页面持有，原生音轨仍由 API 管理。", size: 12)
+        let note = label("关闭窗口后可从菜单栏重新打开。退出宿主不会停止本机服务或独立原生采集。请在工作台结束录音，再升级采集器；浏览器录音仍由页面持有。", size: 12)
         root.addArrangedSubview(note); note.widthAnchor.constraint(equalTo: root.widthAnchor).isActive = true
         let config = NSButton(title: "连接设置…", target: self, action: #selector(showConfiguration)); config.bezelStyle = .inline; configurationButton = config
         let menuButton = NSButton(title: "宿主菜单", target: self, action: #selector(showStatusMenu(_:))); menuButton.bezelStyle = .inline

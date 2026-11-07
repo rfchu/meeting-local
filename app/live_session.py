@@ -70,6 +70,38 @@ class LiveSessions:
         return {'type':'snapshot','protocol_version':1,'recording_id':rid,'engine':json.loads(row['config']).get('engine','qwen'),'seq':row['seq'],'status':row['status'],'segments':segments,
                 'partial':json.loads(row['partial']),'cursor':row['cursor']/RATE,'metrics':json.loads(row['metrics']),
                 'source':row['source'],'config':json.loads(row['config'])}
+    def recovery_status(self,rid):
+        """Passive projection: no ownership renewal, inference, or input devices."""
+        row=self.row(rid);session=self.recordings.read(rid);capture={}
+        try:capture=json.loads((self.recordings.folder(rid)/'capture.json').read_text())
+        except (OSError,ValueError):pass
+        config=json.loads(row['config']);task=self.tasks.get(rid)
+        active=bool(task and not task.done());duration=max(session.get('duration',0),capture.get('duration',0))
+        if row['source']=='browser':duration=max(duration,self.input_end(rid)/RATE)
+        coverage=self.cache.overview(rid,config.get('engine','qwen'),duration)
+        running=row['source']=='native' and capture.get('state') in ('recording','paused')
+        published=session['state']=='completed' or bool(self.store.one('SELECT id FROM meetings WHERE id=?',(rid,)))
+        recoverable=running and not active and row['status']!='draining' and not published and not self.closed
+        return {'recording_id':rid,'seq':row['seq'],'engine':config.get('engine','qwen'),'status':row['status'],
+            'capture_state':capture.get('state',session['state']),'task_active':active,'recoverable':recoverable,
+            'confirmed_until':row['cursor']/RATE,'lag_seconds':max(0,duration-row['cursor']/RATE),
+            'coverage':coverage,'recovery':json.loads(row['metrics']).get('recovery'),
+            'state':'needs_recovery' if recoverable else 'catching_up' if active and duration-row['cursor']/RATE>3 else 'running' if active else 'ended'}
+
+    async def recover(self,rid,expected_seq):
+        # No await before ensure: the event loop serializes the CAS and task creation.
+        if self.closed:raise ValueError('服务正在关闭')
+        row=self.row(rid)
+        if row['seq']!=expected_seq:raise ValueError('识别状态已变化，请刷新后重试')
+        status=self.recovery_status(rid)
+        if not status['recoverable']:raise ValueError('当前识别无需恢复或录音已结束')
+        if self.native.status(rid,touch=False).get('state') not in ('recording','paused'):raise ValueError('采集未运行，已有结果保留')
+        metrics=json.loads(row['metrics']);metrics['recovery']={'reason':'manual','state':'resuming','from_frame':row['cursor'],'requested_at':time.time()}
+        self.checkpoint(rid,status='running',partial={},metrics=metrics)
+        self.emit(rid,'status',message='从最后确认位置恢复识别；历史缺段仍保留待补')
+        self.ensure(rid)
+        return self.recovery_status(rid)
+
     async def start(self,rid,config):
         if self.closed:raise ValueError('服务正在关闭')
         config={'engine':'qwen','prefix_enabled':True,**config}
@@ -102,7 +134,8 @@ class LiveSessions:
             try:
                 session=self.recordings.read(rid)
                 if session['state']=='completed' or self.store.one('SELECT id FROM meetings WHERE id=?',(rid,)):self.checkpoint(rid,status='stopped',partial={});continue
-                self.checkpoint(rid,partial={})
+                metrics=json.loads(row['metrics']);metrics['recovery']={'reason':'service_restart','state':'resuming','from_frame':row['cursor'],'requested_at':time.time()}
+                self.checkpoint(rid,partial={},metrics=metrics)
                 self.emit(rid,'status',message='服务已恢复，从最后确认位置继续识别')
                 self.ensure(rid)
             except (OSError,ValueError):self.checkpoint(rid,status='stopped',partial={})
@@ -240,6 +273,9 @@ class LiveSessions:
                 errors=0;text=''.join(s['text'] for s in result['segments'])
                 stable=stable_prefix(previous,text);previous=text;preview_end=end
                 metrics={k:result.get(k) for k in ('processing_ms','first_text_ms','duration','confirmed','skipped_seconds','decoder','boundary_reason','extending')}
+                recovery=json.loads(self.row(rid)['metrics']).get('recovery')
+                if recovery:
+                    metrics['recovery']=dict(recovery,state=('catching_up' if result['confirmed'] else 'resuming'))
                 decoder=result.get('decoder',{})
                 if decoder:
                     for key,hit in [('prefix_rounds',decoder.get('mode')=='prefix'),('feature_hits',decoder.get('feature_cache_hit',False)),('fallbacks',decoder.get('fallback',False))]:
@@ -255,6 +291,7 @@ class LiveSessions:
                 metrics['policy_version']=2;metrics['load']=load;metrics['preview_step_seconds']=load['preview_step_seconds']
                 result['load']=load
                 if result['confirmed']:
+                    if recovery:metrics['recovery']['state']='resumed' if backlog<=3 else 'catching_up'
                     self.checkpoint(rid,cursor=end,partial={},metrics=metrics)
                     self.emit(rid,'final',result=result);previous='';stable='';preview_end=0;preview_start=None;next_target=max(3,load['preview_step_seconds'])
                 else:

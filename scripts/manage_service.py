@@ -96,6 +96,9 @@ class MacService:
         return self.status()
 
     def busy(self):
+        # An independent native writer can outlive the API/session JSON heartbeat.
+        from app.capture_ownership import inspect
+        if inspect(self.data/'recordings')['lease']!='free':return True
         database=self.data/'meetings.sqlite3'
         if database.exists():
             with sqlite3.connect(f'file:{database}?mode=ro',uri=True) as db:
