@@ -130,8 +130,14 @@ class Retrieval:
             group=[];size=0
             def flush():
                 if group:add('transcript:'+group[0]['id'],'transcript','\n'.join(s['speaker']+'：'+s['text'] for s in group),[s['id'] for s in group],group[0]['start'],group[-1]['end'])
-            directory=self.store.directory(mid)
-            hint=meeting_record_in(db,mid)[2] if providers and (directory/'chinese-record').is_dir() else None
+            directory=None
+            if providers:
+                try:
+                    directory=self.store.directory(mid)
+                except ValueError:
+                    # Legacy IDs can still be searched, but cannot address a cache directory.
+                    pass
+            hint=meeting_record_in(db,mid)[2] if directory and (directory/'chinese-record').is_dir() else None
             def translation_for(segment):
                 if not hint or segment_language(segment['text'],hint)!='en':
                     return None

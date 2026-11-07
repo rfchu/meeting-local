@@ -171,3 +171,45 @@ def test_translation_keyword_matches_one_original_and_rejects_stale_result(data)
     store.save_revision(mid,[{**original,'text':'We will inspect the prototype by Tuesday.'}],'manual')
     assert not search('发运样机')
     assert 'inspect' in search('prototype')[0]['content']
+
+
+@pytest.mark.parametrize('change,reason', [('translation','translation_changed'),('original','source_changed')])
+def test_translated_qa_previews_both_languages_and_keeps_exact_original_citations(data, monkeypatch, change, reason):
+    from app.qa import validate_answer
+
+    client, store, app, pid = data
+    mid, original, path = translated_source(data)
+    response = client.post('/api/retrieval/qa/prepare',json={
+        'profile_id':pid,'question':'什么时候发运样机？','query':'发运样机','meeting_id':mid,
+    })
+    assert response.status_code == 201, response.text
+    run = response.json()
+    source, = run['sources']
+    assert source['translation_zh'] == '我们将在星期二发运样机。'
+    assert source['content'] == original['text'] and source['start'] == 12
+    def answer(quote):
+        return Answer(status='answered',claims=[{'text':'星期二发运。','kind':'record',
+            'citations':[{'source':source['label'],'quote':quote}]}])
+    with pytest.raises(ValueError, match='无法核验'):
+        validate_answer(answer(source['translation_zh']), [source])
+
+    def generate(provider, model, question, sources, *_):
+        assert sources == [source]
+        return answer('ship the prototype by Tuesday')
+    monkeypatch.setattr('app.qa.generate_answer',generate)
+    url=f"/api/retrieval/qa/{run['id']}"
+    queued=client.post(url+'/generate',json={})
+    assert queued.status_code == 201, queued.text
+    jid=queued.json()['job']['id']
+    store.execute("UPDATE jobs SET state='running' WHERE id=?",(jid,))
+    app.state.worker.process(store.one('SELECT * FROM jobs WHERE id=?',(jid,)))
+    store.execute("UPDATE jobs SET state='completed' WHERE id=?",(jid,))
+    assert client.get(url).json()['answer']['claims'][0]['citations'][0]['quote']=='ship the prototype by Tuesday'
+
+    if change=='translation':
+        path.unlink()
+    else:
+        store.save_revision(mid,[{**original,'text':'We will inspect the prototype.'}],'manual')
+    stale=client.get(url).json()
+    assert stale['stale'] and stale['stale_reasons']==[reason]
+    assert stale['answer'] is None and not stale['sources']

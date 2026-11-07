@@ -27,6 +27,7 @@ export interface QARun {
   };
   sources: QASource[];
   stale: boolean;
+  stale_reasons?: string[];
   state: string;
   answer: { status: "answered" | "insufficient"; claims: QAClaim[] } | null;
   job: {

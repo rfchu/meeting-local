@@ -309,7 +309,11 @@ export default function CrossMeetingQA({
           </small>
           {run.stale ? (
             <p role="alert" className="health-warning">
-              引用资料已修改或删除，旧回答已隐藏。请重新检索依据。
+              {run.stale_reasons?.includes("translation_changed") &&
+              !run.stale_reasons.includes("source_changed")
+                ? "中文译文已修改、撤下或无法核验。"
+                : "原文版本或其他引用资料已变化。"}
+              旧回答已隐藏，请重新检索依据。
             </p>
           ) : !verified ? (
             <p role="alert">暂时无法核验来源，回答已隐藏，请恢复连接后重试。</p>
@@ -354,7 +358,13 @@ export default function CrossMeetingQA({
                             ? " · 个人备注"
                             : ""}
                         </small>
-                        <blockquote>{source.content}</blockquote>
+                        {source.translation_zh && (
+                          <p>中文译文（辅助理解）：{source.translation_zh}</p>
+                        )}
+                        <blockquote>
+                          {source.source_language === "en" && "英文原文："}
+                          {source.content}
+                        </blockquote>
                         <button
                           className="text-btn"
                           disabled={busy}
@@ -451,7 +461,10 @@ export default function CrossMeetingQA({
                         );
                         return source ? (
                           <div className="qa-citation" key={i}>
-                            <blockquote>“{citation.quote}”</blockquote>
+                            <blockquote>
+                              {source.source_language === "en" && "英文原文："}“
+                              {citation.quote}”
+                            </blockquote>
                             <button
                               className="text-btn"
                               disabled={busy}

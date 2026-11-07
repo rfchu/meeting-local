@@ -58,6 +58,8 @@ def generate_answer(provider,model,question,sources,work,run):
 kind=record 表示资料明确记载；推断必须 kind=inference；任何引用原始简记、扩写或个人备注的条目必须 kind=note，不能声称是会议共识。纪要属于派生记录，应说明这是纪要记载。
 不同会议记录不一致时并列列出不同会议及日期，不擅自断定最后结论。没有充分依据就返回 {"status":"insufficient","claims":[]}，禁止在不足时猜测答案。
 只返回 JSON，status 为 answered 或 insufficient，claims 最多 8 条，每条 text、kind、citations。不要输出 Markdown、思考或无引用总述。'''
+    if any(source.get('translation_zh') for source in sources):
+        instruction+='\ntranslation_zh 是辅助理解的中文译文。引用必须逐字从同条依据的 content（原文）复制；不得引用 translation_zh。'
     instruction+=('\nWrite every claim text in English. Preserve names, numbers, dates, JSON keys and source labels. '
                   'Copy citation quotes exactly in the original source language; never translate them.'
                   if getattr(provider,'output_language','zh')=='en' else
@@ -82,18 +84,36 @@ class QA:
         return row
 
     def current(self,sources,db=None):
+        return not self.source_changes(sources,db)
+
+    def source_changes(self,sources,db=None):
+        if not sources:
+            return []
         if db is None:
             with self.store.connect() as connection:
                 connection.execute('BEGIN')
-                return self.current(sources,connection)
+                return self.source_changes(sources,connection)
         wanted={source['id']:source for source in sources}
         live={unit[0]:unit for unit in self.retrieval.units(db) if unit[0] in wanted}
+        changes=set()
         for key,source in wanted.items():
             unit=live.get(key)
-            if not unit or unit[4]!=source['fingerprint'] or unit[2]!=source['content']:return False
-            metadata=json.loads(unit[3])
-            if any(metadata.get(name)!=source.get(name) for name in ('meeting_id','revision','title','date','kind','note_scope')):return False
-        return True
+            metadata=json.loads(unit[3]) if unit else {}
+            fields=('meeting_id','revision','title','date','kind','note_scope','translation_zh','source_language')
+            if unit and unit[4]==source['fingerprint'] and unit[2]==source['content'] and all(
+                metadata.get(name)==source.get(name) for name in fields
+            ):
+                continue
+            if source.get('translation_zh') and metadata.get('translation_zh')!=source['translation_zh']:
+                row=db.execute('SELECT segments FROM meetings WHERE id=?',(source['meeting_id'],)).fetchone()
+                original=next((segment for segment in json.loads(row['segments'])
+                               if segment['id'] in source['source_segment_ids']),None) if row else None
+                if original and all(original[name]==source[field] for name,field in
+                                    (('text','content'),('start','start'),('end','end'))):
+                    changes.add('translation_changed')
+                    continue
+            changes.add('source_changed')
+        return sorted(changes)
 
     def prepare(self,question,profile_id,query='',mode='keyword',meeting_id=None,kind='transcript',include_personal=False,output_language='zh'):
         if output_language not in ('zh','en'):raise ValueError('回答语言仅支持中文或英文')
@@ -125,14 +145,14 @@ class QA:
         return row
 
     def read(self,qid):
-        row=self.row(qid);config=json.loads(row['config']);valid=self.current(config['sources'])
+        row=self.row(qid);config=json.loads(row['config']);changes=self.source_changes(config['sources']);valid=not changes
         job=self.store.one('SELECT id,state,stage,progress,error FROM jobs WHERE id=?',(row['job_id'],)) if row['job_id'] else None
         state='stale' if not valid else job['state'] if job else 'prepared'
         return {'id':qid,'created':row['created'],'question':config['question'],'query':config['query'],
             'profile_id':config['profile_id'],'output_language':config.get('output_language','zh'),
             'user_query':config.get('user_query',''),'mode':config['mode'],'meeting_id':config['meeting_id'],
             'kind':config['kind'],'include_personal':config['include_personal'],
-            'provider':config['provider'],'sources':config['sources'] if valid else [],'stale':not valid,'state':state,
+            'provider':config['provider'],'sources':config['sources'] if valid else [],'stale':not valid,'stale_reasons':changes,'state':state,
             'answer':json.loads(row['answer']) if valid and row['answer'] and job and job['state']=='completed' else None,
             'job':({**job,'error':'问答生成失败，请重新检索后再试；本次没有发布回答'} if job and job['state']=='failed' else job),
             'pending_index':config['pending_index'],'candidate_count':config['candidate_count'],

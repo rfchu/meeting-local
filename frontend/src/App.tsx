@@ -1614,6 +1614,7 @@ export default function App() {
             const opened = await openMeeting(current.meeting_id);
             if (!opened) throw new Error("会议未能打开，请重试");
             await api.resolveSearch(hit);
+            if (current.source_segment_ids.length) setWorkspace("transcript");
             setSearchOpen(false);
             setSearchTarget(current);
           }}
