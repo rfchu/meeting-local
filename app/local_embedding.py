@@ -13,7 +13,9 @@ FILES={
 MANIFEST={'model':MODEL_ID,'revision':REVISION,'files':FILES,'dimension':512,'max_tokens':512,
           'pooling':'cls','normalization':'l2','query_prefix':'为这个句子生成表示以用于检索相关文章：','document_prefix':'',
           'windowing':'token-window-v1','window_tokens':480,'aggregation':'mean-normalized-cls','special_token_ids':[101,102],'runtime':'onnx-cpu'}
-MODEL_ROOT=Path(__file__).resolve().parents[1]/'models'/'embedding'
+from .paths import model_root
+
+MODEL_ROOT=model_root()/'embedding'
 
 class InstallCancelled(Exception):pass
 

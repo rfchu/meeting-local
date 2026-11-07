@@ -10,6 +10,7 @@ const states: Record<string, string> = {
 
 interface Props {
   onHome: () => void;
+  onLibrary: () => void;
   meetings: MeetingSummary[];
   currentId?: string;
   uploading: boolean;
@@ -25,6 +26,7 @@ interface Props {
 
 export default function Sidebar({
   onHome,
+  onLibrary,
   meetings,
   currentId,
   uploading,
@@ -86,26 +88,31 @@ export default function Sidebar({
         ☑ 跨会议跟进
       </button>
       <div className="nav-label">
-        会议资料库 <span>{meetings.length}</span>
+        <button className="text-btn" onClick={onLibrary}>
+          会议资料库 ↗
+        </button>{" "}
+        <span>{meetings.filter((item) => !item.library?.archived).length}</span>
       </div>
       <div id="meetingList">
-        {meetings.map((meeting) => (
-          <button
-            key={meeting.id}
-            className={`meeting-item${currentId === meeting.id ? " active" : ""}`}
-            onClick={() => onSelect(meeting.id)}
-          >
-            <strong>{meeting.title}</strong>
-            <small>
-              {meeting.created.slice(0, 10)} ·{" "}
-              {meeting.job
-                ? states[meeting.job.state]
-                : meeting.revision
-                  ? "已有文字稿"
-                  : "待转写"}
-            </small>
-          </button>
-        ))}
+        {meetings
+          .filter((item) => !item.library?.archived)
+          .map((meeting) => (
+            <button
+              key={meeting.id}
+              className={`meeting-item${currentId === meeting.id ? " active" : ""}`}
+              onClick={() => onSelect(meeting.id)}
+            >
+              <strong>{meeting.title}</strong>
+              <small>
+                {meeting.created.slice(0, 10)} ·{" "}
+                {meeting.job
+                  ? states[meeting.job.state]
+                  : meeting.revision
+                    ? "已有文字稿"
+                    : "待转写"}
+              </small>
+            </button>
+          ))}
       </div>
       <div className="sidebar-bottom">
         <span className="dot" /> 会议数据保存在本机

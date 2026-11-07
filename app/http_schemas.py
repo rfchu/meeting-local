@@ -259,6 +259,7 @@ class MinutesGenerateInput(BaseModel):
 
 
 class MinutesSaveInput(BaseModel):
+    merge_from_minutes_id: str | None=Field(default=None,max_length=100)
     source_minutes_id: str | None=Field(default=None,max_length=100)
     source_analysis_id: str | None=Field(default=None,max_length=100)
     allow_branch: bool=False

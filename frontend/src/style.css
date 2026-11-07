@@ -1830,17 +1830,17 @@ dialog code {
   padding: 0 32px 12px;
   flex-shrink: 0;
 }
-.workbench-bottom .recording-waveform {
+.recording-live-status .recording-waveform {
   padding: 6px 14px;
   margin-bottom: 6px;
 }
-.workbench-bottom .recording-waveform header {
+.recording-live-status .recording-waveform header {
   display: none;
 }
-.workbench-bottom .waveform-track svg {
+.recording-live-status .waveform-track svg {
   height: 34px;
 }
-.workbench-bottom .recording-waveform footer {
+.recording-live-status .recording-waveform footer {
   padding: 3px 0 0;
 }
 .workbench-details {
@@ -3714,4 +3714,19 @@ button.note-options-trigger {
   .source-comparison {
     grid-template-columns: 1fr;
   }
+}
+
+.recording-live-status {
+  flex-shrink: 0;
+  padding: 0 14px;
+}
+
+.recording-workbench > .recording-health-panel {
+  margin-inline: 14px;
+  flex-shrink: 0;
+}
+
+.source-card:focus {
+  outline: 2px solid #3968e8;
+  outline-offset: 2px;
 }

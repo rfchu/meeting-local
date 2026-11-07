@@ -80,13 +80,29 @@ def register_routes(app,services:ApplicationServices):
                     if key in original:provenance[key]=original[key]
                 adopted=[n for n in original.get('adopted_notes',[]) if any(item.content==n['content'] and item.source_segment_ids==n['source_segment_ids'] for item in getattr(body.document,n['section']))]
                 if adopted:provenance['adopted_notes']=adopted
+            if body.merge_from_minutes_id:
+                adopted=minutes_versions.selected(db,mid)
+                other=db.execute("SELECT * FROM artifacts WHERE id=? AND meeting_id=? AND revision=? AND kind='meeting_minutes'",
+                                 (body.merge_from_minutes_id,mid,row['revision'])).fetchone()
+                if (not adopted or adopted['id']!=body.source_minutes_id or adopted['revision']!=row['revision']
+                    or not other or other['id']==adopted['id']
+                    or any(not meeting_flow.artifact_current(db,mid,json.loads(a['provenance'])) for a in (adopted,other))):
+                    raise HTTPException(409,'采用稿或来源已变化，请重新比较')
+                minutes_versions.adopt(db,mid,adopted['id'])
+                provenance['source_minutes_dependencies']=[adopted['id'],other['id']]
+                adopted_notes=[*provenance.get('adopted_notes',[]),
+                    *json.loads(other['provenance']).get('adopted_notes',[])]
+                matched={item['note_id']:item for item in adopted_notes
+                    if any(row.content==item['content'] and row.source_segment_ids==item['source_segment_ids']
+                           for row in getattr(body.document,item['section']))}
+                if matched:provenance['adopted_notes']=list(matched.values())
             if body.source_minutes_id:
                 provenance['parent_minutes_id']=body.source_minutes_id
                 adopted=minutes_versions.selected(db,mid)
-                provenance['draft']=bool(adopted and adopted['id']!=body.source_minutes_id)
+                provenance['draft']=bool(body.merge_from_minutes_id or (adopted and adopted['id']!=body.source_minutes_id))
             db.execute('INSERT INTO artifacts(id,meeting_id,revision,kind,payload,provenance) VALUES(?,?,?,?,?,?)',
                 (aid,mid,row['revision'],'meeting_minutes',encode(body.document.model_dump()),encode(provenance)))
-            if body.source_minutes_id:minutes_versions.follow_edit(db,mid,body.source_minutes_id,aid)
+            if body.source_minutes_id and not body.merge_from_minutes_id:minutes_versions.follow_edit(db,mid,body.source_minutes_id,aid)
         return public_artifact(store.one('SELECT * FROM artifacts WHERE id=?',(aid,)))
 
 

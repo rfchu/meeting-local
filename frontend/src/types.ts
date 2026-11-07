@@ -152,6 +152,7 @@ export interface MinutesDelivery {
   }[];
 }
 export interface NoteTodo {
+  source_segment_ids?: string[];
   meeting_id?: string;
   carried?: boolean;
   source_meeting_title?: string;
@@ -453,7 +454,14 @@ export interface SpeakerReviewResult {
   chunks: number;
 }
 
+export interface MeetingOrganization {
+  group_name: string;
+  group_kind: "project" | "customer" | "series";
+  archived: number;
+}
+
 export interface MeetingSummary {
+  library?: MeetingOrganization | null;
   id: string;
   title: string;
   filename: string;

@@ -42,6 +42,25 @@ def inspect_bundle(path,kind,root):
     return value
 
 
+def frontend_delivery(root):
+    import re
+    folder = Path(root) / 'app/static'
+    try:
+        index = (folder/'index.html').read_bytes()
+        assets = re.findall(rb'''["'](/assets/[^"']+)["']''', index)
+        if not assets:
+            raise ValueError('missing_assets')
+        digest = hashlib.sha256(index)
+        for asset in sorted(set(assets)):
+            path = (folder/asset.decode().lstrip('/')).resolve()
+            if not path.is_relative_to((folder/'assets').resolve()):
+                raise ValueError('invalid_asset')
+            digest.update(path.read_bytes())
+        return {'verified': True, 'fingerprint': digest.hexdigest()[:12]}
+    except (OSError, ValueError):
+        return {'verified': False, 'fingerprint': None}
+
+
 def inspect_release(root,acceptance=None,cache=None):
     root=Path(root);cache=Path(cache) if cache is not None else Path.home()/'Library/Caches/cn.seeknow.tingji'
     components=[inspect_bundle(cache/'Tingji.app','host',root),inspect_bundle(cache/'TingjiCapture.app','capture',root)] if platform.system()=='Darwin' else []
@@ -50,8 +69,11 @@ def inspect_release(root,acceptance=None,cache=None):
     except (OSError,ValueError,RuntimeError,sqlite3.Error):evidence_available=False
     from .recording_acceptance import CASES
     hardware_complete=all(any(item.get('case')==case and item.get('state')=='passed' for item in hardware) for case in CASES)
-    return {'schema_version':1,'passive':True,'capture_started':False,'models_started':False,'permissions_requested':False,
-        'local_ready':len(components)==2 and all(c['verified'] for c in components),'components':components,
+    frontend=frontend_delivery(root)
+    from .migrations import LATEST_VERSION
+    return {'schema_version':1,'frontend':frontend,'backend_fingerprint':source_digest(root)[:12],
+        'data_schema_version':LATEST_VERSION,'passive':True,'capture_started':False,'models_started':False,'permissions_requested':False,
+        'local_ready':frontend['verified'] and len(components)==2 and all(c['verified'] for c in components),'components':components,
         'distribution':'local_adhoc_source_bound','runtime_scope':'bundled_defaults_not_saved_connections','external_release_ready':False,
         'hardware':hardware,'hardware_evidence_available':evidence_available,'hardware_review_complete':hardware_complete,
         'boundaries':[

@@ -335,6 +335,18 @@ export const api = {
       json("POST", { id: hit.id, fingerprint: hit.fingerprint }),
     ),
   environment: () => request<Environment>("/status"),
+  workspaceReadiness: () =>
+    request<{
+      paths: { id: string; path: string; state: string }[];
+      free_bytes: number | null;
+      python_version: string;
+    }>("/runtime/workspace"),
+  organizeMeetings: (body: {
+    meeting_ids: string[];
+    group?: string;
+    group_kind?: "project" | "customer" | "series";
+    archived?: boolean;
+  }) => request<{ updated: number }>("/meeting-library", json("PUT", body)),
   meetings: () => request<MeetingSummary[]>("/meetings"),
   privateQualitySamples: () =>
     request<
@@ -1038,6 +1050,7 @@ export const api = {
     sourceAnalysisId: string | null,
     document: MeetingMinutes,
     sourceMinutesId?: string,
+    mergeFromMinutesId?: string,
   ) =>
     request<Artifact<MeetingMinutes>>(
       `/meetings/${id}/minutes`,
@@ -1045,6 +1058,7 @@ export const api = {
         source_analysis_id: sourceAnalysisId,
         source_minutes_id: sourceMinutesId,
         allow_branch: true,
+        merge_from_minutes_id: mergeFromMinutesId,
         document,
       }),
     ),

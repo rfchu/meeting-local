@@ -1,7 +1,11 @@
 import { useState } from "react";
 import Modal from "../../components/Modal";
 import type { Artifact, MeetingMinutes } from "../../types";
-import { compareDocuments, minutesVersionDescription } from "./presentation";
+import {
+  compareDocuments,
+  minutesSectionLabels,
+  minutesVersionDescription,
+} from "./presentation";
 
 export default function MinutesCompare({
   left,
@@ -9,19 +13,44 @@ export default function MinutesCompare({
   onClose,
   onAdopt,
   blockedReason,
+  onSaveSelection,
 }: {
   left: Artifact<MeetingMinutes>;
   right: Artifact<MeetingMinutes>;
   onClose: () => void;
   onAdopt: () => void;
   blockedReason?: string;
+  onSaveSelection?: (document: MeetingMinutes) => Promise<void>;
 }) {
   const [changesOnly, setChangesOnly] = useState(false);
+  const [picked, setPicked] = useState<string[]>([]);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
   const comparison = compareDocuments(left.payload, right.payload);
   const unchanged =
     !comparison.metadataChanges &&
     !comparison.leftChanges &&
     !comparison.rightChanges;
+  async function saveSelection() {
+    if (!onSaveSelection || saving || blockedReason) return;
+    const document = { ...left.payload };
+    for (const section of comparison.sections) {
+      const key = section.key as keyof typeof minutesSectionLabels;
+      document[key] = [
+        ...section.left.filter((_, i) => !picked.includes(`left:${key}:${i}`)),
+        ...section.right.filter((_, i) => picked.includes(`right:${key}:${i}`)),
+      ].map((row) => row.item);
+    }
+    setSaving(true);
+    setError("");
+    try {
+      await onSaveSelection(document);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "保存失败");
+    } finally {
+      setSaving(false);
+    }
+  }
   return (
     <Modal id="minutesCompareDialog" onClose={onClose} ariaLabel="对比纪要版本">
       <div className="compare-header">
@@ -85,9 +114,9 @@ export default function MinutesCompare({
                   </p>
                 ))}
               {comparison.sections.map((section) => {
-                const rows = changesOnly
-                  ? section[side].filter((row) => row.changed)
-                  : section[side];
+                const rows = section[side]
+                  .map((row, index) => ({ ...row, index }))
+                  .filter((row) => !changesOnly || row.changed);
                 const changed =
                   section.left.some((row) => row.changed) ||
                   section.right.some((row) => row.changed);
@@ -96,34 +125,58 @@ export default function MinutesCompare({
                   <div key={section.key}>
                     <h4>{section.title}</h4>
                     {rows.length ? (
-                      rows.map(({ item, changed, reason }, i) => (
-                        <div
-                          key={i}
-                          className={
-                            changed
-                              ? `minutes-diff-row ${side}`
-                              : "minutes-diff-row"
-                          }
-                        >
-                          {changed && (
-                            <span className="minutes-diff-tag">
-                              {index === 0 ? "移除／改写" : "新增／改写"}
-                            </span>
-                          )}
-                          <p>
-                            {item.content}
-                            {item.owner ? ` · ${item.owner}` : ""}
-                            {item.due_date ? ` · ${item.due_date}` : ""}
-                            {item.status ? ` · ${item.status}` : ""}
-                          </p>
-                          {changed && (
-                            <small>
-                              {reason && <span>{reason} · </span>}原文依据：
-                              {(item.source_segment_ids || []).length} 段
-                            </small>
-                          )}
-                        </div>
-                      ))
+                      rows.map(({ item, changed, reason, index: rowIndex }) => {
+                        const choice = `${side}:${section.key}:${rowIndex}`;
+                        return (
+                          <div
+                            key={rowIndex}
+                            className={
+                              changed
+                                ? `minutes-diff-row ${side}`
+                                : "minutes-diff-row"
+                            }
+                          >
+                            {changed && (
+                              <span className="minutes-diff-tag">
+                                {index === 0 ? "移除／改写" : "新增／改写"}
+                              </span>
+                            )}
+                            {onSaveSelection && changed && (
+                              <label>
+                                <input
+                                  type="checkbox"
+                                  disabled={saving || !!blockedReason}
+                                  checked={picked.includes(choice)}
+                                  onChange={(event) =>
+                                    setPicked(
+                                      event.target.checked
+                                        ? [...picked, choice]
+                                        : picked.filter(
+                                            (key) => key !== choice,
+                                          ),
+                                    )
+                                  }
+                                />
+                                {side === "left"
+                                  ? "从采用稿移除此条"
+                                  : "加入此条"}
+                              </label>
+                            )}
+                            <p>
+                              {item.content}
+                              {item.owner ? ` · ${item.owner}` : ""}
+                              {item.due_date ? ` · ${item.due_date}` : ""}
+                              {item.status ? ` · ${item.status}` : ""}
+                            </p>
+                            {changed && (
+                              <small>
+                                {reason && <span>{reason} · </span>}原文依据：
+                                {(item.source_segment_ids || []).length} 段
+                              </small>
+                            )}
+                          </div>
+                        );
+                      })
                     ) : (
                       <p className="minutes-diff-help">
                         {changesOnly ? "此侧无变化条目" : "无内容"}
@@ -137,10 +190,24 @@ export default function MinutesCompare({
           );
         })}
       </div>
+      {onSaveSelection && (
+        <p className="muted">
+          勾选要移除或加入的条目，保存为待采用草稿。改写一条内容时，请同时勾选旧条目和新条目。
+        </p>
+      )}
+      {error && <p role="alert">{error}</p>}
       <div className="minutes-compare-footer">
+        {onSaveSelection && (
+          <button
+            disabled={!picked.length || saving || !!blockedReason}
+            onClick={() => void saveSelection()}
+          >
+            {saving ? "正在保存…" : `保存所选差异为草稿（${picked.length}）`}
+          </button>
+        )}
         <button
           className="primary"
-          disabled={right.stale || !!blockedReason}
+          disabled={saving || right.stale || !!blockedReason}
           onClick={onAdopt}
         >
           采用右侧版本

@@ -3,6 +3,7 @@ import json, os, shutil
 from pathlib import Path
 from fastapi import HTTPException
 from ..db import uid
+from .. import workspace_readiness
 from ..host_bridge import identity as host_identity
 from ..providers import WhisperCpp, engine_catalog, LocalDiarization, LocalPunctuation
 from ..analysis import OpenAICompatibleProvider, validate_llm_endpoint, public_llm_config, analysis_chunk_chars
@@ -16,6 +17,10 @@ def register_routes(app,services:ApplicationServices):
     minutes_template=services.meetings.minutes_template
     store=services.store
     LMStudioProvider=services.providers.llm
+
+    @app.get('/api/runtime/workspace')
+    def workspace_status():
+        return workspace_readiness.inspect(app.state.paths)
 
     @app.get('/api/runtime/host')
     def host_connection():

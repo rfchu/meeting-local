@@ -1,3 +1,5 @@
+import { useState } from "react";
+import WorkspaceReadinessPanel from "./WorkspaceReadinessPanel";
 import QualitySamplesPanel from "./QualitySamplesPanel";
 import QualityBaselinePanel from "./QualityBaselinePanel";
 import ReleaseReadinessPanel from "./ReleaseReadinessPanel";
@@ -14,13 +16,25 @@ export default function RuntimeEnvironmentPage({
   data: RuntimeOverview;
   onPage?: (page: ManagementPage) => void;
 }) {
+  const [advanced, setAdvanced] = useState(false);
   return (
     <>
+      <WorkspaceReadinessPanel />
       <ReleaseReadinessPanel />
-      <QualityBaselinePanel />
-      <QualitySamplesPanel />
-      <ServiceLifecyclePanel />
-      <RecordingValidationPanel />
+      <details
+        className="management-section"
+        onToggle={(event) => setAdvanced(event.currentTarget.open)}
+      >
+        <summary>高级诊断与评测</summary>
+        {advanced && (
+          <>
+            <QualityBaselinePanel />
+            <QualitySamplesPanel />
+            <ServiceLifecyclePanel />
+            <RecordingValidationPanel />
+          </>
+        )}
+      </details>
       <section className="management-section">
         <h3>采集与权限</h3>
         <div className="management-row">

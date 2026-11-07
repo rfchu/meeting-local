@@ -87,26 +87,6 @@ export default function RecordingHealthPanel({
     : 0;
   return (
     <section className="recording-health-panel" aria-label="录音健康状态">
-      <div className="recording-status-summary" role="status">
-        <strong>
-          {freshness === "checking" && state !== "finished"
-            ? "正在核对录音状态"
-            : unified.label}
-        </strong>
-        <span>
-          {freshness === "stale"
-            ? "状态超过 20 秒未更新，不能确认采集仍在继续"
-            : freshness === "unavailable"
-              ? "状态连接失败，已有音频与确认结果保留"
-              : freshness === "checking"
-                ? "等待本机返回最新状态，录音不会因此重新开始"
-                : `最近核对 ${new Date(checkedAt).toLocaleTimeString()}`}
-        </span>
-        <span>
-          {unavailable && unified.savedPosition ? "上次核对：" : ""}
-          {unified.savedPosition} · 识别状态与采集状态分别核对
-        </span>
-      </div>
       <RecordingControlNotice
         id={id}
         runtime={inventory?.runtime}
@@ -144,33 +124,56 @@ export default function RecordingHealthPanel({
                   : "识别独立运行，变慢不代表原音丢失")}
         </span>
       </div>
-      <div className="recording-health-actions">
-        <button
-          className="text-btn"
-          disabled={fetching}
-          onClick={() => void refresh()}
-        >
-          {fetching ? "核对中…" : "重新核对状态"}
-        </button>
-        <button className="text-btn" onClick={onDiagnostics}>
-          导出脱敏诊断
-        </button>
-      </div>
-      {!!inventory?.lifecycle && (
-        <details className="recording-status-summary">
-          <summary>
-            运行事件与诊断
-            {inventory.lifecycle.available ? "" : " · 记录暂不可用"}
-          </summary>
-          <p>仅记录状态、时间和计数，不含会议内容。</p>
-          {inventory.lifecycle.events.slice(0, 8).map((event) => (
-            <p key={event.seq}>
-              {new Date(event.at * 1000).toLocaleTimeString()} ·{" "}
-              {lifecycleLabel(event.code)}
-            </p>
-          ))}
-        </details>
-      )}
+      <details className="recording-status-summary">
+        <summary>状态核对与诊断</summary>
+        <div className="recording-status-summary" role="status">
+          <strong>
+            {freshness === "checking" && state !== "finished"
+              ? "正在核对录音状态"
+              : unified.label}
+          </strong>
+          <span>
+            {freshness === "stale"
+              ? "状态超过 20 秒未更新，不能确认采集仍在继续"
+              : freshness === "unavailable"
+                ? "状态连接失败，已有音频与确认结果保留"
+                : freshness === "checking"
+                  ? "等待本机返回最新状态，录音不会因此重新开始"
+                  : `最近核对 ${new Date(checkedAt).toLocaleTimeString()}`}
+          </span>
+          <span>
+            {unavailable && unified.savedPosition ? "上次核对：" : ""}
+            {unified.savedPosition} · 识别状态与采集状态分别核对
+          </span>
+        </div>
+        <div className="recording-health-actions">
+          <button
+            className="text-btn"
+            disabled={fetching}
+            onClick={() => void refresh()}
+          >
+            {fetching ? "核对中…" : "重新核对状态"}
+          </button>
+          <button className="text-btn" onClick={onDiagnostics}>
+            导出脱敏诊断
+          </button>
+        </div>
+        {!!inventory?.lifecycle && (
+          <details className="recording-status-summary">
+            <summary>
+              运行事件与诊断
+              {inventory.lifecycle.available ? "" : " · 记录暂不可用"}
+            </summary>
+            <p>仅记录状态、时间和计数，不含会议内容。</p>
+            {inventory.lifecycle.events.slice(0, 8).map((event) => (
+              <p key={event.seq}>
+                {new Date(event.at * 1000).toLocaleTimeString()} ·{" "}
+                {lifecycleLabel(event.code)}
+              </p>
+            ))}
+          </details>
+        )}
+      </details>
     </section>
   );
 }

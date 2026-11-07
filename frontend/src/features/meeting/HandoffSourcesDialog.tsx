@@ -27,6 +27,9 @@ export default function HandoffSourcesDialog({
   const [offset, setOffset] = useState(0);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
+  const [focus, setFocus] = useState<string | "first" | null>(null);
+  const audio = useRef<HTMLAudioElement>(null);
+  const cards = useRef(new Map<string, HTMLElement>());
   const command = useRef<{ key: string; id: string } | null>(null);
   const query = useQuery({
     queryKey: ["handoff-sources", meeting.id, artifactId, offset],
@@ -38,6 +41,30 @@ export default function HandoffSourcesDialog({
   useEffect(() => {
     if (report?.artifact_id && !artifactId) setArtifactId(report.artifact_id);
   }, [report?.artifact_id, artifactId]);
+  useEffect(() => {
+    if (!focus || !report || report.offset !== offset || query.isFetching)
+      return;
+    const id =
+      focus === "first"
+        ? report.items.find(
+            (item) =>
+              !item.feedback ||
+              item.feedback.stale ||
+              item.feedback.decision === "reset",
+          )?.source_id
+        : focus;
+    const card = id ? cards.current.get(id) : undefined;
+    if (card) {
+      card.focus({ preventScroll: true });
+      card.scrollIntoView({ block: "nearest" });
+    } else if (focus === "first" && offset + 25 < report.total) {
+      setOffset(offset + 25);
+      return;
+    } else if (focus === "first") {
+      setMessage("后续来源已核对完毕。");
+    }
+    setFocus(null);
+  }, [focus, offset, query.isFetching, report]);
   async function process(item: HandoffSource, decision: SourceDecision) {
     if (!report?.artifact_id || dirty || busy || query.isFetching) return;
     const key = sourceCommandKey(report.artifact_id, item, decision);
@@ -60,7 +87,28 @@ export default function HandoffSourcesDialog({
           ? "已撤回这条处理记录。"
           : "已保存人工处理记录；来源有效性保持独立判断。",
       );
-      await query.refetch();
+      const refreshed = await query.refetch();
+      if (decision !== "reset" && refreshed.isSuccess) {
+        const items = refreshed.data.items;
+        const index = items.findIndex(
+          (entry) => entry.source_id === item.source_id,
+        );
+        const next =
+          index >= 0 &&
+          items
+            .slice(index + 1)
+            .find(
+              (entry) =>
+                !entry.feedback ||
+                entry.feedback.stale ||
+                entry.feedback.decision === "reset",
+            );
+        if (next) setFocus(next.source_id);
+        else if (offset + 25 < refreshed.data.total) {
+          setOffset(offset + 25);
+          setFocus("first");
+        }
+      }
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "保存失败，请重试");
       await query.refetch();
@@ -131,10 +179,26 @@ export default function HandoffSourcesDialog({
               这份纪要的来源已变化或无法核验，请核对后更新。记录“已人工核对”不会消除该提醒。
             </p>
           )}
+          {report.items.some(
+            (item) => typeof item.target?.start === "number",
+          ) && (
+            <audio
+              ref={audio}
+              controls
+              preload="none"
+              src={`/api/meetings/${meeting.id}/audio`}
+              aria-label="来源录音回听"
+            />
+          )}
           <div className="source-cards">
             {report.items.map((item) => (
               <article
                 key={item.source_id}
+                tabIndex={-1}
+                ref={(node) => {
+                  if (node) cards.current.set(item.source_id, node);
+                  else cards.current.delete(item.source_id);
+                }}
                 className={`source-card ${item.status}`}
               >
                 <header>
@@ -163,6 +227,25 @@ export default function HandoffSourcesDialog({
                 <p className="muted">{item.detail}</p>
                 <div className="source-controls">
                   <span>{feedbackLabel(item)}</span>
+                  {typeof item.target?.start === "number" && (
+                    <button
+                      onClick={() => {
+                        if (
+                          !audio.current ||
+                          typeof item.target?.start !== "number"
+                        )
+                          return;
+                        audio.current.currentTime = item.target.start;
+                        void audio.current
+                          .play()
+                          .catch(() =>
+                            setMessage("无法播放录音，请检查录音文件。"),
+                          );
+                      }}
+                    >
+                      回听这条来源
+                    </button>
+                  )}
                   {item.target && (
                     <button
                       disabled={dirty || busy}

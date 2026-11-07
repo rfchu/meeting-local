@@ -2,6 +2,9 @@ import { useQuery } from "@tanstack/react-query";
 import { api } from "../../api";
 export interface ReleaseReadiness {
   local_ready: boolean;
+  backend_fingerprint?: string;
+  data_schema_version?: number;
+  frontend?: { verified: boolean; fingerprint: string | null };
   external_release_ready: boolean;
   hardware_evidence_available: boolean;
   components: {
@@ -58,6 +61,15 @@ export default function ReleaseReadinessPanel() {
               </article>
             ))}
           </div>
+          <p>
+            后端 {query.data.backend_fingerprint || "未知"} · 前端{" "}
+            {query.data.frontend?.fingerprint || "待核对"} · 目标数据结构 v
+            {query.data.data_schema_version ?? "未知"}
+          </p>
+          <p className="muted">
+            安装、升级和回退可在项目终端运行{" "}
+            <code>./workspace.command --help</code>。
+          </p>
           <details>
             <summary>设备场景与发行边界</summary>
             {!query.data.hardware_evidence_available && (

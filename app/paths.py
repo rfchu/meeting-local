@@ -5,6 +5,10 @@ from pathlib import Path
 
 ROOT=Path(__file__).resolve().parents[1]
 
+def model_root():
+    return Path(os.getenv('MEETING_MODELS') or ROOT/'models').expanduser().resolve()
+
+
 @dataclass(frozen=True)
 class RuntimePaths:
     repository: Path

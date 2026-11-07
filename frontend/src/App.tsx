@@ -1,3 +1,4 @@
+import MeetingLibrary from "./features/meeting/MeetingLibrary";
 import RuntimeManagement, {
   type ManagementPage,
 } from "./features/management/RuntimeManagement";
@@ -163,6 +164,7 @@ export default function App() {
     refetchInterval: 30000,
     enabled: !recordingOpen && !recoveryOpen,
   });
+  const [libraryOpen, setLibraryOpen] = useState(false);
   const [reviewFocus, setReviewFocus] = useState<number | null>(null);
   const [reviewFocusVersion, setReviewFocusVersion] = useState(0);
   const [reviewSourceOpen, setReviewSourceOpen] = useState(true);
@@ -829,6 +831,7 @@ export default function App() {
     <>
       <Sidebar
         onHome={() => void goHome()}
+        onLibrary={() => setLibraryOpen(true)}
         meetings={listQuery.data || []}
         currentId={meeting?.id}
         uploading={uploading}
@@ -845,6 +848,31 @@ export default function App() {
         recoveryCount={recordingRecoveryCount(recoveryQuery.data || [])}
         onRecovery={() => setRecoveryOpen(true)}
       />
+      {libraryOpen && (
+        <MeetingLibrary
+          meetings={listQuery.data || []}
+          onClose={() => setLibraryOpen(false)}
+          onPrepare={async (id) => {
+            const current = await api.preparation();
+            await api.savePreparation({ ...current, previous_meeting_id: id });
+            setLibraryOpen(false);
+            setRecordingOpen(true);
+            toast("已关联系列中的最近会议");
+          }}
+          onOpen={async (id, segmentId) => {
+            setLibraryOpen(false);
+            const opened = await openMeeting(id);
+            const segment = opened?.segments.find(
+              (item) => item.id === segmentId,
+            );
+            if (segment) {
+              setWorkspace("notes");
+              setReviewSourceOpen(true);
+              locateReview(segment.start);
+            }
+          }}
+        />
+      )}
       <main>
         <header>
           <div className="breadcrumb">
@@ -1564,8 +1592,37 @@ export default function App() {
           ) as Artifact<MeetingMinutes> | undefined;
           return left && right ? (
             <MinutesCompare
+              key={left.id + right.id}
               left={left}
               right={right}
+              onSaveSelection={
+                left.id === meeting.active_minutes_id &&
+                !left.stale &&
+                left.payload.template_id === right.payload.template_id &&
+                left.payload.template_version ===
+                  right.payload.template_version &&
+                left.payload.template_version >= 2 &&
+                !left.payload.interview &&
+                !right.payload.interview
+                  ? async (document) => {
+                      await saveMinutes();
+                      const base = left.provenance.source_analysis_id;
+                      const draft = await api.saveMinutes(
+                        meeting.id,
+                        typeof base === "string" ? base : null,
+                        document,
+                        left.id,
+                        right.id,
+                      );
+                      const fresh = await api.meeting(meeting.id);
+                      if (meetingRef.current?.id !== meeting.id) return;
+                      setMeeting(fresh);
+                      displayMinutes(draft);
+                      setCompareIds(null);
+                      toast("已保存为待采用草稿");
+                    }
+                  : undefined
+              }
               onClose={() => setCompareIds(null)}
               onAdopt={() => void adoptMinutes(right.id)}
               blockedReason={minutesAdoptionBlockReason(

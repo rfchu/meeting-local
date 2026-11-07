@@ -2,6 +2,7 @@
 import json, os, shutil, subprocess, time
 from pathlib import Path
 from typing import Protocol
+from .paths import model_root
 
 BASE=Path(__file__).resolve().parents[1]
 
@@ -21,16 +22,17 @@ class WhisperCpp:
     needs_punctuation=True
     def __init__(self):
         self.binary=os.getenv('WHISPER_CLI') or str(BASE/'vendor/whisper.cpp/build/bin/whisper-cli')
-        self.model=os.getenv('WHISPER_MODEL') or str(BASE/'models/ggml-large-v3-turbo.bin')
+        self.model=os.getenv('WHISPER_MODEL') or str(model_root()/'ggml-large-v3-turbo.bin')
+        self.vad=model_root()/'ggml-silero-v6.2.0.bin'
     def ready(self): return locally_resident(self.binary) and locally_resident(self.model)
     def identity(self):
-        files=[Path(self.binary),Path(self.model),BASE/'models/ggml-silero-v6.2.0.bin']
+        files=[Path(self.binary),Path(self.model),self.vad]
         return [{'path':str(p),'size':p.stat().st_size,'mtime_ns':p.stat().st_mtime_ns} for p in files if p.exists()]
     def live_command(self,audio,output):
         if not self.ready(): raise RuntimeError('本地识别引擎或模型尚未安装，请运行 scripts/setup.sh')
         args=[self.binary,'-m',self.model,'-f',str(audio),'-l','zh','-oj','-of',str(output),'-np','-t','8','-ml','80']
-        vad=BASE/'models/ggml-silero-v6.2.0.bin'
-        if vad.exists(): args += ['--vad','-vm',str(vad)]
+        vad=self.vad
+        if locally_resident(vad): args += ['--vad','-vm',str(vad)]
         return args
     def read_live_result(self,output):
         result=json.loads(output.with_suffix('.json').read_text())
@@ -55,8 +57,8 @@ class QwenMLX:
 
     def __init__(self):
         self.python=os.getenv('QWEN_PYTHON') or str(BASE/'.venv-qwen/bin/python')
-        self.model=os.getenv('QWEN_ASR_MODEL') or str(BASE/'models/qwen3-asr-1.7b-8bit')
-        self.aligner=os.getenv('QWEN_ALIGNER_MODEL') or str(BASE/'models/qwen3-aligner-0.6b-8bit')
+        self.model=os.getenv('QWEN_ASR_MODEL') or str(model_root()/'qwen3-asr-1.7b-8bit')
+        self.aligner=os.getenv('QWEN_ALIGNER_MODEL') or str(model_root()/'qwen3-aligner-0.6b-8bit')
         self.runtime=Path(self.python).parent.parent/'qwen-runtime.json'
 
     @staticmethod
@@ -121,8 +123,8 @@ def engine_catalog():
 
 class LocalDiarization:
     def __init__(self):
-        self.segmentation=os.getenv('DIARIZATION_SEGMENTATION') or str(BASE/'models/sherpa-onnx-pyannote-segmentation-3-0/model.onnx')
-        self.embedding=os.getenv('DIARIZATION_EMBEDDING') or str(BASE/'models/3dspeaker.onnx')
+        self.segmentation=os.getenv('DIARIZATION_SEGMENTATION') or str(model_root()/'sherpa-onnx-pyannote-segmentation-3-0/model.onnx')
+        self.embedding=os.getenv('DIARIZATION_EMBEDDING') or str(model_root()/'3dspeaker.onnx')
     def ready(self):
         import importlib.util
         return bool(importlib.util.find_spec('sherpa_onnx')) and Path(self.segmentation).is_file() and Path(self.embedding).is_file()
@@ -135,7 +137,7 @@ class LocalDiarization:
 
 class LocalPunctuation:
     def __init__(self):
-        self.model=str(BASE/'models/sherpa-onnx-punct-ct-transformer-zh-en-vocab272727-2024-04-12-int8/model.int8.onnx')
+        self.model=str(model_root()/'sherpa-onnx-punct-ct-transformer-zh-en-vocab272727-2024-04-12-int8/model.int8.onnx')
     def ready(self): return Path(self.model).is_file()
     def process(self,segments,folder,run):
         import sys

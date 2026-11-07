@@ -88,6 +88,11 @@ class MacService:
                 'EnvironmentVariables':{'PYTHONUNBUFFERED':'1','MEETING_DATA':str(self.data),'TINGJI_SERVICE_MODE':'launchd'},
                 'RunAtLoad':True,'KeepAlive':{'SuccessfulExit':False},'ThrottleInterval':10,'ExitTimeOut':30,
                 'StandardOutPath':str(self.data/'server.log'),'StandardErrorPath':str(self.data/'server.log')}
+            for key in ('MEETING_BACKUPS','MEETING_MODELS','WHISPER_CLI','WHISPER_MODEL',
+                        'QWEN_PYTHON','QWEN_ASR_MODEL','QWEN_ALIGNER_MODEL',
+                        'DIARIZATION_SEGMENTATION','DIARIZATION_EMBEDDING'):
+                if value:=os.getenv(key):
+                    definition['EnvironmentVariables'][key]=str(Path(value).expanduser().resolve())
             temporary=self.plist.with_suffix('.tmp')
             with temporary.open('wb') as handle:plistlib.dump(definition,handle)
             os.chmod(temporary,0o600);temporary.replace(self.plist)

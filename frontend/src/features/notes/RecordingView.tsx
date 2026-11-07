@@ -344,6 +344,11 @@ export default function RecordingView({
               </span>
             </div>
             <button onClick={() => setInspectorOpen(true)}>检查运行详情</button>
+            {!controlRequired && (
+              <button disabled={endGuide.pending} onClick={endGuide.request}>
+                结束并检查已存音轨
+              </button>
+            )}
           </section>
         )}
       {state === "idle" ? (
@@ -447,6 +452,68 @@ export default function RecordingView({
             </button>
           ))}
         </div>
+      )}
+      {recording && (
+        <section
+          className="recording-live-status"
+          aria-label="声音、保存与识别"
+        >
+          <RecordingWaveform
+            tracks={
+              captureSource === "browser"
+                ? [
+                    {
+                      label: "麦克风",
+                      levels: microphoneLevels,
+                      color: "#263752",
+                    },
+                  ]
+                : [
+                    {
+                      label: "电脑声音",
+                      levels: systemLevels,
+                      color: "#3968e8",
+                    },
+                    ...(captureSource === "macos-both"
+                      ? [
+                          {
+                            label: "麦克风",
+                            levels: microphoneLevels,
+                            color: "#263752",
+                          },
+                        ]
+                      : []),
+                  ]
+            }
+            active={recording}
+            paused={state === "paused"}
+            status={saveStatus}
+            onRetry={
+              recording &&
+              (failedChunksRef.current.length > 0 ||
+                localSaveFailedRef.current ||
+                /失败|未完成|错误|待重试/.test(saveStatus))
+                ? () => void retrySync().catch((error) => toast(error.message))
+                : undefined
+            }
+          />
+        </section>
+      )}
+      {state !== "idle" && (
+        <RecordingHealthPanel
+          id={sessionRef.current?.id || ""}
+          state={state}
+          native={sessionRef.current?.source === "macos"}
+          tracks={captureHealth}
+          localFailure={localSaveFailedRef.current}
+          memoryOnly={failedChunksRef.current.length}
+          recognitionEnabled={!recordOnly}
+          onDiagnostics={() =>
+            void exportDiagnostics(sessionRef.current!.id).catch((error) =>
+              toast(error.message),
+            )
+          }
+        />
       )}
       {state !== "idle" && (
         <div
@@ -753,22 +820,9 @@ export default function RecordingView({
           )}
         </div>
       )}
-      {state !== "idle" && (
-        <div className="workbench-bottom">
-          <RecordingHealthPanel
-            id={sessionRef.current?.id || ""}
-            state={state}
-            native={sessionRef.current?.source === "macos"}
-            tracks={captureHealth}
-            localFailure={localSaveFailedRef.current}
-            memoryOnly={failedChunksRef.current.length}
-            recognitionEnabled={!recordOnly}
-            onDiagnostics={() =>
-              void exportDiagnostics(sessionRef.current!.id).catch((error) =>
-                toast(error.message),
-              )
-            }
-          />
+      {recording && (
+        <details className="workbench-bottom">
+          <summary>亮屏与后台采集说明</summary>
           <div className="recording-awake-status">
             <label>
               <input
@@ -789,46 +843,7 @@ export default function RecordingView({
                 : "原生录音由本机服务持续采集，页面进入后台或关闭后仍会继续；请返回此处主动结束。系统睡眠、设备断开或服务退出仍可能中断录音。"}
             </p>
           )}
-          <RecordingWaveform
-            tracks={
-              captureSource === "browser"
-                ? [
-                    {
-                      label: "麦克风",
-                      levels: microphoneLevels,
-                      color: "#263752",
-                    },
-                  ]
-                : [
-                    {
-                      label: "电脑声音",
-                      levels: systemLevels,
-                      color: "#3968e8",
-                    },
-                    ...(captureSource === "macos-both"
-                      ? [
-                          {
-                            label: "麦克风",
-                            levels: microphoneLevels,
-                            color: "#263752",
-                          },
-                        ]
-                      : []),
-                  ]
-            }
-            active={recording}
-            paused={state === "paused"}
-            status={saveStatus}
-            onRetry={
-              recording &&
-              (failedChunksRef.current.length > 0 ||
-                localSaveFailedRef.current ||
-                /失败|未完成|错误|待重试/.test(saveStatus))
-                ? () => void retrySync().catch((error) => toast(error.message))
-                : undefined
-            }
-          />
-        </div>
+        </details>
       )}
       {correctionReviewOpen && correctionSessionId && (
         <LiveCorrectionReview

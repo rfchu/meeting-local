@@ -8,6 +8,9 @@ from app import release_readiness as r
 
 def bundles(tmp_path,monkeypatch):
     root=tmp_path/'source';(root/'app').mkdir(parents=True);(root/'app/test.py').write_text('before')
+    assets=root/'app/static/assets';assets.mkdir(parents=True)
+    (assets/'fixture.js').write_text('export {}')
+    (assets.parent/'index.html').write_text('<script src="/assets/fixture.js"></script>')
     python=root/'.venv/bin/python';python.parent.mkdir(parents=True);python.touch()
     cache=tmp_path/'cache'
     for app,name,kind in [('Tingji.app','TingjiHost','host'),('TingjiCapture.app','TingjiCapture','capture')]:
@@ -32,6 +35,9 @@ def test_local_pass_does_not_imply_standalone_notarized_release(tmp_path,monkeyp
     assert result['local_ready'] and result['hardware_review_complete']
     assert not result['external_release_ready'] and result['distribution']=='local_adhoc_source_bound'
     assert result['components'][0]['signature']=='adhoc'
+    assert result['frontend']['verified'] and result['backend_fingerprint']
+    (root/'app/static/assets/fixture.js').unlink()
+    assert not r.inspect_release(root,acceptance,cache)['local_ready']
     assert calls and all(args[0]=='codesign' for args in calls)
     assert not result['capture_started'] and not result['models_started'] and not result['permissions_requested']
     assert str(root) not in json.dumps(result) and str(cache) not in json.dumps(result)

@@ -9,6 +9,7 @@ from urllib.parse import quote
 from fastapi import Query, File, UploadFile, HTTPException, Request
 from fastapi.responses import FileResponse, Response
 from ..db import uid, encode
+from .. import meeting_library
 from ..providers import LocalDiarization
 from ..analysis import OpenAICompatibleProvider, analysis_chunk_chars, SECTION_NAMES
 from ..transcript_paragraphs import paragraphs
@@ -68,9 +69,18 @@ def register_routes(app,services:ApplicationServices):
         return body.model_dump()
 
 
+    @app.put('/api/meeting-library')
+    def organize_meetings(body:meeting_library.LibraryUpdate):
+        try:return meeting_library.update(store,body)
+        except KeyError:raise HTTPException(404,'部分会议不存在，未修改归类')
+        except ValueError as error:raise HTTPException(400,str(error))
+
+
     @app.get('/api/meetings')
     def list_meetings():
         rows=store.all('SELECT id,title,filename,created,duration,revision FROM meetings ORDER BY created DESC,rowid DESC')
+        organization=meeting_library.entries(store.root)
+        for row in rows: row['library']=organization.get(row['id'])
         for row in rows: row['job']=store.one('SELECT * FROM jobs WHERE meeting_id=? ORDER BY created DESC,rowid DESC LIMIT 1',(row['id'],))
         return rows
 

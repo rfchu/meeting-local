@@ -10,6 +10,10 @@ from app.main import create_app
 def test_http_contract_matches_pre_split_v22(tmp_path):
     app=create_app(tmp_path/'contract',start_worker=False)
     schema=app.openapi()
+    assert schema['paths'].pop('/api/runtime/workspace')
+    assert schema['paths'].pop('/api/meeting-library')
+    assert schema['components']['schemas'].pop('LibraryUpdate')
+    assert schema['components']['schemas']['MinutesSaveInput']['properties'].pop('merge_from_minutes_id')
     for path in ('/api/runtime/quality-samples','/api/runtime/quality-samples/{sid}','/api/runtime/quality-samples/{sid}/audio','/api/runtime/quality-samples/{sid}/annotation','/api/runtime/quality-datasets'):assert schema['paths'].pop(path)
     for name in ('QualityAnnotationInput','QualityMember','QualityFreezeInput','Body_add_api_runtime_quality_samples_post'):assert schema['components']['schemas'].pop(name)
     assert schema['paths'].pop('/api/runtime/quality-baseline')
@@ -37,7 +41,7 @@ def test_http_contract_matches_pre_split_v22(tmp_path):
     # Captured from the running v22 service before splitting: 116 paths, 135 operations.
     assert hashlib.sha256(payload.encode()).hexdigest()=='fac4d2387540dd6ea2f8f29205390b870e6d7a8695f1f743831ce1f2ec026b90'
     operations=[(method,route.path) for route in app.routes if isinstance(route,APIRoute) for method in route.methods]
-    assert len(operations)==len(set(operations))==155
+    assert len(operations)==len(set(operations))==157
 
 
 def test_two_applications_do_not_share_recording_or_meeting_resources(tmp_path):
