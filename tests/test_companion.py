@@ -24,11 +24,16 @@ def test_companion_observes_only_and_pins_a_single_recording(tmp_path, monkeypat
     second = services.recordings.create('audio/webm')['id']
     assert client.get(path).json()['snapshot']['phase'] == 'multiple'
     monkeypatch.setattr(services.live_overview, 'read', lambda rid: {'items': [
-        {'content': rid, 'stale': False, 'decision': 'pending'},
-        {'content': 'stale', 'stale': True, 'decision': 'pending'},
-        {'content': 'dismissed', 'stale': False, 'decision': 'dismissed'},
+        {'content': rid, 'stale': False, 'decision': 'pending', 'evidence': [{'start': 0}]},
+        {'content': 'older decision', 'stale': False, 'decision': 'pending', 'evidence': [{'start': 10}]},
+        {'content': 'earlier action', 'stale': False, 'decision': 'pending', 'evidence': [{'start': 20}]},
+        {'content': 'updated decision', 'stale': False, 'decision': 'pending', 'evidence': [{'start': 5}, {'start': 35}]},
+        {'content': 'stale', 'stale': True, 'decision': 'pending', 'evidence': [{'start': 40}]},
+        {'content': 'dismissed', 'stale': False, 'decision': 'dismissed', 'evidence': [{'start': 45}]},
     ]})
-    assert client.get(path, params={'rid': first, 'mode': 'highlights'}).json()['snapshot']['lines'] == [first]
+    assert client.get(path, params={'rid': first, 'mode': 'highlights'}).json()['snapshot']['lines'] == [
+        'updated decision', 'earlier action', 'older decision',
+    ]
     assert client.get(path, params={'rid': '../x'}).status_code == 422
     assert client.post(path).status_code == 405
     assert services.recordings.read(first) == original

@@ -34,8 +34,10 @@ def snapshot(services, mode, rid=None):
     result.update(recording_id=rid, meeting_id=value['identity']['meeting_id'], source=value['source'],
                   phase=value['phase'], storage=value['storage']['state'], asr=value['asr']['state'])
     if mode == 'highlights':
-        items = services.live_overview.read(rid)['items']
-        result['lines'] = [item['content'][:350] for item in items if not item['stale'] and item['decision'] != 'dismissed'][:3]
+        items = [item for item in services.live_overview.read(rid)['items']
+                 if not item['stale'] and item['decision'] != 'dismissed']
+        items.sort(key=lambda item: max(entry['start'] for entry in item['evidence']), reverse=True)
+        result['lines'] = [item['content'][:350] for item in items[:3]]
     if mode == 'bilingual' and (engine := value['asr']['engine']):
         hint = recording_language(services.recordings, rid)
         rows = services.live_results.snapshot(rid, engine, hint)
