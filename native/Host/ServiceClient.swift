@@ -31,6 +31,17 @@ final class ServiceClient: NSObject, URLSessionTaskDelegate, URLSessionDataDeleg
             completion(CompanionSnapshot.verified(data, code: code, configuration: configuration, recording: recording))
         }
     }
+    func diagnostics(_ configuration: HostConfiguration, completion: @escaping (HostDiagnostics?) -> Void) {
+        get(configuration.workspaceURL.appendingPathComponent("api/runtime/host-diagnostics")) { data, code in
+            guard code == 200, let report = try? JSONDecoder().decode(HostDiagnostics.self, from: data),
+                  let identity = try? JSONEncoder().encode(report.host),
+                  validateIdentity(identity, statusCode: code, configuration: configuration).canOpen else {
+                completion(nil)
+                return
+            }
+            completion(report)
+        }
+    }
     private func get(_ url: URL, completion: @escaping (Data, Int) -> Void) {
         var request = URLRequest(url: url)
         request.cachePolicy = .reloadIgnoringLocalAndRemoteCacheData
@@ -60,6 +71,46 @@ final class ServiceClient: NSObject, URLSessionTaskDelegate, URLSessionDataDeleg
         lock.lock(); let item = replies.removeValue(forKey: task.taskIdentifier); lock.unlock()
         guard let (data, code, callback) = item else { return }
         callback(data, error == nil && code > 0 ? code : code == 0 ? 0 : -1)
+    }
+}
+
+struct HostDiagnostics: Decodable {
+    struct Frontend: Decodable { let verified: Bool; let entry: String? }
+    struct Capture: Decodable { let verified: Bool; let version: String?; let reason: String? }
+    let host: ServiceIdentity
+    let running_backend: String
+    let disk_backend: String
+    let frontend: Frontend
+    let capture: Capture
+    let busy: Bool?
+
+    func summary(boundBackend: String?, cleanBuild: Bool?, loadedEntry: String?) -> String {
+        var lines: [String] = []
+        if running_backend != disk_backend {
+            lines.append("后台仍在运行旧版本。请安全重启本机服务。")
+        } else {
+            lines.append("后台与本机源码匹配。")
+        }
+        if !frontend.verified {
+            lines.append("网页资源不完整，请重新构建前端。")
+        } else if let loadedEntry, let entry = frontend.entry, loadedEntry != entry {
+            lines.append("内嵌页面版本较旧，保存编辑后可重新载入。")
+        } else {
+            lines.append("网页资源就绪。")
+        }
+        if cleanBuild == false {
+            lines.append("当前宿主由含未提交改动的源码构建。请从干净工作区重新构建宿主。")
+        } else if boundBackend != disk_backend {
+            lines.append("宿主的构建记录与当前源码不匹配，请重新构建宿主。")
+        }
+        let captureVersion = capture.version.map { "（\($0)）" } ?? ""
+        lines.append(capture.verified ? "采集器\(captureVersion)已通过检查。" : "采集器需要检查。")
+        switch busy {
+        case true?: lines.append("录音或后台任务进行中，请完成后再更新。")
+        case false?: lines.append("检查时没有录音或后台任务。")
+        case nil: lines.append("当前无法确认更新时机，请先核对录音与任务。")
+        }
+        return lines.joined(separator: "\n")
     }
 }
 
@@ -109,6 +160,25 @@ struct CompanionObservation {
         guard reachable, let latest else { return false }
         return abs(now.timeIntervalSince1970 - latest.observed_at) <= 8
     }
+    func active(at now: Date) -> CompanionSnapshot? {
+        guard isCurrent(at: now), let latest, latest.recording_id != nil,
+              ["starting", "recording", "paused"].contains(latest.phase),
+              ["native", "browser"].contains(latest.source ?? "") else { return nil }
+        return latest
+    }
+
+    func statusTitle(at now: Date) -> String {
+        guard isCurrent(at: now), let latest else { return "录音状态待核对" }
+        switch latest.phase {
+        case "recording": return "正在录音"
+        case "paused": return "录音已暂停"
+        case "starting": return "正在准备录音"
+        case "multiple": return "有多个录音，请在工作台查看"
+        case "idle": return "当前没有录音"
+        default: return "录音状态待核对"
+        }
+    }
+
     func target(at now: Date) -> String? {
         isCurrent(at: now) ? latest?.recording_id : nil
     }

@@ -110,6 +110,7 @@ export default function RecordingView({
   resume,
   retrySync,
   runningSessions,
+  targetRecordingId,
   saveStatus,
   savedEngine,
   savedMeetingId,
@@ -206,7 +207,7 @@ export default function RecordingView({
           <span /> {clock(elapsed)}
         </div>
         <div className="recording-controls">
-          {state === "idle" && (
+          {state === "idle" && !targetRecordingId && (
             <button
               className="primary"
               disabled={
@@ -465,6 +466,11 @@ export default function RecordingView({
           onOpen={() => handoffSaved(savedMeetingId, "none", savedEngine)}
           onProcess={processSaved}
         />
+      )}
+      {state === "idle" && targetRecordingId && !runningSessions.length && (
+        <p className="capture-warning" role="status">
+          正在核对本场原生录音。若录音已结束，请返回会议或录音恢复查看。
+        </p>
       )}
       {state === "idle" && runningSessions.length > 0 && (
         <div className="live-session-resume" role="status">

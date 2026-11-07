@@ -10,9 +10,11 @@ export default function CompanionRecordingStatus({
   id,
   onClose,
   onMeeting,
+  onNativeRecording,
 }: {
   id: string;
   onClose: () => void;
+  onNativeRecording?: (id: string) => void;
   onMeeting?: (id: string) => void;
 }) {
   const query = useQuery({
@@ -50,6 +52,15 @@ export default function CompanionRecordingStatus({
             : "暂时无法核对本场录音，未切换到其他会话。"}
         </p>
       )}
+      {verified &&
+        !meeting &&
+        query.data?.source === "native" &&
+        ["recording", "paused", "starting"].includes(runtime?.phase || "") &&
+        onNativeRecording && (
+          <button onClick={() => onNativeRecording(id)}>
+            继续查看本场录音
+          </button>
+        )}
       {meeting && onMeeting && (
         <button onClick={() => onMeeting(meeting)}>打开本场会议</button>
       )}

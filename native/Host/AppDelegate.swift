@@ -13,6 +13,9 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, 
     private var activationObserver: NSObjectProtocol?
     private var statusItem: NSStatusItem?
     private var menuStatus: NSMenuItem?
+    private var menuReturn: NSMenuItem?
+    private var observation = CompanionObservation()
+    private var observing = false
     private var menuOpen: NSMenuItem?
     private var menuStart: NSMenuItem?
     private var menuSettings: NSMenuItem?
@@ -72,6 +75,7 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, 
         submenu.addItem(withTitle: "关于听记宿主", action: #selector(about), keyEquivalent: "")
         let config = submenu.addItem(withTitle: "连接设置…", action: #selector(showConfiguration), keyEquivalent: ","); config.target = self
         submenu.addItem(withTitle: "打开伴随窗口", action: #selector(showCompanion), keyEquivalent: "").target = self
+        submenu.addItem(withTitle: "版本诊断…", action: #selector(showDiagnostics), keyEquivalent: "").target = self
         submenu.addItem(.separator())
         let quit = submenu.addItem(withTitle: "退出听记宿主", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"); quit.target = NSApp
         app.submenu = submenu; menu.addItem(app); NSApp.mainMenu = menu
@@ -121,7 +125,13 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, 
         refreshButton.isEnabled = !probing && !starting && !loaded.problem
         menuRefresh?.isEnabled = refreshButton.isEnabled
         configurationButton?.isEnabled = !starting
-        menuStatus?.title = loaded.problem ? "连接配置需要修复" : status.stringValue
+        let recordingStatus = observation.statusTitle(at: Date())
+        let recording = state.canOpen ? observation.active(at: Date()) : nil
+        menuStatus?.title = state.canOpen && !loaded.problem ? recordingStatus : status.stringValue
+        menuReturn?.title = recording?.source == "browser" ? "返回本场 · 浏览器提示" : "返回本场"
+        menuReturn?.isEnabled = recording != nil && openButton.isEnabled
+        statusItem?.button?.title = recording?.phase == "recording" ? " 听记 · 录音中" :
+            recording?.phase == "paused" ? " 听记 · 已暂停" : " 听记"
         browserButton.isEnabled = openButton.isEnabled; menuBrowser?.isEnabled = browserButton.isEnabled
         menuOpen?.isEnabled = openButton.isEnabled; menuStart?.isEnabled = startButton.isEnabled; menuSettings?.isEnabled = !starting
         statusItem?.button?.toolTip = "听记 · " + status.stringValue
@@ -142,6 +152,8 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, 
                 guard let self, self.generation.accepts(token) else { return }
                 self.probing = false; self.state = result
                 self.workspace?.updateConnection(result.canOpen)
+                if result.canOpen { self.observeRecording() }
+                else { self.observation.receive(nil) }
                 if result.canOpen || result == .differentWorkspace || result == .incompatible || (self.startupDeadline.map { Date() >= $0 } ?? false) {
                     self.starting = false; self.startupDeadline = nil
                 }
@@ -149,6 +161,68 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, 
             }
         }
     }
+    private func observeRecording() {
+        guard !observing else { return }
+        observing = true
+        let operation = configurationGeneration
+        client.companion(configuration, mode: .status, recording: nil) { [weak self] snapshot in
+            DispatchQueue.main.async {
+                guard let self, self.configurationGeneration == operation else { return }
+                self.observing = false
+                self.observation.receive(self.state.canOpen ? snapshot : nil)
+                self.render()
+            }
+        }
+    }
+
+    @objc private func returnToCurrentRecording() {
+        guard let expected = observation.active(at: Date()), openButton.isEnabled else { return }
+        let operation = configurationGeneration
+        client.companion(configuration, mode: .status, recording: nil) { [weak self] snapshot in
+            DispatchQueue.main.async {
+                guard let self, self.configurationGeneration == operation else { return }
+                self.observation.receive(snapshot)
+                self.render()
+                guard self.openButton.isEnabled,
+                      let current = self.observation.active(at: Date()),
+                      current.recording_id == expected.recording_id, current.source == expected.source else { return }
+                if current.source == "native" {
+                    self.openVerifiedWorkspace(recording: current.recording_id)
+                } else {
+                    self.showWindow()
+                    let alert = NSAlert()
+                    alert.messageText = "回到浏览器中的本场录音"
+                    alert.informativeText = "请切换到开始录音的原浏览器标签页，那里仍控制本次录音。"
+                    alert.beginSheetModal(for: self.window)
+                }
+            }
+        }
+    }
+
+    @objc private func showDiagnostics() {
+        guard !loaded.problem else { return }
+        showWindow()
+        let operation = configurationGeneration
+        client.diagnostics(configuration) { [weak self] report in
+            DispatchQueue.main.async {
+                guard let self, self.configurationGeneration == operation else { return }
+                let present: (String?) -> Void = { [weak self] entry in
+                    guard let self, self.configurationGeneration == operation, self.window.attachedSheet == nil else { return }
+                    let url = Bundle.main.url(forResource: "delivery", withExtension: "json")
+                    let data = url.flatMap { try? Data(contentsOf: $0) }
+                    let manifest = data.flatMap { try? JSONSerialization.jsonObject(with: $0) } as? [String: Any]
+                    let alert = NSAlert()
+                    alert.messageText = "桌面版本诊断"
+                    alert.informativeText = report?.summary(boundBackend: manifest?["runtime_digest"] as? String, cleanBuild: (manifest?["source_dirty"] as? Bool).map { !$0 }, loadedEntry: entry)
+                        ?? "当前后台无法提供版本诊断。请检查服务连接，旧版本后台需要更新后重启。"
+                    alert.beginSheetModal(for: self.window)
+                }
+                if let workspace = self.workspace { workspace.loadedFrontendEntry(completion: present) }
+                else { present(nil) }
+            }
+        }
+    }
+
     @objc private func refresh() { probe() }
     @objc private func showCompanion() {
         guard !loaded.problem else { return }
@@ -221,10 +295,12 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, 
             let value = menu.addItem(withTitle: title, action: selector, keyEquivalent: ""); value.target = self; return value
         }
         _ = action("显示主窗口", #selector(showWindow))
+        menuReturn = action("返回本场", #selector(returnToCurrentRecording))
         menuOpen = action("打开内嵌工作区", #selector(openWorkspace))
         _ = action("打开伴随窗口", #selector(showCompanion))
         menuBrowser = action("浏览器工作台", #selector(openBrowserWorkspace))
         menuSettings = action("连接设置…", #selector(showConfiguration))
+        _ = action("版本诊断…", #selector(showDiagnostics))
         menuRefresh = action("重新检查", #selector(refresh))
         menuStart = action("启动本机服务", #selector(startService))
         menu.addItem(.separator())
@@ -246,6 +322,7 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, 
         let controller = HostSettingsController(defaults: defaults, load: initial, preferences: preferences, requiresWorkspaceConfirmation: { [weak self] value in self?.workspace != nil && value != self?.configuration }, canApply: { [weak self] value in value == self?.configuration || self?.workspace?.busy != true }, onCancel: { [weak self] in self?.settings = nil; self?.render() }) { [weak self] value in
             guard let self else { return }
             if value.configuration != self.configuration { self.workspace?.dispose(); self.workspace = nil; self.companion?.close(); self.companion = nil }
+            self.observation = CompanionObservation(); self.observing = false
             self.configurationGeneration += 1; self.loaded = value; self.configuration = value.configuration
             _ = self.generation.next(); self.opening = false; self.probing = false; self.state = .checking; self.feedback.stringValue = "连接配置已保存；服务未被启停。"
             self.settings = nil; self.render(); self.probe()

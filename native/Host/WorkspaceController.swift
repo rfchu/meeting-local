@@ -90,6 +90,20 @@ final class WorkspaceController: NSObject, NSWindowDelegate, WKNavigationDelegat
         previews.forEach { $0.updateConnection(verified) }
     }
     func show() { window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true) }
+    func loadedFrontendEntry(completion: @escaping (String?) -> Void) {
+        guard valid, prepared, !contentFailed, policy.allows(webView.url), webView.url?.path == "/" else {
+            completion(nil)
+            return
+        }
+        webView.callAsyncJavaScript("""
+            if (location.origin !== origin) return null;
+            const entry = document.querySelector('script[type="module"][src^="/assets/"]');
+            return entry?.getAttribute("src") ?? null;
+            """, arguments: ["origin": "http://127.0.0.1:\(policy.configuration.port)"], in: nil, in: .page) { result in
+                completion((try? result.get()) as? String)
+            }
+    }
+
     func showRecording(_ id: String) {
         guard !previewOnly, id.range(of: #"^[0-9a-f]{32}$"#, options: .regularExpression) != nil else { return }
         pendingRecording = id

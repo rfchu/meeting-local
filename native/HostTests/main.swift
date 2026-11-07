@@ -33,11 +33,11 @@ check(!generation.accepts(old) && generation.accepts(current), "late response ig
 
 let companionID = String(repeating: "a", count: 32)
 let observed = Date(timeIntervalSince1970: 1_000)
-func companionPayload(_ identity: Data) -> Data {
+func companionPayload(_ identity: Data, phase: String = "recording") -> Data {
     let host = try! JSONSerialization.jsonObject(with: identity)
     return try! JSONSerialization.data(withJSONObject: ["host": host, "snapshot": [
         "observed_at": observed.timeIntervalSince1970, "recording_id": companionID,
-        "phase": "recording", "lines": [] as [String]
+        "phase": phase, "source": "native", "lines": [] as [String]
     ]])
 }
 let recordingSnapshot = CompanionSnapshot.verified(companionPayload(payload()), code: 200, configuration: configuration, recording: companionID)
@@ -52,6 +52,20 @@ observation.receive(nil)
 check(observation.latest?.observed_at == observed.timeIntervalSince1970 && observation.target(at: observed) == nil, "disconnect retains timestamp, not navigation")
 observation.receive(recordingSnapshot)
 check(observation.target(at: observed) == companionID, "reconnection restores the same navigation target")
+
+check(observation.active(at: observed)?.source == "native", "fresh active native recording routes")
+check(observation.active(at: observed.addingTimeInterval(9)) == nil, "stale menu recording never routes")
+observation.receive(CompanionSnapshot.verified(companionPayload(payload(), phase: "multiple"), code: 200, configuration: configuration, recording: nil))
+check(observation.active(at: observed) == nil, "ambiguous menu recording never routes")
+let reportData = try JSONSerialization.data(withJSONObject: [
+    "host": try JSONSerialization.jsonObject(with: payload()),
+    "running_backend": "old", "disk_backend": "new", "frontend": ["verified": true, "entry": "/assets/new.js"],
+    "capture": ["verified": true, "version": "4"], "busy": true
+])
+let report = try JSONDecoder().decode(HostDiagnostics.self, from: reportData)
+let reportText = report.summary(boundBackend: "new", cleanBuild: true, loadedEntry: "/assets/old.js")
+check(reportText.contains("安全重启") && reportText.contains("重新载入") && reportText.contains("请完成后再更新"), "diagnostics distinguishes stale service, page, and maintenance guard")
+check(report.summary(boundBackend: "new", cleanBuild: false, loadedEntry: nil).contains("未提交改动"), "dirty host manifest has specific diagnosis")
 
 // A test-only URLProtocol provides synthetic responses without network, models or devices.
 final class SyntheticProtocol: URLProtocol {

@@ -62,6 +62,7 @@ const supportedMime = () =>
   ) || "";
 
 export type RecordingDialogProps = {
+  targetRecordingId?: string;
   environment?: Environment;
   minutesModel: string;
   onMinutesModel: (model: string) => void;
@@ -83,6 +84,7 @@ export type RecordingDialogProps = {
 };
 
 export function useRecordingController({
+  targetRecordingId,
   engineLabel,
   meetings,
   flowReady,
@@ -1200,6 +1202,7 @@ export function useRecordingController({
   };
 
   const start = async () => {
+    if (targetRecordingId) return;
     if (captureSource === "browser" && !browserCaptureAllowed())
       return toast(
         "内嵌工作区未启用浏览器采集。请改用原生音轨，或在浏览器工作台录音。",
@@ -1687,7 +1690,12 @@ export function useRecordingController({
     responsiveMode,
     resume,
     retrySync,
-    runningSessions,
+    runningSessions: targetRecordingId
+      ? runningSessions.filter(
+          (entry) => entry.recording.id === targetRecordingId,
+        )
+      : runningSessions,
+    targetRecordingId,
     saveStatus,
     savedEngine,
     savedMeetingId,

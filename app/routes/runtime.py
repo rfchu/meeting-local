@@ -1,11 +1,13 @@
 """Runtime HTTP routes; shared services are supplied by the composition root."""
-import json, os, shutil
+import json, os, shutil, sqlite3
 from pathlib import Path
 from typing import Literal
 from fastapi import HTTPException, Query
 from ..db import uid
 from .. import companion, workspace_readiness
-from ..host_bridge import identity as host_identity
+from ..host_bridge import identity as host_identity, maintenance_busy
+from ..release_readiness import source_digest, frontend_delivery, inspect_bundle
+from ..native_capture import HELPER
 from ..providers import WhisperCpp, engine_catalog, LocalDiarization, LocalPunctuation
 from ..analysis import OpenAICompatibleProvider, validate_llm_endpoint, public_llm_config, analysis_chunk_chars
 from ..http_schemas import LLMConfigInput
@@ -19,6 +21,8 @@ def register_routes(app,services:ApplicationServices):
     store=services.store
     LMStudioProvider=services.providers.llm
 
+    loaded_backend = source_digest(Path(__file__).resolve().parents[2])
+
     @app.get('/api/runtime/workspace')
     def workspace_status():
         return workspace_readiness.inspect(app.state.paths)
@@ -30,6 +34,19 @@ def register_routes(app,services:ApplicationServices):
     @app.get('/api/runtime/companion')
     def companion_status(mode:Literal['status','bilingual','highlights']='status', rid:str|None=Query(default=None,pattern=r'^[0-9a-f]{32}$')):
         return {'host':host_identity(app.state.paths),'snapshot':companion.snapshot(services,mode,rid)}
+
+    @app.get('/api/runtime/host-diagnostics')
+    def host_diagnostics():
+        paths = app.state.paths
+        root = paths.repository
+        try:
+            busy = maintenance_busy(paths.data)
+        except (OSError, ValueError, sqlite3.Error):
+            busy = None
+        capture = inspect_bundle(HELPER.parents[2], 'capture', root)
+        return {'host': host_identity(paths), 'running_backend': loaded_backend,
+                'disk_backend': source_digest(root), 'frontend': frontend_delivery(root),
+                'capture': capture, 'busy': busy}
 
     @app.get('/api/runtime/service')
     def service_identity():

@@ -75,6 +75,7 @@ import RecordingDialog from "./features/notes/RecordingDialog";
 import { recoverableRecordings } from "./features/notes/recordingBuffer";
 
 export default function App() {
+  const [targetRecordingId, setTargetRecordingId] = useState<string>();
   const [companionId, setCompanionId] = useState(() =>
     companionRecording(window.location.hash),
   );
@@ -678,6 +679,7 @@ export default function App() {
       if (!opened)
         throw new Error("本机会议已保存，打开暂未成功，请重试进入会后整理");
       setRecordingOpen(false);
+      setTargetRecordingId(undefined);
       setWorkspace(
         options.mode === "none" ? "notes" : handoffWorkspace(opened),
       );
@@ -1868,6 +1870,7 @@ export default function App() {
       )}
       {recordingOpen && (
         <RecordingDialog
+          targetRecordingId={targetRecordingId}
           environment={environment}
           minutesModel={minutesModel}
           onMinutesModel={setMinutesModel}
@@ -1877,6 +1880,7 @@ export default function App() {
           engines={environment?.engines || []}
           onClose={() => {
             setRecordingOpen(false);
+            setTargetRecordingId(undefined);
             void client.invalidateQueries({
               queryKey: ["recording-recoveries"],
             });
@@ -1891,6 +1895,15 @@ export default function App() {
           key={companionId}
           id={companionId}
           onClose={closeCompanionStatus}
+          onNativeRecording={
+            !recordingOpen && !managementPage
+              ? (id) => {
+                  closeCompanionStatus();
+                  setTargetRecordingId(id);
+                  setRecordingOpen(true);
+                }
+              : undefined
+          }
           onMeeting={
             !recordingOpen && !managementPage
               ? (id) => {

@@ -37,7 +37,9 @@ def inspect_bundle(path,kind,root):
             if not value['python_present']:raise ValueError('python_missing')
         elif int(info.get('CFBundleVersion','0'))<4:raise ValueError('helper_upgrade_required')
         value['verified']=True
-    except (OSError,ValueError,KeyError,TypeError,subprocess.SubprocessError):
+    except ValueError as error:
+        value['reason']=str(error) if str(error) in {'bundle_link','bundle_identity','architecture','manifest_incompatible','unclean_build','configuration','source_mismatch','python_missing','helper_upgrade_required'} else 'local_component_requires_check'
+    except (OSError,KeyError,TypeError,subprocess.SubprocessError):
         value['reason']='local_component_requires_check'
     return value
 
@@ -56,7 +58,8 @@ def frontend_delivery(root):
             if not path.is_relative_to((folder/'assets').resolve()):
                 raise ValueError('invalid_asset')
             digest.update(path.read_bytes())
-        return {'verified': True, 'fingerprint': digest.hexdigest()[:12]}
+        return {'verified': True, 'fingerprint': digest.hexdigest()[:12],
+                'entry': next((asset.decode() for asset in assets if asset.endswith(b'.js')), None)}
     except (OSError, ValueError):
         return {'verified': False, 'fingerprint': None}
 

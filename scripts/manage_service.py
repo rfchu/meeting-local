@@ -101,17 +101,8 @@ class MacService:
         return self.status()
 
     def busy(self):
-        # An independent native writer can outlive the API/session JSON heartbeat.
-        from app.capture_ownership import inspect
-        if inspect(self.data/'recordings')['lease']!='free':return True
-        database=self.data/'meetings.sqlite3'
-        if database.exists():
-            with sqlite3.connect(f'file:{database}?mode=ro',uri=True) as db:
-                if db.execute("SELECT 1 FROM jobs WHERE state IN ('running','queued') LIMIT 1").fetchone():return True
-        for path in (self.data/'recordings').glob('*/session.json'):
-            session=json.loads(path.read_text())
-            if session.get('state') in ('recording','paused') and time.time()-path.stat().st_mtime<120:return True
-        return False
+        from app.host_bridge import maintenance_busy
+        return maintenance_busy(self.data)
 
     def stop(self,force=False):
         status=self.status()

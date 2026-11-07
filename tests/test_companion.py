@@ -63,3 +63,22 @@ def test_bilingual_reads_only_the_latest_confirmed_text_and_cached_translation(t
     assert client.get(path, params=params).json()['snapshot']['lines'] == [latest['text'], '等待工作台译文']
     write_translation(translation_file(services.store.directory(rid), latest, 'en', provider), '我们会核对最新的录音。')
     assert client.get(path, params=params).json()['snapshot']['lines'] == [latest['text'], '我们会核对最新的录音。']
+
+
+def test_host_diagnostics_separates_running_backend_from_disk_and_detects_active_recording(tmp_path, monkeypatch):
+    from app.routes import runtime
+
+    fingerprint = {'value': 'running'}
+    monkeypatch.setattr(runtime, 'source_digest', lambda _: fingerprint['value'])
+    app = create_app(tmp_path, start_worker=False)
+    fingerprint['value'] = 'updated'
+    monkeypatch.setattr(runtime, 'inspect_bundle', lambda *_: {'verified': True, 'version': '4'})
+    with TestClient(app) as client:
+        path = '/api/runtime/host-diagnostics'
+        before = client.get(path).json()
+        assert before['running_backend'] == 'running' and before['disk_backend'] == 'updated'
+        assert before['busy'] is False
+        assert before['frontend']['verified'] and before['capture']['verified']
+        response = client.post('/api/recordings', json={'mime_type': 'audio/webm'})
+        assert response.status_code == 201
+        assert client.get(path).json()['busy'] is True
