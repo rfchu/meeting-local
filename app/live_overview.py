@@ -292,10 +292,21 @@ class LiveOverview:
         note_hashes={n['id']:digest(n) for n in focus_notes(stored)}
         values=[]
         for item in items:
-            row=decisions.get(item['id']);value={**item,'decision':item.get('decision','pending') if version else row['state'] if row else 'pending',
-                'review_version':row['version'] if row else 0,'stale':not evidence_valid(item,sources) or any(note_hashes.get(k)!=v for k,v in item.get('note_fingerprints',{}).items())}
-            value['fingerprint']=digest(item_core(value))
-            value['evidence']=[{**e,'start':sources[e['segment_id']]['start'] if e['segment_id'] in sources else e.get('start',0)} for e in value['evidence']]
+            row=decisions.get(item['id'])
+            stale_notes=any(note_hashes.get(k)!=v for k,v in item.get('note_fingerprints',{}).items())
+            evidence=[]
+            for entry in item['evidence']:
+                source=sources.get(entry['segment_id'])
+                evidence.append({**entry,'start':source['start'] if source else entry.get('start',0),
+                                 'stale':not source or entry['quote'] not in source['text']})
+            stale_sources=not evidence or any(entry['stale'] for entry in evidence)
+            value={**item,'decision':item.get('decision','pending') if version else row['state'] if row else 'pending',
+                   'review_version':row['version'] if row else 0,'stale':stale_sources or stale_notes,
+                   'stale_reasons':[name for name,stale in [('source',stale_sources),('note',stale_notes)] if stale],
+                   'fingerprint':digest(item_core(item)),'evidence':evidence}
+            if row:
+                value['review_trace']={'state':row['state'],'updated':row['updated'],'version':row['version'],
+                                       'snapshot_version':row['payload'].get('reviewed_snapshot_version')}
             values.append(value)
         history=self.store.all('SELECT version,cursor,created FROM live_overview_snapshots WHERE recording_id=? ORDER BY version DESC LIMIT 12',(rid,))
         with self.store.connect() as db:
@@ -313,7 +324,7 @@ class LiveOverview:
             'quality':json.loads(snapshot['payload']).get('quality',{}) if snapshot else {},
             'version':snapshot['version'] if snapshot else 0,'updated':snapshot['created'] if snapshot else None,
             'covered_count':snapshot['cursor'] if snapshot else 0,'confirmed_count':len(parts),'gap_count':len(gaps),
-            'items':values,'history':history,'topics':topics,'historical':bool(version),'published':bool(self.store.one('SELECT id FROM meetings WHERE id=?',(rid,)))}
+            'items':values,'history':history,'topics':topics,'latest_version':history[0]['version'] if history else 0,'historical':bool(version),'published':bool(self.store.one('SELECT id FROM meetings WHERE id=?',(rid,)))}
 
     def refresh(self,rid):
         run=self.store.one('SELECT * FROM live_overview_runs WHERE recording_id=?',(rid,))
@@ -342,7 +353,7 @@ class LiveOverview:
                 item={**item,'content':body.content.strip()}
             if body.state=='confirmed' and not(old and old['state']=='confirmed') and db.execute("SELECT COUNT(*) FROM live_overview_reviews WHERE recording_id=? AND state='confirmed'",(rid,)).fetchone()[0]>=20:raise ValueError('最多确认20条，请先撤回部分条目')
             db.execute('INSERT INTO live_overview_reviews(recording_id,item_id,state,payload) VALUES(?,?,?,?) ON CONFLICT(recording_id,item_id) DO UPDATE SET state=excluded.state,payload=excluded.payload,version=version+1,updated=CURRENT_TIMESTAMP',
-                (rid,item_id,body.state,encode(item_core(item))))
+                (rid,item_id,body.state,encode(item_core(item)|{'reviewed_snapshot_version':snapshot['version']})))
         return self.read(rid)
 
     def prepare(self,rid,run,forced=False):

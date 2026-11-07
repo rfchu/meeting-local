@@ -44,20 +44,28 @@ export default function LiveOverviewPanel({
     [content, setContent] = useState("");
   const [detailsOpen, setDetailsOpen] = useState(false);
   const seq = useRef(0);
+  const view = useRef("");
+  const viewKey = JSON.stringify([recordingId, version]);
+  view.current = viewKey;
   const load = useCallback(async () => {
     if (!recordingId) return;
     const token = ++seq.current;
-    const value = await api.liveOverview(recordingId, version || undefined);
-    if (token === seq.current) setData(value);
-  }, [recordingId, version]);
+    try {
+      const value = await api.liveOverview(recordingId, version || undefined);
+      if (token === seq.current && view.current === viewKey) {
+        setData(value);
+        setError("");
+      }
+    } catch (e) {
+      if (token === seq.current && view.current === viewKey)
+        setError((e as Error).message);
+    }
+  }, [recordingId, version, viewKey]);
   useEffect(() => {
     setData(null);
     setError("");
-    void load().catch((e) => setError(e.message));
-    const timer = window.setInterval(
-      () => void load().catch((e) => setError(e.message)),
-      5000,
-    );
+    void load();
+    const timer = window.setInterval(() => void load(), 5000);
     return () => {
       seq.current++;
       window.clearInterval(timer);
@@ -89,12 +97,12 @@ export default function LiveOverviewPanel({
     setError("");
     try {
       const result = await action();
+      if (view.current !== viewKey) return false;
       seq.current++;
       setData(result);
       return true;
     } catch (e) {
-      setError((e as Error).message);
-      void load().catch(() => {});
+      if (view.current === viewKey) setError((e as Error).message);
       return false;
     } finally {
       setBusy(false);
@@ -209,7 +217,7 @@ export default function LiveOverviewPanel({
           <span>
             {data.version ? "本轮未更新，继续显示上一版。" : "首版暂未生成。"}
           </span>
-          {active && data.enabled && (
+          {active && data.enabled && !historical && (
             <button
               className="text-btn"
               disabled={busy || data.state === "running"}
@@ -353,7 +361,11 @@ export default function LiveOverviewPanel({
       )}
       {historical && (
         <p className="overview-history-label">
-          正在查看历史快照。请在“详情与设置”中切回最新概览后核对。
+          正在查看历史快照 v{version}
+          {data?.latest_version ? ` · 最新为 v${data.latest_version}` : ""}。
+          <button className="text-btn" onClick={() => setVersion(0)}>
+            返回最新概览
+          </button>
         </p>
       )}
       {error && (
@@ -418,7 +430,11 @@ export default function LiveOverviewPanel({
                     {(item.stale || item.decision !== "pending") && (
                       <small>
                         {item.stale
-                          ? "依据或关联简记已变化，需重新核对"
+                          ? item.stale_reasons?.length === 1
+                            ? item.stale_reasons[0] === "source"
+                              ? "引用原文已变化，需重新核对"
+                              : "关联简记已变化，需重新核对"
+                            : "依据或关联简记已变化，需重新核对"
                           : item.decision === "confirmed"
                             ? "已确认 · 不随 AI 刷新覆盖"
                             : item.decision === "dismissed"
@@ -484,13 +500,30 @@ export default function LiveOverviewPanel({
                             : ""}
                           以下为原文依据
                         </small>
+                        {item.review_trace && (
+                          <p>
+                            最近人工核对 ·{" "}
+                            {
+                              {
+                                confirmed: "已确认",
+                                dismissed: "已忽略",
+                                pending: "已恢复待核对",
+                              }[item.review_trace.state]
+                            }
+                            {item.review_trace.snapshot_version
+                              ? ` · 基于 v${item.review_trace.snapshot_version}`
+                              : ""}
+                            {" · "}
+                            {item.review_trace.updated}
+                          </p>
+                        )}
                         {item.evidence.map((e, index) => (
                           <blockquote key={index}>
                             <p>{e.quote}</p>
                             {onLocate && (
                               <button
                                 className="text-btn"
-                                disabled={item.stale}
+                                disabled={e.stale ?? item.stale}
                                 onClick={() => onLocate(e)}
                               >
                                 {clock(e.start)} {locateLabel}

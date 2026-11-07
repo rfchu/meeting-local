@@ -4,6 +4,7 @@ export interface OverviewEvidence {
   start: number;
   range_id?: string;
   segment_index?: number;
+  stale?: boolean;
 }
 export interface OverviewItem {
   id: string;
@@ -14,6 +15,13 @@ export interface OverviewItem {
   decision: "pending" | "confirmed" | "dismissed";
   review_version: number;
   stale: boolean;
+  stale_reasons?: ("source" | "note")[];
+  review_trace?: {
+    state: OverviewItem["decision"];
+    updated: string;
+    version: number;
+    snapshot_version?: number | null;
+  };
   fingerprint: string;
 }
 export interface OverviewStatus {
@@ -29,6 +37,7 @@ export interface OverviewStatus {
   state: string;
   error: string;
   version: number;
+  latest_version?: number;
   updated: string | null;
   covered_count: number;
   confirmed_count: number;

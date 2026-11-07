@@ -403,3 +403,24 @@ def test_early_topic_remains_addressable_after_recent_history_rotates(setup):
     assert old['historical'] and old['items'][0]['content']=='第一议题'
     assert old['items'][0]['evidence'][0]['segment_id']==sid
     assert old['items'][0]['evidence'][0]['start']==0
+
+
+def test_historical_snapshot_explains_review_and_only_marks_affected_source(setup):
+    _,store,service,_,rid,_,first_id,add=setup
+    first(setup)
+    second_id=add(30,45,'另一条独立文字。')
+    first_item=service.read(rid)['items'][0]
+    service.publish(plan(setup),{'items':[
+        output(first_id,item_id=first_item['id'])['items'][0],
+        {'kind':'point','content':'第二段观点','evidence':[{'segment_id':second_id,'quote':'另一条独立文字'}]},
+    ]})
+    snapshot=service.read(rid)
+    review(service,rid,next(item for item in snapshot['items'] if item['id']==first_item['id']))
+    store.execute('UPDATE live_asr_ranges SET segments=? WHERE id=?',
+                  (encode([{'start':30,'end':45,'text':'第二段修订文字'}]),second_id.split(':')[0]))
+    historical=service.read(rid,snapshot['version'])
+    by_kind={item['kind']:item for item in historical['items']}
+    assert by_kind['action']['review_trace']['state']=='confirmed'
+    assert by_kind['action']['review_trace']['snapshot_version']==snapshot['version']
+    assert not by_kind['action']['stale'] and not by_kind['action']['evidence'][0]['stale']
+    assert by_kind['point']['stale_reasons']==['source'] and by_kind['point']['evidence'][0]['stale']
