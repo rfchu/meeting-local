@@ -3,7 +3,7 @@ import Foundation
 final class ServiceClient: NSObject, URLSessionTaskDelegate, URLSessionDataDelegate, @unchecked Sendable {
     private var session: URLSession!
     private let lock = NSLock()
-    private var replies: [Int: (Data, Int, (ConnectionState) -> Void, HostConfiguration)] = [:]
+    private var replies: [Int: (Data, Int, (Data, Int) -> Void)] = [:]
     init(protocolClasses: [AnyClass]? = nil) {
         super.init()
         let options = URLSessionConfiguration.ephemeral
@@ -19,11 +19,24 @@ final class ServiceClient: NSObject, URLSessionTaskDelegate, URLSessionDataDeleg
     }
     func close() { session.invalidateAndCancel() }
     func probe(_ configuration: HostConfiguration, completion: @escaping (ConnectionState) -> Void) {
-        var request = URLRequest(url: configuration.identityURL)
+        get(configuration.identityURL) { data, code in
+            completion(code == 0 ? .unavailable : validateIdentity(data, statusCode: code, configuration: configuration))
+        }
+    }
+    func companion(_ configuration: HostConfiguration, mode: CompanionMode, recording: String?, completion: @escaping (CompanionSnapshot?) -> Void) {
+        var url = URLComponents(url: configuration.workspaceURL.appendingPathComponent("api/runtime/companion"), resolvingAgainstBaseURL: false)!
+        url.queryItems = [URLQueryItem(name: "mode", value: mode.rawValue)]
+        if let recording { url.queryItems?.append(URLQueryItem(name: "rid", value: recording)) }
+        get(url.url!) { data, code in
+            completion(CompanionSnapshot.verified(data, code: code, configuration: configuration, recording: recording))
+        }
+    }
+    private func get(_ url: URL, completion: @escaping (Data, Int) -> Void) {
+        var request = URLRequest(url: url)
         request.cachePolicy = .reloadIgnoringLocalAndRemoteCacheData
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         let task = session.dataTask(with: request)
-        lock.lock(); replies[task.taskIdentifier] = (Data(), 0, completion, configuration); lock.unlock()
+        lock.lock(); replies[task.taskIdentifier] = (Data(), 0, completion); lock.unlock()
         task.resume()
     }
     // A loopback redirect must never turn into a request to another service or a cloud host.
@@ -45,9 +58,42 @@ final class ServiceClient: NSObject, URLSessionTaskDelegate, URLSessionDataDeleg
     }
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
         lock.lock(); let item = replies.removeValue(forKey: task.taskIdentifier); lock.unlock()
-        guard let (data, code, callback, configuration) = item else { return }
-        let state: ConnectionState = error == nil && code > 0 ? validateIdentity(data, statusCode: code, configuration: configuration) : code != 0 ? .incompatible : .unavailable
-        callback(state)
+        guard let (data, code, callback) = item else { return }
+        callback(data, error == nil && code > 0 ? code : code == 0 ? 0 : -1)
+    }
+}
+
+enum CompanionMode: String, CaseIterable {
+    case status, bilingual, highlights
+    var title: String {
+        switch self {
+        case .status: return "录音状态"
+        case .bilingual: return "双语"
+        case .highlights: return "重点"
+        }
+    }
+}
+
+struct CompanionSnapshot: Decodable {
+    let observed_at: Double
+    let recording_id: String?
+    let meeting_id: String?
+    let source: String?
+    let phase: String
+    let storage: String?
+    let asr: String?
+    let lines: [String]
+
+    static func verified(_ data: Data, code: Int, configuration: HostConfiguration, recording: String?) -> Self? {
+        guard code == 200, let envelope = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              let host = envelope["host"], let body = envelope["snapshot"],
+              let identity = try? JSONSerialization.data(withJSONObject: host, options: [.fragmentsAllowed]),
+              validateIdentity(identity, statusCode: code, configuration: configuration).canOpen,
+              let payload = try? JSONSerialization.data(withJSONObject: body, options: [.fragmentsAllowed]),
+              let snapshot = try? JSONDecoder().decode(Self.self, from: payload),
+              [snapshot.recording_id, snapshot.meeting_id].compactMap({ $0 }).allSatisfy({ $0.range(of: #"^[0-9a-f]{32}$"#, options: .regularExpression) != nil }),
+              snapshot.recording_id == nil || recording == nil || snapshot.recording_id == recording else { return nil }
+        return snapshot
     }
 }
 

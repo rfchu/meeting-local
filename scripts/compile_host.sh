@@ -6,7 +6,7 @@ APP="${TINGJI_HOST_COMPILE_APP:?Internal isolated build path required}"
 [[ "$APP" == */.tingji-host-releases/*/Tingji.app && ! -e "$APP" ]] || exit 2
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources" native/build/module-cache
 xcrun swiftc -swift-version 5 -O -target arm64-apple-macos15.0 -module-cache-path native/build/module-cache \
-  native/Host/HostCore.swift native/Host/HostPreferences.swift native/Host/ServiceClient.swift native/Host/HostSettingsController.swift native/Host/WorkspacePolicy.swift native/Host/WorkspaceDownloads.swift native/Host/WorkspaceController.swift native/Host/AppDelegate.swift native/Host/main.swift \
+  native/Host/HostCore.swift native/Host/HostPreferences.swift native/Host/ServiceClient.swift native/Host/HostSettingsController.swift native/Host/WorkspacePolicy.swift native/Host/WorkspaceDownloads.swift native/Host/WorkspaceController.swift native/Host/CompanionController.swift native/Host/AppDelegate.swift native/Host/main.swift \
   -o "$APP/Contents/MacOS/TingjiHost"
 cp native/Host/workspace-permissions.js "$APP/Contents/Resources/workspace-permissions.js"
 python3 - "$APP" "$PWD" <<'PY'

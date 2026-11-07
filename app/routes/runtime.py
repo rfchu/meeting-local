@@ -1,9 +1,10 @@
 """Runtime HTTP routes; shared services are supplied by the composition root."""
 import json, os, shutil
 from pathlib import Path
-from fastapi import HTTPException
+from typing import Literal
+from fastapi import HTTPException, Query
 from ..db import uid
-from .. import workspace_readiness
+from .. import companion, workspace_readiness
 from ..host_bridge import identity as host_identity
 from ..providers import WhisperCpp, engine_catalog, LocalDiarization, LocalPunctuation
 from ..analysis import OpenAICompatibleProvider, validate_llm_endpoint, public_llm_config, analysis_chunk_chars
@@ -25,6 +26,10 @@ def register_routes(app,services:ApplicationServices):
     @app.get('/api/runtime/host')
     def host_connection():
         return host_identity(app.state.paths)
+
+    @app.get('/api/runtime/companion')
+    def companion_status(mode:Literal['status','bilingual','highlights']='status', rid:str|None=Query(default=None,pattern=r'^[0-9a-f]{32}$')):
+        return {'host':host_identity(app.state.paths),'snapshot':companion.snapshot(services,mode,rid)}
 
     @app.get('/api/runtime/service')
     def service_identity():

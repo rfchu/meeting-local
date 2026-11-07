@@ -6,6 +6,7 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, 
     private let preferences: HostPreferences
     private var loaded: HostConfigurationLoad
     private var settings: HostSettingsController?
+    private var companion: CompanionController?
     private var workspace: WorkspaceController?
     private var menuBrowser: NSMenuItem?
     private let browserButton = NSButton(title: "浏览器工作台", target: nil, action: nil)
@@ -54,7 +55,7 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, 
         return alert.runModal() == .alertFirstButtonReturn ? .terminateCancel : .terminateNow
     }
     func applicationWillTerminate(_ notification: Notification) {
-        timer?.invalidate(); settings?.close(); workspace?.dispose(); client.close()
+        timer?.invalidate(); settings?.close(); workspace?.dispose(); companion?.close(); client.close()
         if let activationObserver { DistributedNotificationCenter.default().removeObserver(activationObserver) }
         if let statusItem { NSStatusBar.system.removeStatusItem(statusItem) }
         // Closing this UI never sends a stop, restart or recording command to the service.
@@ -70,6 +71,7 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, 
         let menu = NSMenu(); let app = NSMenuItem(); let submenu = NSMenu()
         submenu.addItem(withTitle: "关于听记宿主", action: #selector(about), keyEquivalent: "")
         let config = submenu.addItem(withTitle: "连接设置…", action: #selector(showConfiguration), keyEquivalent: ","); config.target = self
+        submenu.addItem(withTitle: "打开伴随窗口", action: #selector(showCompanion), keyEquivalent: "").target = self
         submenu.addItem(.separator())
         let quit = submenu.addItem(withTitle: "退出听记宿主", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"); quit.target = NSApp
         app.submenu = submenu; menu.addItem(app); NSApp.mainMenu = menu
@@ -148,6 +150,11 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, 
         }
     }
     @objc private func refresh() { probe() }
+    @objc private func showCompanion() {
+        guard !loaded.problem else { return }
+        if companion == nil { companion = CompanionController(configuration: configuration, client: client) }
+        companion?.show()
+    }
     @objc private func openWorkspace() {
         guard state.canOpen, !loaded.problem, !starting, !opening, settings?.isPresented != true else { return }
         // Verify again at the click; a stale green indicator cannot open a different workspace.
@@ -213,6 +220,7 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, 
         }
         _ = action("显示主窗口", #selector(showWindow))
         menuOpen = action("打开内嵌工作区", #selector(openWorkspace))
+        _ = action("打开伴随窗口", #selector(showCompanion))
         menuBrowser = action("浏览器工作台", #selector(openBrowserWorkspace))
         menuSettings = action("连接设置…", #selector(showConfiguration))
         menuRefresh = action("重新检查", #selector(refresh))
@@ -235,7 +243,7 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, 
         let initial = HostConfigurationLoad(configuration: latest.saved || latest.problem ? latest.configuration : configuration, token: latest.token, saved: latest.saved, problem: latest.problem)
         let controller = HostSettingsController(defaults: defaults, load: initial, preferences: preferences, requiresWorkspaceConfirmation: { [weak self] value in self?.workspace != nil && value != self?.configuration }, canApply: { [weak self] value in value == self?.configuration || self?.workspace?.busy != true }, onCancel: { [weak self] in self?.settings = nil; self?.render() }) { [weak self] value in
             guard let self else { return }
-            if value.configuration != self.configuration { self.workspace?.dispose(); self.workspace = nil }
+            if value.configuration != self.configuration { self.workspace?.dispose(); self.workspace = nil; self.companion?.close(); self.companion = nil }
             self.configurationGeneration += 1; self.loaded = value; self.configuration = value.configuration
             _ = self.generation.next(); self.opening = false; self.probing = false; self.state = .checking; self.feedback.stringValue = "连接配置已保存；服务未被启停。"
             self.settings = nil; self.render(); self.probe()
