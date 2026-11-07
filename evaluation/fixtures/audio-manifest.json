@@ -1,0 +1,9 @@
+{
+  "generator": "macOS say Tingting rate185; ffmpeg PCM16 mono16000",
+  "files": {
+    "asr-proposal": "f267957ff47b4e8b2279e0cfe9b8763b98d0459784725263b52dca4b3bffb056",
+    "asr-change": "02fcf0fb4026fafffa7fe125847f7a17b3ddba46b19c1fbf22c4d4b894478dc3",
+    "asr-domain": "d4f0d07bd67ac74fee4134f2020c86ffae5ba441a51e8d3425a54bde8e2529d4",
+    "asr-numbers": "91b8fbd30dc02c3a0aa9754ba7f3fe3828d41aadc348e54743b3dc20c3e8a5bb"
+  }
+}

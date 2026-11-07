@@ -5,6 +5,12 @@ from fastapi.responses import JSONResponse
 from .providers import engine_catalog,LocalDiarization,LocalPunctuation
 
 def register_runtime_management(app,store,native,resident,probes,runtime=None,resources=None,live_sessions=None,acceptance=None):
+    @app.get('/api/runtime/quality-baseline')
+    def quality_baseline():
+        from .quality_evaluation import baseline_inventory
+        try:return JSONResponse(baseline_inventory(),headers={'Cache-Control':'no-store'})
+        except (OSError,ValueError,KeyError,TypeError):raise HTTPException(503,'质量基线暂不可用，未运行模型或修改会议')
+
     @app.get('/api/runtime/release-readiness')
     def release_readiness():
         from .release_readiness import inspect_release

@@ -13,3 +13,5 @@ frontend/*.tsbuildinfo
 native/build/
 
 backups/
+
+evaluation/runs/

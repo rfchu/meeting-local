@@ -336,6 +336,10 @@ export const api = {
     ),
   environment: () => request<Environment>("/status"),
   meetings: () => request<MeetingSummary[]>("/meetings"),
+  qualityBaseline: () =>
+    request<
+      import("./features/management/QualityBaselinePanel").QualityBaseline
+    >("/runtime/quality-baseline", { signal: AbortSignal.timeout(10000) }),
   releaseReadiness: () =>
     request<
       import("./features/management/ReleaseReadinessPanel").ReleaseReadiness

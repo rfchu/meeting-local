@@ -1,0 +1,445 @@
+{
+  "schema_version": 1,
+  "suite_id": "tingji-quality-v1",
+  "scope": "self_authored_synthetic_only",
+  "gold_provenance": "独立编写的合成测试答案；不是从模型输出反推的人工真值",
+  "normalization": "NFKC + casefold + remove_unicode_punctuation_and_whitespace_v1; numbers_not_semantically_normalized",
+  "overview_file": "overview-v1.json",
+  "cases": [
+    {
+      "id": "qa-valid-action",
+      "track": "qa_guard",
+      "sources": [
+        {
+          "label": "E1",
+          "kind": "transcript",
+          "content": "建议下周一上线，日期尚未确定。陈明负责周五前交付预览稿。"
+        },
+        {
+          "label": "E2",
+          "kind": "note",
+          "note_scope": "personal",
+          "content": "我担心资源不足，这只是我的个人备注。"
+        }
+      ],
+      "candidate": {
+        "status": "answered",
+        "claims": [
+          {
+            "text": "陈明负责预览稿。",
+            "kind": "record",
+            "citations": [
+              {
+                "source": "E1",
+                "quote": "陈明负责周五前交付预览稿。"
+              }
+            ]
+          }
+        ]
+      },
+      "expected_accept": true
+    },
+    {
+      "id": "qa-fabricated-quote",
+      "track": "qa_guard",
+      "sources": [
+        {
+          "label": "E1",
+          "kind": "transcript",
+          "content": "建议下周一上线，日期尚未确定。陈明负责周五前交付预览稿。"
+        },
+        {
+          "label": "E2",
+          "kind": "note",
+          "note_scope": "personal",
+          "content": "我担心资源不足，这只是我的个人备注。"
+        }
+      ],
+      "candidate": {
+        "status": "answered",
+        "claims": [
+          {
+            "text": "已决定下周一上线。",
+            "kind": "record",
+            "citations": [
+              {
+                "source": "E1",
+                "quote": "决定下周一上线。"
+              }
+            ]
+          }
+        ]
+      },
+      "expected_accept": false
+    },
+    {
+      "id": "qa-unknown-source",
+      "track": "qa_guard",
+      "sources": [
+        {
+          "label": "E1",
+          "kind": "transcript",
+          "content": "建议下周一上线，日期尚未确定。陈明负责周五前交付预览稿。"
+        },
+        {
+          "label": "E2",
+          "kind": "note",
+          "note_scope": "personal",
+          "content": "我担心资源不足，这只是我的个人备注。"
+        }
+      ],
+      "candidate": {
+        "status": "answered",
+        "claims": [
+          {
+            "text": "周五交付。",
+            "kind": "record",
+            "citations": [
+              {
+                "source": "E9",
+                "quote": "周五交付。"
+              }
+            ]
+          }
+        ]
+      },
+      "expected_accept": false
+    },
+    {
+      "id": "qa-personal-as-fact",
+      "track": "qa_guard",
+      "sources": [
+        {
+          "label": "E1",
+          "kind": "transcript",
+          "content": "建议下周一上线，日期尚未确定。陈明负责周五前交付预览稿。"
+        },
+        {
+          "label": "E2",
+          "kind": "note",
+          "note_scope": "personal",
+          "content": "我担心资源不足，这只是我的个人备注。"
+        }
+      ],
+      "candidate": {
+        "status": "answered",
+        "claims": [
+          {
+            "text": "资源不足是会议结论。",
+            "kind": "record",
+            "citations": [
+              {
+                "source": "E2",
+                "quote": "我担心资源不足"
+              }
+            ]
+          }
+        ]
+      },
+      "expected_accept": false
+    },
+    {
+      "id": "qa-personal-as-note",
+      "track": "qa_guard",
+      "sources": [
+        {
+          "label": "E1",
+          "kind": "transcript",
+          "content": "建议下周一上线，日期尚未确定。陈明负责周五前交付预览稿。"
+        },
+        {
+          "label": "E2",
+          "kind": "note",
+          "note_scope": "personal",
+          "content": "我担心资源不足，这只是我的个人备注。"
+        }
+      ],
+      "candidate": {
+        "status": "answered",
+        "claims": [
+          {
+            "text": "个人担心资源不足。",
+            "kind": "note",
+            "citations": [
+              {
+                "source": "E2",
+                "quote": "我担心资源不足"
+              }
+            ]
+          }
+        ]
+      },
+      "expected_accept": true
+    },
+    {
+      "id": "qa-insufficient",
+      "track": "qa_guard",
+      "sources": [
+        {
+          "label": "E1",
+          "kind": "transcript",
+          "content": "建议下周一上线，日期尚未确定。陈明负责周五前交付预览稿。"
+        },
+        {
+          "label": "E2",
+          "kind": "note",
+          "note_scope": "personal",
+          "content": "我担心资源不足，这只是我的个人备注。"
+        }
+      ],
+      "candidate": {
+        "status": "insufficient",
+        "claims": []
+      },
+      "expected_accept": true
+    },
+    {
+      "id": "qa-insufficient-with-claim",
+      "track": "qa_guard",
+      "sources": [
+        {
+          "label": "E1",
+          "kind": "transcript",
+          "content": "建议下周一上线，日期尚未确定。陈明负责周五前交付预览稿。"
+        },
+        {
+          "label": "E2",
+          "kind": "note",
+          "note_scope": "personal",
+          "content": "我担心资源不足，这只是我的个人备注。"
+        }
+      ],
+      "candidate": {
+        "status": "insufficient",
+        "claims": [
+          {
+            "text": "陈明负责预览稿。",
+            "kind": "record",
+            "citations": [
+              {
+                "source": "E1",
+                "quote": "陈明负责周五前交付预览稿。"
+              }
+            ]
+          }
+        ]
+      },
+      "expected_accept": false
+    },
+    {
+      "id": "qa-empty-claims",
+      "track": "qa_guard",
+      "sources": [
+        {
+          "label": "E1",
+          "kind": "transcript",
+          "content": "建议下周一上线，日期尚未确定。陈明负责周五前交付预览稿。"
+        },
+        {
+          "label": "E2",
+          "kind": "note",
+          "note_scope": "personal",
+          "content": "我担心资源不足，这只是我的个人备注。"
+        }
+      ],
+      "candidate": {
+        "status": "answered",
+        "claims": []
+      },
+      "expected_accept": false
+    },
+    {
+      "id": "minutes-valid",
+      "track": "minutes_guard",
+      "valid_ids": [
+        "s1",
+        "s2"
+      ],
+      "candidate": {
+        "title": "星河排期讨论",
+        "style": "ai",
+        "decisions": [
+          {
+            "content": "下周三上线。",
+            "source_segment_ids": [
+              "s1"
+            ]
+          }
+        ]
+      },
+      "expected_accept": true
+    },
+    {
+      "id": "minutes-unknown-source",
+      "track": "minutes_guard",
+      "valid_ids": [
+        "s1",
+        "s2"
+      ],
+      "candidate": {
+        "title": "星河排期讨论",
+        "style": "ai",
+        "decisions": [
+          {
+            "content": "下周三上线。",
+            "source_segment_ids": [
+              "invented"
+            ]
+          }
+        ]
+      },
+      "expected_accept": false
+    },
+    {
+      "id": "minutes-basic-unknown",
+      "track": "minutes_guard",
+      "valid_ids": [
+        "s1",
+        "s2"
+      ],
+      "candidate": {
+        "title": "星河排期讨论",
+        "style": "ai",
+        "decisions": [
+          {
+            "content": "下周三上线。",
+            "source_segment_ids": []
+          }
+        ],
+        "basic_info_source_segment_ids": [
+          "invented"
+        ]
+      },
+      "expected_accept": false
+    },
+    {
+      "id": "boundary-continuous-15",
+      "track": "segmentation",
+      "voiced_seconds": 15,
+      "quiet_seconds": 0,
+      "target": 15,
+      "forced": null,
+      "expected": {
+        "confirmed": false,
+        "boundary_reason": "preview",
+        "seconds": 15
+      }
+    },
+    {
+      "id": "boundary-hard-25",
+      "track": "segmentation",
+      "voiced_seconds": 25,
+      "quiet_seconds": 0,
+      "target": 15,
+      "forced": null,
+      "expected": {
+        "confirmed": true,
+        "boundary_reason": "hard_limit",
+        "seconds": 25
+      }
+    },
+    {
+      "id": "boundary-pause-16",
+      "track": "segmentation",
+      "voiced_seconds": 15,
+      "quiet_seconds": 0.8,
+      "target": 15,
+      "forced": null,
+      "expected": {
+        "confirmed": true,
+        "boundary_reason": "silence",
+        "seconds": 15.8
+      }
+    },
+    {
+      "id": "boundary-stop-tail",
+      "track": "segmentation",
+      "voiced_seconds": 1.2,
+      "quiet_seconds": 0,
+      "target": 15,
+      "forced": "stop",
+      "expected": {
+        "confirmed": true,
+        "boundary_reason": "stop",
+        "seconds": 1.2
+      }
+    },
+    {
+      "id": "speaker-correction-harm",
+      "track": "speakers",
+      "data": {
+        "segments": [
+          {
+            "id": "s1",
+            "start": 0,
+            "end": 4,
+            "speaker": "甲"
+          },
+          {
+            "id": "s2",
+            "start": 4,
+            "end": 7,
+            "speaker": "乙"
+          },
+          {
+            "id": "s3",
+            "start": 7,
+            "end": 10,
+            "speaker": "甲",
+            "speaker_locked": true
+          }
+        ],
+        "reference_labels": {
+          "s1": "乙",
+          "s2": "乙",
+          "s3": "甲"
+        },
+        "suggestions": [
+          {
+            "segment_id": "s1",
+            "proposed_speaker": "乙",
+            "strength": "supported"
+          },
+          {
+            "segment_id": "s2",
+            "proposed_speaker": "甲",
+            "strength": "review"
+          }
+        ]
+      },
+      "expected": {
+        "fixed": 1,
+        "harmful": 1,
+        "correct_segments": 2
+      }
+    },
+    {
+      "id": "asr-proposal",
+      "track": "asr_text",
+      "reference": "建议下周一上线，日期尚未确定。陈明负责周五前交付预览稿。",
+      "audio": "asr-proposal.wav",
+      "audio_sha256": "f267957ff47b4e8b2279e0cfe9b8763b98d0459784725263b52dca4b3bffb056"
+    },
+    {
+      "id": "asr-change",
+      "track": "asr_text",
+      "reference": "刚才的方案需要调整。大家同意下周三上线，预览稿改为下周一交付。",
+      "audio": "asr-change.wav",
+      "audio_sha256": "02fcf0fb4026fafffa7fe125847f7a17b3ddba46b19c1fbf22c4d4b894478dc3"
+    },
+    {
+      "id": "asr-domain",
+      "track": "asr_text",
+      "reference": "听记使用千问语音识别模型，保留原始音轨。识别中断后，从最后确认位置继续处理。",
+      "audio": "asr-domain.wav",
+      "audio_sha256": "d4f0d07bd67ac74fee4134f2020c86ffae5ba441a51e8d3425a54bde8e2529d4"
+    },
+    {
+      "id": "asr-numbers",
+      "track": "asr_text",
+      "reference": "星河项目预算为五万元。服务器有三台，备份保留七天。本次只讨论方案，没有决定采购。",
+      "audio": "asr-numbers.wav",
+      "audio_sha256": "91b8fbd30dc02c3a0aa9754ba7f3fe3828d41aadc348e54743b3dc20c3e8a5bb"
+    }
+  ]
+}

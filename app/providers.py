@@ -5,6 +5,12 @@ from typing import Protocol
 
 BASE=Path(__file__).resolve().parents[1]
 
+def locally_resident(path):
+    """Metadata-only check: an iCloud placeholder is not an offline model."""
+    try:return Path(path).is_file() and not (getattr(Path(path).stat(),'st_flags',0)&0x40000000)
+    except OSError:return False
+
+
 class ASRProvider(Protocol):
     def transcribe(self, audio: Path, output: Path, run) -> list[dict]: ...
 
@@ -16,7 +22,7 @@ class WhisperCpp:
     def __init__(self):
         self.binary=os.getenv('WHISPER_CLI') or str(BASE/'vendor/whisper.cpp/build/bin/whisper-cli')
         self.model=os.getenv('WHISPER_MODEL') or str(BASE/'models/ggml-large-v3-turbo.bin')
-    def ready(self): return Path(self.binary).is_file() and Path(self.model).is_file()
+    def ready(self): return locally_resident(self.binary) and locally_resident(self.model)
     def identity(self):
         files=[Path(self.binary),Path(self.model),BASE/'models/ggml-silero-v6.2.0.bin']
         return [{'path':str(p),'size':p.stat().st_size,'mtime_ns':p.stat().st_mtime_ns} for p in files if p.exists()]
@@ -56,6 +62,7 @@ class QwenMLX:
     @staticmethod
     def model_ready(folder):
         path=Path(folder)
+        if any(not locally_resident(p) for p in path.glob('*') if p.suffix in ('.json','.safetensors','.txt','.model')):return False
         tokenizer_ready=(path/'tokenizer.json').is_file() or all((path/name).is_file() for name in ('tokenizer_config.json','vocab.json','merges.txt'))
         if not tokenizer_ready or not all((path/name).is_file() for name in ('config.json','preprocessor_config.json')):
             return False
@@ -68,7 +75,7 @@ class QwenMLX:
         return any(p.stat().st_size>0 for p in path.glob('*.safetensors'))
 
     def ready(self):
-        return Path(self.python).is_file() and self.runtime.is_file() and self.model_ready(self.model) and self.model_ready(self.aligner)
+        return locally_resident(self.python) and locally_resident(self.runtime) and self.model_ready(self.model) and self.model_ready(self.aligner)
 
     def identity(self):
         files=[Path(self.python),self.runtime,BASE/'scripts/qwen_transcribe.py',BASE/'scripts/qwen_live_server.py',BASE/'scripts/qwen_stream_decoder.py',BASE/'app/alignment.py']

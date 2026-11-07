@@ -38,7 +38,7 @@ def running(tmp_path,monkeypatch,writer):
         client=Client(recordings.root,s['id'],s['capture_incarnation'])
         def ready():
             if process.poll() is not None:raise AssertionError(process.stderr.read().decode())
-            return client.status()['alive'] and inspect(recordings.root)['lease']=='held'
+            return client.status()['alive'] and inspect(recordings.root)['lease']=='held' and (folder/'system.pcm').is_file()
         try:
             until(ready)
             yield native,s,folder,process,client

@@ -1,0 +1,281 @@
+{
+  "schema_version": 1,
+  "suite_id": "tingji-quality-v1",
+  "suite_fingerprint": "6aaeac1f8756404876e8fb6c53dafc12371cd8e43338704f101fecfe1539a814",
+  "rubric_version": 1,
+  "rubric_fingerprint": "ef669129c193a9a70c484416631e671d26f881020938a21c37856b014674ee55",
+  "scope": "self_authored_synthetic_only",
+  "mode": "offline_protocol",
+  "subject": {
+    "implementation_fingerprint": "9f2f0e57174502f051274d18934025f48ef24891f583ae8d02302038c90d7fc0",
+    "generation": "fixed_candidates_not_model_outputs"
+  },
+  "created_utc": "2026-11-07T00:53:09.105834+00:00",
+  "rows": [
+    {
+      "id": "qa-valid-action",
+      "track": "qa_guard",
+      "passed": true,
+      "accepted": true,
+      "expected_accept": true
+    },
+    {
+      "id": "qa-fabricated-quote",
+      "track": "qa_guard",
+      "passed": true,
+      "accepted": false,
+      "expected_accept": false
+    },
+    {
+      "id": "qa-unknown-source",
+      "track": "qa_guard",
+      "passed": true,
+      "accepted": false,
+      "expected_accept": false
+    },
+    {
+      "id": "qa-personal-as-fact",
+      "track": "qa_guard",
+      "passed": true,
+      "accepted": false,
+      "expected_accept": false
+    },
+    {
+      "id": "qa-personal-as-note",
+      "track": "qa_guard",
+      "passed": true,
+      "accepted": true,
+      "expected_accept": true
+    },
+    {
+      "id": "qa-insufficient",
+      "track": "qa_guard",
+      "passed": true,
+      "accepted": true,
+      "expected_accept": true
+    },
+    {
+      "id": "qa-insufficient-with-claim",
+      "track": "qa_guard",
+      "passed": true,
+      "accepted": false,
+      "expected_accept": false
+    },
+    {
+      "id": "qa-empty-claims",
+      "track": "qa_guard",
+      "passed": true,
+      "accepted": false,
+      "expected_accept": false
+    },
+    {
+      "id": "minutes-valid",
+      "track": "minutes_guard",
+      "passed": true,
+      "accepted": true,
+      "expected_accept": true
+    },
+    {
+      "id": "minutes-unknown-source",
+      "track": "minutes_guard",
+      "passed": true,
+      "accepted": false,
+      "expected_accept": false
+    },
+    {
+      "id": "minutes-basic-unknown",
+      "track": "minutes_guard",
+      "passed": true,
+      "accepted": false,
+      "expected_accept": false
+    },
+    {
+      "id": "boundary-continuous-15",
+      "track": "segmentation",
+      "passed": true,
+      "confirmed": false,
+      "boundary_reason": "preview"
+    },
+    {
+      "id": "boundary-hard-25",
+      "track": "segmentation",
+      "passed": true,
+      "confirmed": true,
+      "boundary_reason": "hard_limit"
+    },
+    {
+      "id": "boundary-pause-16",
+      "track": "segmentation",
+      "passed": true,
+      "confirmed": true,
+      "boundary_reason": "silence"
+    },
+    {
+      "id": "boundary-stop-tail",
+      "track": "segmentation",
+      "passed": true,
+      "confirmed": true,
+      "boundary_reason": "stop"
+    },
+    {
+      "id": "speaker-correction-harm",
+      "track": "speakers",
+      "passed": true,
+      "fixed": 1,
+      "harmful": 1,
+      "metric": "fixed_segment_labels_not_DER"
+    },
+    {
+      "id": "overview:delivery-change:1",
+      "track": "overview_pipeline",
+      "passed": true,
+      "checks": {
+        "expected_failure": true,
+        "required_facts": true,
+        "required_fact_rules": true,
+        "no_forbidden_claims": true,
+        "no_forbidden_rules": true,
+        "no_duplicate_items": true,
+        "stable_ids": true,
+        "stable_anchor_found": true,
+        "failure_preserves_version": true,
+        "expected_count": true,
+        "pinned_preserved": true,
+        "dismissed_stays_hidden": true,
+        "no_meta_narration": true
+      }
+    },
+    {
+      "id": "overview:delivery-change:2",
+      "track": "overview_pipeline",
+      "passed": true,
+      "checks": {
+        "expected_failure": true,
+        "required_facts": true,
+        "required_fact_rules": true,
+        "no_forbidden_claims": true,
+        "no_forbidden_rules": true,
+        "no_duplicate_items": true,
+        "stable_ids": true,
+        "stable_anchor_found": true,
+        "failure_preserves_version": true,
+        "expected_count": true,
+        "pinned_preserved": true,
+        "dismissed_stays_hidden": true,
+        "no_meta_narration": true
+      }
+    },
+    {
+      "id": "overview:delivery-change:3",
+      "track": "overview_pipeline",
+      "passed": true,
+      "checks": {
+        "expected_failure": true,
+        "required_facts": true,
+        "required_fact_rules": true,
+        "no_forbidden_claims": true,
+        "no_forbidden_rules": true,
+        "no_duplicate_items": true,
+        "stable_ids": true,
+        "stable_anchor_found": true,
+        "failure_preserves_version": true,
+        "expected_count": true,
+        "pinned_preserved": true,
+        "dismissed_stays_hidden": true,
+        "no_meta_narration": true
+      }
+    },
+    {
+      "id": "overview:human-priority-and-failure:1",
+      "track": "overview_pipeline",
+      "passed": true,
+      "checks": {
+        "expected_failure": true,
+        "required_facts": true,
+        "required_fact_rules": true,
+        "no_forbidden_claims": true,
+        "no_forbidden_rules": true,
+        "no_duplicate_items": true,
+        "stable_ids": true,
+        "stable_anchor_found": true,
+        "failure_preserves_version": true,
+        "expected_count": true,
+        "pinned_preserved": true,
+        "dismissed_stays_hidden": true,
+        "no_meta_narration": true
+      }
+    },
+    {
+      "id": "overview:human-priority-and-failure:2",
+      "track": "overview_pipeline",
+      "passed": true,
+      "checks": {
+        "expected_failure": true,
+        "required_facts": true,
+        "required_fact_rules": true,
+        "no_forbidden_claims": true,
+        "no_forbidden_rules": true,
+        "no_duplicate_items": true,
+        "stable_ids": true,
+        "stable_anchor_found": true,
+        "failure_preserves_version": true,
+        "expected_count": true,
+        "pinned_preserved": true,
+        "dismissed_stays_hidden": true,
+        "no_meta_narration": true
+      }
+    },
+    {
+      "id": "overview:human-priority-and-failure:3",
+      "track": "overview_pipeline",
+      "passed": true,
+      "checks": {
+        "expected_failure": true,
+        "required_facts": true,
+        "required_fact_rules": true,
+        "no_forbidden_claims": true,
+        "no_forbidden_rules": true,
+        "no_duplicate_items": true,
+        "stable_ids": true,
+        "stable_anchor_found": true,
+        "failure_preserves_version": true,
+        "expected_count": true,
+        "pinned_preserved": true,
+        "dismissed_stays_hidden": true,
+        "no_meta_narration": true
+      }
+    },
+    {
+      "id": "overview:duplicates-and-numeric-differences:1",
+      "track": "overview_pipeline",
+      "passed": true,
+      "checks": {
+        "expected_failure": true,
+        "required_facts": true,
+        "required_fact_rules": true,
+        "no_forbidden_claims": true,
+        "no_forbidden_rules": true,
+        "no_duplicate_items": true,
+        "stable_ids": true,
+        "stable_anchor_found": true,
+        "failure_preserves_version": true,
+        "expected_count": true,
+        "pinned_preserved": true,
+        "dismissed_stays_hidden": true,
+        "no_meta_narration": true
+      }
+    }
+  ],
+  "metrics": {
+    "probe_count": 23,
+    "passed_probes": 23,
+    "probe_pass_rate": 1.0,
+    "model_calls": 0
+  },
+  "limitations": [
+    "合成样本，不代表真实长会议／多说话人／噪声质量",
+    "引用存在不自动证明语义充分",
+    "CER 保留数值书写差异，不进行中文数字等价折算；延迟仅作观察"
+  ],
+  "report_fingerprint": "4513cb1443fe84ac1e8bba909c15b9572022e3f4ad468f4cef76f1cce3c65928"
+}
