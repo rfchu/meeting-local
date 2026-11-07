@@ -4,7 +4,13 @@ from fastapi import HTTPException,Query
 from fastapi.responses import JSONResponse
 from .providers import engine_catalog,LocalDiarization,LocalPunctuation
 
-def register_runtime_management(app,store,native,resident,probes,runtime=None,resources=None,live_sessions=None):
+def register_runtime_management(app,store,native,resident,probes,runtime=None,resources=None,live_sessions=None,acceptance=None):
+    @app.get('/api/runtime/release-readiness')
+    def release_readiness():
+        from .release_readiness import inspect_release
+        from .paths import ROOT
+        return JSONResponse(inspect_release(ROOT,acceptance),headers={'Cache-Control':'no-store'})
+
     @app.get('/api/runtime/capture-control')
     def capture_control():
         sessions=[]

@@ -336,6 +336,30 @@ export const api = {
     ),
   environment: () => request<Environment>("/status"),
   meetings: () => request<MeetingSummary[]>("/meetings"),
+  releaseReadiness: () =>
+    request<
+      import("./features/management/ReleaseReadinessPanel").ReleaseReadiness
+    >("/runtime/release-readiness", { signal: AbortSignal.timeout(30000) }),
+  recordingAcceptance: (id: string) =>
+    request<
+      import("./features/management/AcceptanceReviewPanel").AcceptanceAssessment
+    >(`/runtime/recording-checks/${id}/acceptance`, {
+      signal: AbortSignal.timeout(10000),
+    }),
+  reviewRecordingAcceptance: (
+    id: string,
+    body: {
+      case: string;
+      evidence_fingerprint: string;
+      verdict: "passed" | "failed";
+      real_device: boolean;
+      audio_reviewed: boolean;
+    },
+  ) =>
+    request(
+      `/runtime/recording-checks/${id}/acceptance-review`,
+      json("POST", body),
+    ),
   recordingChecks: () =>
     request<RecordingObservation[]>("/runtime/recording-checks", {
       signal: AbortSignal.timeout(10000),

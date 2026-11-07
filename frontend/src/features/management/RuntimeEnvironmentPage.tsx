@@ -1,3 +1,4 @@
+import ReleaseReadinessPanel from "./ReleaseReadinessPanel";
 import ServiceLifecyclePanel from "./ServiceLifecyclePanel";
 import RecordingValidationPanel from "./RecordingValidationPanel";
 import type { RuntimeOverview, ManagementPage } from "./types";
@@ -13,6 +14,7 @@ export default function RuntimeEnvironmentPage({
 }) {
   return (
     <>
+      <ReleaseReadinessPanel />
       <ServiceLifecyclePanel />
       <RecordingValidationPanel />
       <section className="management-section">

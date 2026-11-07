@@ -23,7 +23,7 @@ class RecordingValidation:
     def __init__(self,root,recordings,native,runtime,*,wall=None,monotonic=None):
         self.path=root/'recording-validation.sqlite3';self.recordings=recordings;self.native=native;self.runtime=runtime
         self.wall=wall or time.time;self.monotonic=monotonic or time.monotonic
-        self.lock=threading.RLock();self.closed=threading.Event();self.thread=None;self.starts={};self.ticks={};self.available=True
+        self.lock=threading.RLock();self.closed=threading.Event();self.thread=None;self.starts={};self.ticks={};self.available=True;self.environment=None
         try:
             with self.connect() as db:
                 db.executescript('''PRAGMA journal_mode=WAL;
@@ -64,11 +64,15 @@ class RecordingValidation:
                 if existing:
                     if existing['rid']==rid and existing['target']==target:return self.get(existing['id'])
                     raise ValueError('已有观察正在进行，请先停止该观察')
+                from .recording_acceptance import environment
+                capture_environment=(self.environment or environment)()
                 cid=uuid.uuid4().hex;now=self.wall()
-                db.execute('INSERT INTO checks VALUES(?,?,?,?,?,?,?,?)',(cid,rid,'observing',target,now,now,0,json.dumps({'sample_count':0,'flags':{},'end_reason':None})))
+                db.execute('INSERT INTO checks VALUES(?,?,?,?,?,?,?,?)',(cid,rid,'observing',target,now,now,0,json.dumps({'sample_count':0,'flags':{},'end_reason':None,'capture_environment':capture_environment})))
                 old=[r[0] for r in db.execute("SELECT id FROM checks WHERE state!='observing' ORDER BY started DESC LIMIT -1 OFFSET 19")]
                 for key in old:
-                    for table in ('samples','markers'):db.execute(f'DELETE FROM {table} WHERE check_id=?',(key,))
+                    for table in ('samples','markers','acceptance_reviews'):
+                        if table=='acceptance_reviews' and not db.execute("SELECT 1 FROM sqlite_master WHERE name='acceptance_reviews'").fetchone():continue
+                        db.execute(f'DELETE FROM {table} WHERE check_id=?',(key,))
                     db.execute('DELETE FROM checks WHERE id=?',(key,))
             self.starts[cid]=self.monotonic();self.ticks[cid]=self.starts[cid]
             self.sample()

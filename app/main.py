@@ -2,6 +2,7 @@
 from .task_management import register_task_management
 from .model_preferences import register_model_preferences
 from .runtime_management import register_runtime_management
+from .recording_acceptance import RecordingAcceptance,register_acceptance
 import os
 from pathlib import Path
 from fastapi import FastAPI
@@ -107,7 +108,10 @@ def _create_app(data_dir=None,start_worker=True):
         setattr(app.state,name,getattr(services,name))
     register_local_only(app)
     register_onboarding(app,store,native_capture,capture_probes)
-    register_runtime_management(app,store,native_capture,resident,capture_probes,recording_runtime,resources,live_sessions)
+    acceptance=RecordingAcceptance(recording_validation)
+    app.state.recording_acceptance=acceptance
+    register_acceptance(app,acceptance)
+    register_runtime_management(app,store,native_capture,resident,capture_probes,recording_runtime,resources,live_sessions,acceptance)
     register_model_preferences(app,store)
     register_task_management(app,store,worker,resources)
     register_recording_validation(app,recording_validation)

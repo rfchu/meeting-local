@@ -1,3 +1,4 @@
+import AcceptanceReviewPanel from "./AcceptanceReviewPanel";
 import ObservationTimeline from "./ObservationTimeline";
 import {
   observationMarkers as markers,
@@ -63,6 +64,15 @@ const stages: Record<string, string> = {
   timeline_limit: "时间轴长度限制",
   unknown: "未识别",
 };
+function AcceptanceDetails({ id }: { id: string }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <details onToggle={(event) => setOpen(event.currentTarget.open)}>
+      <summary>回听与设备验收核对</summary>
+      {open && <AcceptanceReviewPanel id={id} />}
+    </details>
+  );
+}
 export default function RecordingValidationPanel() {
   const client = useQueryClient();
   const [now, setNow] = useState(Date.now() / 1000);
@@ -295,6 +305,7 @@ export default function RecordingValidationPanel() {
                 </button>
               </>
             )}
+            {item.state !== "observing" && <AcceptanceDetails id={item.id} />}
             <button
               disabled={busy || checks.isError}
               onClick={() =>
