@@ -1549,7 +1549,6 @@ export default function App() {
                         onRefresh={async () =>
                           setMeeting(await api.meeting(meeting.id))
                         }
-                        toast={toast}
                       />
                     </div>
                   </div>

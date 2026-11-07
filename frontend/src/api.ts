@@ -155,6 +155,13 @@ const recordingCommands = new RecordingCommandClient(
     error.code !== "command_unconfirmed",
 );
 
+type AudiencePreviewInput = {
+  artifact_id: string;
+  audience: "internal" | "external";
+  selection: string[];
+  include_citations: boolean;
+};
+
 export const api = {
   handoffSources: (mid: string, artifactId?: string, offset = 0) =>
     request<HandoffSources>(
@@ -744,19 +751,22 @@ export const api = {
     request(`/meetings/${mid}/tasks/${tid}/carry`, json("POST")),
   unlinkTask: (mid: string, tid: string) =>
     request(`/meetings/${mid}/tasks/${tid}/link`, { method: "DELETE" }),
-  audiencePreview: (
-    mid: string,
-    body: {
-      artifact_id: string;
-      audience: "internal" | "external";
-      selection: string[];
-      include_citations: boolean;
-    },
-  ) =>
+  audiencePreview: (mid: string, body: AudiencePreviewInput) =>
     request<{
       candidates: { id: string; label: string; content: string }[];
       markdown: string;
+      fingerprint: string;
+      can_finalize: boolean;
     }>(`/meetings/${mid}/minutes/audience-preview`, json("POST", body)),
+  finalizeAudience: (
+    mid: string,
+    body: AudiencePreviewInput,
+    fingerprint: string,
+  ) =>
+    request<import("./types").MinutesDelivery>(
+      `/meetings/${mid}/minutes/audience-finalize`,
+      json("POST", { ...body, fingerprint, confirmed: true }),
+    ),
   deliveryReadiness: (mid: string, includeCitations: boolean) =>
     request<DeliveryReadiness>(
       `/meetings/${mid}/minutes/delivery-readiness?include_citations=${includeCitations}`,

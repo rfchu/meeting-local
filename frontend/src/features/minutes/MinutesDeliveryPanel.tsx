@@ -12,7 +12,6 @@ export default function MinutesDeliveryPanel({
   dirty,
   includeCitations,
   onRefresh,
-  toast,
   focusRequested = false,
   onFocused,
   onNavigate,
@@ -25,10 +24,7 @@ export default function MinutesDeliveryPanel({
   dirty: boolean;
   includeCitations: boolean;
   onRefresh: () => Promise<void>;
-  toast: (s: string) => void;
 }) {
-  const [confirmed, setConfirmed] = useState(false),
-    [busy, setBusy] = useState(false);
   const [open, setOpen] = useState(false);
   const details = useRef<HTMLDetailsElement>(null);
   useEffect(() => {
@@ -60,17 +56,8 @@ export default function MinutesDeliveryPanel({
     viewCurrent && value?.minutes_review_state === "done" && value.can_finalize
       ? value.current_delivery_id
       : null;
-  const [confirmedFingerprint, setConfirmedFingerprint] = useState("");
-  useEffect(() => {
-    setConfirmed(false);
-    setConfirmedFingerprint("");
-  }, [value?.fingerprint, viewCurrent]);
   const adopted = currentMinutes(meeting);
   const qualityAttention = recordingQualityAttention(meeting.recording_quality);
-  useEffect(
-    () => setConfirmed(false),
-    [selectedId, meeting.active_minutes_id, dirty, includeCitations],
-  );
   const eligible = !!adopted && selectedId === adopted.id && !dirty;
   const deliveries = meeting.deliveries || [];
   const link = (id: string, format: string) =>
@@ -87,7 +74,7 @@ export default function MinutesDeliveryPanel({
           {deliveries.length ? ` · ${deliveries.length} 个已确认版本` : ""}
         </summary>
         <p>
-          最后确认会同时保存“纪要已核对”记录和交付快照；固定当前采用稿、原文引用及跟进状态。保存和导出都不表示已经发送。
+          最后确认会同时保存“纪要已核对”记录和交付快照；按受众保存独立版本。
         </p>
         {qualityAttention && (
           <p className="health-warning" role="status">
@@ -134,7 +121,7 @@ export default function MinutesDeliveryPanel({
             {value.can_finalize && (
               <p role="status">
                 {currentDeliveryId
-                  ? "当前检查对应的交付版本已保存，可直接预览或导出。"
+                  ? "当前采用稿已有内部交付版本。"
                   : "前序核对已完成。核对下方内容后，确认并保存本次交付版本。"}
               </p>
             )}
@@ -146,85 +133,18 @@ export default function MinutesDeliveryPanel({
             meetingId={meeting.id}
             artifactId={adopted.id}
             includeCitations={includeCitations}
-          />
-        )}
-        <label>
-          <input
-            type="checkbox"
-            disabled={
-              !eligible ||
-              !viewCurrent ||
-              readiness.isError ||
-              !value?.can_finalize ||
-              !!currentDeliveryId ||
-              busy ||
-              readiness.isFetching
-            }
-            checked={confirmed}
-            onChange={(e) => {
-              setConfirmed(e.target.checked);
-              setConfirmedFingerprint(
-                e.target.checked ? value?.fingerprint || "" : "",
-              );
-            }}
-          />
-          已核对当前采用稿、参会人、负责人、期限及本次提示，确认保存
-        </label>
-        <button
-          className="primary"
-          disabled={
-            !eligible ||
-            !viewCurrent ||
-            readiness.isError ||
-            !value?.can_finalize ||
-            !!currentDeliveryId ||
-            !confirmed ||
-            confirmedFingerprint !== value?.fingerprint ||
-            busy ||
-            readiness.isFetching
-          }
-          onClick={async () => {
-            if (
-              !adopted ||
-              !value ||
-              !viewCurrent ||
-              readiness.isError ||
-              confirmedFingerprint !== value.fingerprint
-            )
-              return;
-            setBusy(true);
-            try {
-              await api.finalizeDelivery(
-                meeting.id,
-                adopted.id,
-                value.fingerprint,
-                includeCitations,
-              );
-              setConfirmed(false);
+            onSaved={async () => {
               await readiness.refetch();
               await onRefresh();
-              toast("交付版本已保存，可以导出。");
-            } catch (e) {
-              setConfirmed(false);
-              await readiness.refetch();
-              toast((e as Error).message);
-            } finally {
-              setBusy(false);
-            }
-          }}
-        >
-          {busy
-            ? "正在保存…"
-            : currentDeliveryId
-              ? "当前交付版本已保存"
-              : "确认核对并保存交付版本"}
-        </button>
+            }}
+          />
+        )}
         {deliveries.length > 0 && <h4>已保存版本 · 历史快照保持不变</h4>}
         {deliveries.map((d, i) => (
           <article className="delivery-row" key={d.id}>
             <div>
               <strong>
-                {d.title}{" "}
+                {d.title} · {d.audience === "external" ? "对外版" : "内部版"}{" "}
                 {currentDeliveryId === d.id ? "· 当前交付" : "· 历史快照"}
               </strong>
               <small>

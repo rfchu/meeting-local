@@ -140,6 +140,7 @@ export interface NoteExpansion {
   evidence: { segment_id: string; quote: string }[];
 }
 export interface MinutesDelivery {
+  audience?: "internal" | "external";
   id: string;
   artifact_id: string;
   created: string;

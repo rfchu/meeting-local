@@ -76,10 +76,62 @@ def audience_projection(db, mid, body):
     return payload, []
 
 
+def audience_snapshot(db, mid, body):
+    payload, candidates = audience_projection(db, mid, body)
+    checks = snapshot(db, mid, payload['include_citations'])
+    payload.update(audience=body.audience, selection=sorted(set(body.selection)))
+    from .job_checkpoints import digest
+    fingerprint = digest([checks['fingerprint'], payload, candidates])
+    return payload, candidates, checks, fingerprint
+
+
 def audience_preview(store, mid, body):
     from .minutes import MeetingMinutes, minutes_markdown
     with store.connect() as db:
         db.execute('BEGIN')
-        payload, candidates = audience_projection(db, mid, body)
-        return {'candidates': candidates, 'markdown': minutes_markdown(
-            MeetingMinutes.model_validate(payload['document']), payload['segments'], payload['include_citations'])}
+        payload, candidates, checks, fingerprint = audience_snapshot(db, mid, body)
+        return {
+            'candidates': candidates,
+            'markdown': minutes_markdown(MeetingMinutes.model_validate(payload['document']),
+                                         payload['segments'], payload['include_citations']),
+            'fingerprint': fingerprint,
+            'can_finalize': checks['can_finalize'] and (body.audience == 'internal' or bool(body.selection)),
+        }
+
+
+def finalize_audience(store, mid, body):
+    if not body.confirmed:
+        raise ValueError('请确认已核对本次预览')
+    selection = sorted(set(body.selection))
+    if body.audience == 'external' and not selection:
+        raise ValueError('请至少选入一项对外内容')
+    with store.connect() as db:
+        db.execute('BEGIN IMMEDIATE')
+        previous = db.execute("""
+            SELECT * FROM minutes_deliveries WHERE meeting_id=? AND artifact_id=?
+            AND json_extract(payload,'$.review_token')=?
+            AND json_extract(payload,'$.audience')=?
+        """, (mid, body.artifact_id, body.fingerprint, body.audience)).fetchone()
+        if previous:
+            saved = json.loads(previous['payload'])
+            if saved['selection'] == selection and saved['include_citations'] == (body.audience == 'internal' and body.include_citations):
+                return {**minutes_delivery.public(previous), 'reused': True}
+        payload, _, checks, fingerprint = audience_snapshot(db, mid, body)
+        if body.fingerprint != fingerprint:
+            raise ValueError('交付预览已变化，请重新预览后确认')
+        if not checks['can_finalize']:
+            raise ValueError(checks['blockers'][0]['label'])
+        review = checks['review']
+        confirmation = {step: review['steps'][step]['fingerprint'] for step in ('transcript','speakers','minutes')}
+        payload.update(task_sources=minutes_delivery.task_sources(db,mid), review_confirmation=confirmation)
+        existing = minutes_delivery.matching(db, mid, body.artifact_id, payload, review=review)
+        if existing:
+            saved = db.execute('SELECT * FROM minutes_deliveries WHERE id=?', (existing[0],)).fetchone()
+            return {**minutes_delivery.public(saved), 'reused': True}
+        db.execute("""
+            INSERT INTO meeting_reviews(meeting_id,step,fingerprint,decision) VALUES(?,'minutes',?,'confirmed')
+            ON CONFLICT(meeting_id,step) DO UPDATE SET fingerprint=excluded.fingerprint,
+            decision='confirmed',reviewed_at=CURRENT_TIMESTAMP
+        """, (mid, confirmation['minutes']))
+        return {**minutes_delivery.persist(db,mid,body.artifact_id,{**payload,'review_token':body.fingerprint}),
+                'reused':False}

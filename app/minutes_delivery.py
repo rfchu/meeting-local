@@ -46,8 +46,33 @@ def matching(db,mid,aid,payload,exact_citations=True,review=None):
             if source_checks is None:source_checks=task_sources(db,mid)
             if saved['task_sources']!=source_checks:continue
         if confirmation and review and any(confirmation.get(step)!=review['steps'][step]['fingerprint'] or review['steps'][step]['state']!='done' for step in ('transcript','speakers','minutes')):continue
+        if saved.get('audience','internal') != payload.get('audience','internal'):continue
+        if saved.get('selection',[]) != payload.get('selection',[]):continue
         if all(saved.get(key)==payload.get(key) for key in keys):result.append(row['id'])
     return result
+
+
+def current_external(db, mid, aid, payload, review):
+    if not payload:
+        return None
+    steps = ('transcript', 'speakers', 'minutes')
+    if any(review['steps'][step]['state'] != 'done' for step in steps):
+        return None
+    confirmation = {step: review['steps'][step]['fingerprint'] for step in steps}
+    for row in db.execute("""
+        SELECT id,payload FROM minutes_deliveries WHERE meeting_id=? AND artifact_id=?
+        AND json_extract(payload,'$.audience')='external' ORDER BY rowid DESC
+    """, (mid, aid)):
+        saved = json.loads(row['payload'])
+        if saved['review_confirmation'] != confirmation or saved['task_sources'] != task_sources(db, mid):
+            continue
+        try:
+            projected, _ = external_projection(db, mid, payload, saved['selection'])
+        except ValueError:
+            continue
+        if all(saved.get(key) == value for key, value in projected.items()):
+            return row['id']
+    return None
 
 
 def create(store,mid,aid,include_citations,confirmed):
@@ -61,6 +86,7 @@ def public(row):
     payload=json.loads(row['payload'])
     return {'id':row['id'],'artifact_id':row['artifact_id'],'created':row['created'],
             'title':payload['document']['title'],'revision':payload['revision'],
+            'audience':payload.get('audience','internal'),
             'include_citations':payload['include_citations'],'task_status':payload['task_status']}
 
 

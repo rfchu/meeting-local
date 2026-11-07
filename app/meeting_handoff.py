@@ -72,6 +72,9 @@ def snapshot(db,mid,quality=None):
     try:delivery_payload=minutes_delivery.prepare(db,mid,chosen['id'],False) if valid else None
     except ValueError:delivery_payload=None
     matching=minutes_delivery.matching(db,mid,chosen['id'],delivery_payload,exact_citations=False,review=review) if valid else []
+    if valid and not matching:
+        external=minutes_delivery.current_external(db,mid,chosen['id'],delivery_payload,review)
+        if external:matching=[external]
     delivered=bool(matching and all(review['steps'][step]['state']=='done' for step in ('transcript','speakers','minutes')))
     stages=[]
     def stage(key,label,state,summary,counts,**source):

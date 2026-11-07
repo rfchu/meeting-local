@@ -183,3 +183,44 @@ def test_external_preview_is_empty_by_default_and_filters_internal_material(setu
     assert all(word not in selected['markdown'] for word in ('PRIVATE-','00:00','周五提交材料'))
     assert 'PRIVATE-TITLE' in audience_preview(setup,audience='internal').json()['markdown']
     assert not s.all('SELECT * FROM minutes_deliveries')
+
+
+def confirm_audience(f, fingerprint, **patch):
+    return f[0].post(f'/api/meetings/{f[2]}/minutes/audience-finalize',json={
+        'artifact_id':f[3], 'audience':'external', 'selection':['overview:0'],
+        'fingerprint':fingerprint, 'confirmed':True, **patch})
+
+
+def test_audiences_confirm_independently_and_replay_is_idempotent(setup):
+    confirm(setup)
+    internal = audience_preview(setup,audience='internal').json()['fingerprint']
+    external = audience_preview(setup,selection=['overview:0']).json()['fingerprint']
+    assert confirm_audience(setup,external,audience='internal',selection=[]).status_code==409
+    assert confirm_audience(setup,external,selection=[]).status_code==409
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        responses=list(pool.map(lambda _:confirm_audience(setup,external),range(2)))
+    assert all(r.status_code==201 for r in responses)
+    assert len({r.json()['id'] for r in responses})==1
+    assert sorted(r.json()['reused'] for r in responses)==[False,True]
+    assert handoff(setup)['primary']['code']=='preview'
+    assert confirm_audience(setup,internal,audience='internal',selection=[]).status_code==409
+    internal = audience_preview(setup,audience='internal').json()['fingerprint']
+    saved = confirm_audience(setup,internal,audience='internal',selection=[])
+    assert saved.status_code==201,saved.text
+    assert saved.json()['id']!=responses[0].json()['id']
+    fresh=audience_preview(setup,selection=['overview:0']).json()['fingerprint']
+    assert confirm_audience(setup,fresh).json()['id']==responses[0].json()['id']
+    assert len(setup[1].all('SELECT id FROM minutes_deliveries'))==2
+    history=setup[0].get(f'/api/meetings/{setup[2]}').json()['deliveries']
+    assert {row['audience'] for row in history}=={'internal','external'}
+
+
+def test_late_audience_confirmation_rejects_changed_adoption(setup):
+    _,s,m,_,doc=setup
+    confirm(setup)
+    preview=audience_preview(setup,selection=['overview:0']).json()
+    with s.connect() as db:
+        new=minutes_versions.publish_draft(db,m,1,doc,{})
+        minutes_versions.adopt(db,m,new)
+    assert confirm_audience(setup,preview['fingerprint']).status_code==409
+    assert not s.all('SELECT * FROM minutes_deliveries')

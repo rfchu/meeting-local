@@ -302,6 +302,11 @@ class AudiencePreviewInput(BaseModel):
     include_citations: bool = False
 
 
+class AudienceFinalizeInput(AudiencePreviewInput):
+    fingerprint: str = Field(pattern=r'^[a-f0-9]{64}$')
+    confirmed: bool = False
+
+
 class DeliveryFinalizeInput(DeliveryInput):
     fingerprint: str=Field(pattern=r'^[a-f0-9]{64}$')
 
