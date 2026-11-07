@@ -150,6 +150,32 @@ def test_analysis_json_reads_reasoning_field_and_downgrades_format(monkeypatch):
     assert payloads[1]['response_format']['type']=='json_object'
 
 
+@pytest.mark.parametrize('malformed_first',[False,True])
+def test_interview_minutes_uses_its_own_shape_and_preserves_it_on_retry(malformed_first):
+    from app.analysis import LMStudioProvider
+    from app.interview import response_schema
+    from scripts.lmstudio_analyze import complete_json
+
+    basic=LMStudioProvider._ai_minutes_response_format({'s1'},set())['json_schema']['schema']['properties']['basic_info']
+    format_spec=response_schema({'s1'},basic)
+    result={'basic_info':{'topic':'面试','meeting_form':'','attendees':[],'purpose':'','source_segment_ids':[]},
+            'interview':{'background':[],'qa':[],'competencies':[],'concerns':[],'followups':[],
+                         'summary':[{'content':'介绍项目','evidence':[{'segment_id':'s1','quote':'介绍项目'}]}]}}
+    requests=[]
+    def request(_url,_headers,payload):
+        requests.append(payload)
+        body={'basic_info':result['basic_info']} if malformed_first and len(requests)==1 else result
+        return {'choices':[{'finish_reason':'stop','message':{'content':json.dumps(body)}}]}
+
+    assert complete_json('http://localhost',{}, {'response_format':format_spec,'messages':[]},
+                         requester=request)==result
+    assert len(requests)==(2 if malformed_first else 1)
+    if malformed_first:
+        correction=requests[1]['messages'][-1]['content']
+        assert '缺少结构化面试纪要' in correction
+        assert '"question_evidence"' in correction
+
+
 def test_llm_config_crud_hides_secret_and_binds_analysis_job(client):
     local={'name':'本机模型','provider_type':'local','base_url':'http://127.0.0.1:1234/v1',
         'model':'qwen-local','api_key':'local-secret','is_default':True,'context_window':262144}

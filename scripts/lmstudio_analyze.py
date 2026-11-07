@@ -54,6 +54,17 @@ def validate_shape(result,schema_name='meeting_analysis'):
         if not isinstance(result,dict) or not isinstance(result.get('suggestions'),list):
             raise ValueError('缺少发言人建议列表')
         return result
+    if schema_name=='interview_minutes':
+        basic_info=result.get('basic_info') if isinstance(result,dict) else None
+        if not isinstance(basic_info,dict) or not isinstance(basic_info.get('topic'),str) or not basic_info['topic'].strip():
+            raise ValueError('面试纪要缺少会议主题（basic_info.topic）')
+        interview=result.get('interview')
+        if not isinstance(interview,dict):
+            raise ValueError('缺少结构化面试纪要（interview）')
+        for name in ('background','qa','competencies','concerns','followups','summary'):
+            if not isinstance(interview.get(name),list):
+                raise ValueError(f'面试纪要缺少数组栏目（interview.{name}）')
+        return result
     if schema_name=='ai_meeting_minutes':
         if not isinstance(result,dict) or not isinstance(result.get('basic_info'),dict):
             raise ValueError('缺少会议基本信息')
@@ -118,7 +129,8 @@ def native_minutes_requester():
 
 def complete_json(url,headers,payload,attempts=3,requester=None):
     current=dict(payload);diagnostics=[]
-    schema_name=payload.get('response_format',{}).get('json_schema',{}).get('name','meeting_analysis')
+    schema_spec=payload.get('response_format',{}).get('json_schema',{})
+    schema_name=schema_spec.get('name','meeting_analysis')
     for attempt in range(attempts):
         response=(requester or request_compatible)(url,headers,current)
         choice=(response.get('choices') or [{}])[0]
@@ -126,13 +138,17 @@ def complete_json(url,headers,payload,attempts=3,requester=None):
         try:return validate_shape(extract_json(response),schema_name)
         except (json.JSONDecodeError,ValueError) as error:
             diagnostics.append({'attempt':attempt+1,'finish_reason':choice.get('finish_reason'),
-                'fields':{key:len(value) for key,value in candidates},'error':type(error).__name__})
+                'fields':{key:len(value) for key,value in candidates},
+                'error':error.msg if isinstance(error,json.JSONDecodeError) else str(error)})
             if attempt+1>=attempts:break
             current=dict(current);current['temperature']=0;current['max_tokens']=int(payload.get('max_tokens',2048)) if schema_name in ('retrieval_answer','meeting_terms','meeting_overview') else min(16384,max(8192,int(current.get('max_tokens',4096))*2))
             response_type=current.get('response_format',{}).get('type')
             if response_type=='json_schema':current['response_format']={'type':'json_object'}
             elif response_type=='json_object':current.pop('response_format',None)
-            current['messages']=[*current.get('messages',[]),{'role':'user','content':'/no_think\n上一份输出不是完整、有效的 JSON。请重新生成更短的完整 JSON；不要解释，不要使用 Markdown。'}]
+            correction='/no_think\n上一份输出未通过校验：'+diagnostics[-1]['error']+'。请重新生成完整 JSON；不要解释，不要使用 Markdown。'
+            if schema_name=='interview_minutes' and schema_spec.get('schema'):
+                correction+='\n请保留面试纪要结构，无依据的栏目返回空数组：'+json.dumps(schema_spec['schema'],ensure_ascii=False)
+            current['messages']=[*payload.get('messages',[]),{'role':'user','content':correction}]
     raise RuntimeError('模型连续返回不完整或不符合结构的 JSON：'+json.dumps(diagnostics,ensure_ascii=False))
 
 def main():
