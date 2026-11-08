@@ -342,8 +342,25 @@ export default function LiveDraftList({
                   </small>
                 )}
               </b>
-              <p>{track.text}</p>
-              <small>临时文字 · 待确认</small>
+              <p>
+                {track.stable_text &&
+                track.text.startsWith(track.stable_text) ? (
+                  <>
+                    <span className="live-stable-prefix">
+                      {track.stable_text}
+                    </span>
+                    <span>{track.text.slice(track.stable_text.length)}</span>
+                  </>
+                ) : (
+                  track.text
+                )}
+                <span className="stream-caret" aria-hidden="true" />
+              </p>
+              <small>
+                {track.stable_text
+                  ? "前缀趋稳 · 尾部可修订"
+                  : "临时文字 · 待确认"}
+              </small>
             </article>
           ))
         ) : partial?.text ? (

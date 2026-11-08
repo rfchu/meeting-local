@@ -198,7 +198,7 @@ class LiveSessions:
         return {'continuation_id':last['continuation_id'] if linked else rid+':'+str(start),
                 'continues_previous':linked,'continues_next':window.get('boundary_reason')=='hard_limit',
                 'boundary_reason':window.get('boundary_reason','standard')}
-    async def recognize_tracks(self,rid,config,window,on_partial=None):
+    async def recognize_tracks(self,rid,config,window,on_partial=None,previous_tracks=None):
         """Preview each track independently, then persist the reconciled window."""
         payloads=window.pop('track_payloads')
         engine=config['engine']
@@ -226,9 +226,18 @@ class LiveSessions:
                 original_mic=payloads['microphone']
                 payloads['microphone']=await asyncio.to_thread(reduce_echo_wav,payloads['system'],payloads['microphone'])
                 for track,payload in payloads.items():
+                    previous_track=(previous_tracks or {}).get(track,{})
+                    continuation={
+                        'key':f"{rid}:{round(window['offset']*RATE)}:{track}",
+                        'enabled':config.get('prefix_enabled',True) and config.get('responsive',False),
+                        'confirmed':confirmed,
+                        'previous_text':previous_track.get('text',''),
+                        'stable_text':previous_track.get('stable_text',''),
+                    }
                     common=(provider,self.cache,self.asr_lock,payload,window['offset'],rid,'native',self.store.root,window)
                     iterator=(whisper_events(*common,persist=False) if engine=='whisper'
-                              else qwen_events(*common,resident=self.resident,confirmed=confirmed,context_enabled=False,persist=False))
+                              else qwen_events(*common,resident=self.resident,confirmed=confirmed,context_enabled=False,
+                                               continuation=continuation,persist=False))
                     last_sent=0
                     async with aclosing(iterator):
                         async for line in iterator:
@@ -277,6 +286,7 @@ class LiveSessions:
     async def run(self,rid):
         previous='';stable='';preview_end=0;preview_start=None;next_target=3;errors=0
         dual_preview={}
+        previous_tracks={}
         saved_metrics=json.loads(self.row(rid)['metrics']);totals=dict(saved_metrics.get('decoder_totals',{}))
         break_at=saved_metrics.get('continuation_break_at',-1)
         load=saved_metrics.get('load',{});resource_notice=0
@@ -326,6 +336,7 @@ class LiveSessions:
                 if preview_start!=start:
                     previous='';stable='';preview_end=0;preview_start=start
                     dual_preview.clear()
+                    previous_tracks.clear()
                 end=round(window['next_offset']*RATE)
                 if end<=preview_end and not window['confirmed']:
                     await asyncio.sleep(.3);continue
@@ -340,11 +351,14 @@ class LiveSessions:
                         old=dual_preview.get(track,{})
                         if len(part['text'])<len(old.get('text','')) and part['end']>=old.get('end',0):
                             return
+                        if config['engine']=='qwen' and config['responsive']:
+                            prefix=previous_tracks.get(track,{}).get('stable_text','')
+                            part=dict(part,stable_text=prefix if part['text'].startswith(prefix) else '')
                         dual_preview[track]=part
                         partial=self.track_preview(window,dual_preview)
                         self.checkpoint(rid,partial=partial)
                         self.emit(rid,'partial',partial=partial)
-                    result,failure=await self.recognize_tracks(rid,config,window,publish_track)
+                    result,failure=await self.recognize_tracks(rid,config,window,publish_track,previous_tracks)
                 else:
                     if config.get('engine','qwen')=='qwen':window.update(self.continuation(rid,window,break_at))
                     payload=window.pop('payload');window.pop('silent',None);result=None;failure=None;last_sent=0
@@ -404,6 +418,10 @@ class LiveSessions:
                             else:
                                 dual_preview[track]['text']+=' '+part['text']
                                 dual_preview[track]['end']=part['end']
+                        if config['engine']=='qwen' and config['responsive']:
+                            for track,part in dual_preview.items():
+                                part['stable_text']=stable_prefix(previous_tracks.get(track,{}).get('text',''),part['text'])
+                            previous_tracks=dict(dual_preview)
                         partial=self.track_preview(window,dual_preview)
                     else:
                         partial={'start':window['offset'],'end':window['next_offset'],'text':text,'stable_text':stable,**{k:window[k] for k in ('continuation_id','continues_previous','continues_next','boundary_reason')}}

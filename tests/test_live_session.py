@@ -293,3 +293,46 @@ def test_dual_preview_is_ephemeral_and_deduplicated_only_at_confirmation(tmp_pat
                 assert not any('live_range_id' in part for part in result['segments'])
             drafts.clear()
     asyncio.run(run())
+
+
+def test_dual_supervisor_revises_each_track_without_sharing_prefix(tmp_path,monkeypatch):
+    async def run():
+        manager,recordings,rid,_,_=setup(tmp_path)
+        folder=recordings.folder(rid)
+        recordings.write(folder/'session.json',recordings.read(rid)|{'source':'macos','include_microphone':True})
+        track_text={'system':'线上同事正在讨论项目下周发布的时间安排',
+                    'microphone':'现场同事正在核对明天提交的材料和清单'}
+        calls=[]
+
+        class TrackResident:
+            supports_continuation=True
+
+            async def generate(self,provider,path,context='',continuation=None):
+                track=continuation['key'].rsplit(':',1)[-1]
+                with wave.open(str(path),'rb') as wav:duration=wav.getnframes()/16000
+                calls.append((track,continuation))
+                text=track_text[track]+('还要确认日期' if duration<=3 else '日期已经确认')
+                yield {'type':'qwen_partial','text':text}
+                yield {'type':'qwen_final','segments':[{'start':0,'end':duration,'text':text}]}
+
+        manager.resident=TrackResident()
+        capture={'state':'recording','duration':3}
+        monkeypatch.setattr(manager.native,'status',lambda *args,**kwargs:dict(capture,system_frames=capture['duration']*16000,microphone_frames=capture['duration']*16000))
+        monkeypatch.setattr('app.track_audio.reduce_echo_wav',lambda _,microphone:microphone)
+        for name in track_text:
+            (folder/f'{name}.pcm').write_bytes(b'\x70\x17'*16000*7)
+        try:
+            await manager.start(rid,CONFIG)
+            await until(lambda:len(json.loads(manager.row(rid)['partial']).get('tracks',[]))==2)
+            capture['duration']=5
+            await until(lambda:all(
+                part.get('stable_text') and part['text'].endswith('日期已经确认')
+                for part in json.loads(manager.row(rid)['partial']).get('tracks',[])
+            ) and len(calls)>=4)
+            for track,continuation in calls[2:4]:
+                assert continuation['previous_text']==track_text[track]+'还要确认日期'
+            preview=manager.snapshot(rid)['partial']['tracks']
+            assert {part['source_track']:part['stable_text'] for part in preview}==track_text
+            assert not manager.cache.snapshot(rid,'qwen')
+        finally:await manager.close()
+    asyncio.run(run())

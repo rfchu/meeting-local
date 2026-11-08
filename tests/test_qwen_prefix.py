@@ -27,14 +27,26 @@ def test_final_changed_audio_context_session_or_disabled_option_never_reuses_pre
         (base|{'previous_text':'stale text'},b'abcdefghi','context')]:
         assert history.choose(tokenizer,req,audio,context)==[]
     history.update(base|{'confirmed':True},b'abcdefghi','context',text)
-    assert history.last is None
+    assert not history.entries
 
 def test_process_restart_or_changed_waveform_resets_prefix_warmup():
     history,text=prepared();history.clear()
     assert history.choose(Tokenizer(),request(previous_text=text,stable_text=text[:-6]),b'abcdefghi','context')==[]
     history.update(request(),b'first','context',text)
     history.update(request(),b'changed','context',text)
-    assert history.last['rounds']==1
+    assert history.entries[request()['key']]['rounds']==1
+
+def test_interleaved_tracks_keep_independent_prefixes():
+    history=PrefixHistory()
+    system='电脑声音正在讨论下周的产品交付和上线计划'
+    microphone='现场发言正在核对明天需要准备的会议材料'
+    for audio in (b'a',b'ab'):
+        history.update(request(key='system'),audio,'',system)
+        history.update(request(key='microphone'),audio,'',microphone)
+    for track,text in [('system',system),('microphone',microphone)]:
+        assert history.choose(Tokenizer(),request(key=track,previous_text=text,stable_text=text[:-6]),b'abc','')
+    history.update(request(key='system',confirmed=True),b'abc','',system)
+    assert 'system' not in history.entries and 'microphone' in history.entries
 
 def test_exact_cache_never_returns_different_audio_and_has_one_bounded_entry():
     cache=ExactAudioCache(maximum_bytes=10)

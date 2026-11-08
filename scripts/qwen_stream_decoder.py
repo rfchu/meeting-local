@@ -6,11 +6,12 @@ import hashlib
 from app.languages import UnsupportedAutoLanguage
 
 class PrefixHistory:
-    def __init__(self):self.last=None
+    def __init__(self):
+        self.entries={}
     def choose(self,tokenizer,request,audio_bytes,context,rollback=8):
-        previous=self.last;request=request or {}
+        request=request or {};previous=self.entries.get(request.get('key'))
         if not request.get('enabled') or request.get('confirmed',True) or not previous:return []
-        if previous['key']!=request.get('key') or previous['context']!=context or previous['rounds']<2:return []
+        if previous['context']!=context or previous['rounds']<2:return []
         if len(audio_bytes)<=len(previous['audio']) or not audio_bytes.startswith(previous['audio']):return []
         stable=request.get('stable_text','');text=previous['text']
         if not stable or not text.startswith(stable) or request.get('previous_text')!=text:return []
@@ -22,11 +23,14 @@ class PrefixHistory:
         return []
     def update(self,request,audio_bytes,context,text):
         request=request or {};key=request.get('key')
-        if not key or request.get('confirmed',True):self.last=None;return
-        previous=self.last
-        growing=previous and previous['key']==key and previous['context']==context and len(audio_bytes)>len(previous['audio']) and audio_bytes.startswith(previous['audio'])
-        self.last={'key':key,'audio':audio_bytes,'context':context,'text':text,'rounds':previous['rounds']+1 if growing else 1}
-    def clear(self):self.last=None
+        if not key:self.clear();return
+        previous=self.entries.pop(key,None)
+        if request.get('confirmed',True):return
+        growing=previous and previous['context']==context and len(audio_bytes)>len(previous['audio']) and audio_bytes.startswith(previous['audio'])
+        self.entries[key]={'audio':audio_bytes,'context':context,'text':text,'rounds':previous['rounds']+1 if growing else 1}
+        if len(self.entries)>2:self.entries.pop(next(iter(self.entries)))
+    def clear(self):
+        self.entries.clear()
 
 class ExactAudioCache:
     def __init__(self,maximum_bytes=64*1024*1024):
