@@ -52,8 +52,10 @@ with (app/'Contents/Info.plist').open('wb') as f:
     info['NSMicrophoneUsageDescription']='听记仅在你开启麦克风录音时采集声音，用于保存现场音轨和生成会议文字。'
     if os.getenv('TINGJI_PORTABLE_RUNTIME_SOURCE'):
         info['TingjiPortableRuntime']=True
-        if os.getenv('TINGJI_INTERNAL_BUILD') == '1':
-            info['CFBundleVersion']='6'
+        if build := os.getenv('TINGJI_INTERNAL_BUILD'):
+            if not build.isascii() or not build.isdecimal() or int(build)<6:
+                raise SystemExit('内部构建号无效')
+            info['CFBundleVersion']=build
         config.update(projectRoot='/PortableRuntime/code',dataRoot='/data',backupsRoot='/backups')
         (app/'Contents/Resources/host-config.json').write_text(json.dumps(config,indent=2))
         info['CFBundleDisplayName']='听记独立工作台'

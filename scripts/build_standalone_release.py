@@ -82,6 +82,9 @@ def build(args):
     if output.exists():
         raise ValueError('Output directory already exists')
     release = bool(args.identity)
+    if args.internal_revision < 1 or (args.internal_revision != 1 and not args.internal):
+        raise ValueError('Internal revision requires --internal and a positive number')
+    package_version = f'0.4.0-internal.{args.internal_revision}'
     if args.internal and release:
         raise ValueError('Internal and Developer ID modes are separate')
     if release and not identity_available(args.identity):
@@ -113,7 +116,7 @@ def build(args):
         for name in ('PORT', 'MEETING_DATA', 'MEETING_BACKUPS', 'TINGJI_HOST_STATE_DIR', 'TINGJI_INTERNAL_BUILD'):
             env.pop(name, None)
         if args.internal:
-            env.update(PORT='18876', TINGJI_INTERNAL_BUILD='1')
+            env.update(PORT='18876', TINGJI_INTERNAL_BUILD=str(5 + args.internal_revision))
         run('/bin/bash', 'scripts/compile_capture.sh', env=env | {
             'TINGJI_CAPTURE_STANDALONE_BUILD': '1', 'TINGJI_CAPTURE_COMPILE_APP': str(helper)})
         run('/bin/bash', 'scripts/compile_host.sh', env=env | {
@@ -146,7 +149,7 @@ def build(args):
                     'ffmpeg': ffmpeg.splitlines()[:3], 'native_images': len(images) + 1,
                     'signing': 'developer-id' if release else 'ad-hoc', 'notarized': False}
         if args.internal:
-            evidence.update(channel='internal', package_version='0.4.0-internal.1', port=18876)
+            evidence.update(channel='internal', package_version=package_version, port=18876)
         evidence['source_revision'] = run('/usr/bin/git', 'rev-parse', 'HEAD', text=True).strip()
         evidence['source_has_local_changes'] = bool(run('/usr/bin/git', 'status', '--porcelain'))
         evidence['packages'] = {
@@ -169,7 +172,7 @@ def build(args):
         (contents / 'Applications').symlink_to('/Applications')
         dmg_name = 'Tingji.dmg' if release else 'Tingji-local-sample.dmg'
         if args.internal:
-            dmg_name = 'Tingji-0.4.0-internal.1.dmg'
+            dmg_name = f'Tingji-{package_version}.dmg'
         dmg = work / dmg_name
         run('/usr/bin/hdiutil', 'create', '-volname', 'Tingji', '-srcfolder', contents, '-format', 'UDZO', dmg)
         if release:
@@ -190,7 +193,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('runtime', type=lambda value: Path(value).resolve(strict=True))
     parser.add_argument('output', type=lambda value: Path(value).resolve())
-    parser.add_argument('--internal', action='store_true', help='Build the internal standalone 0.4.0-internal.1 package')
+    parser.add_argument('--internal', action='store_true', help='Build an internal standalone package')
+    parser.add_argument('--internal-revision', type=int, default=1)
     parser.add_argument('--identity', help='Developer ID Application name or certificate SHA-1')
     parser.add_argument('--notary-profile', help='Existing notarytool keychain profile')
     parser.add_argument('--approved-runtime-sha256', help='Fingerprint of the runtime reviewed for redistribution')
