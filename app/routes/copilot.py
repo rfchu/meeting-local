@@ -10,7 +10,6 @@ from starlette.concurrency import run_in_threadpool
 from ..application_services import ApplicationServices
 from ..shorthand import ShorthandSynthesizer
 from ..analysis import OpenAICompatibleProvider
-from ..resources import optional_slot
 from ..model_preferences import resolve_profile
 from ..speculative_intent import (
     SpeculativeDetector,
@@ -128,9 +127,11 @@ def register_routes(app, services: ApplicationServices):
                     if not profile:
                         raise ValueError("未配置本地扩写模型")
                     segments = await synthesis_context(rid, created["captured_at"])
-                    synthesizer = ShorthandSynthesizer(llm_provider=OpenAICompatibleProvider(profile))
-                    with optional_slot(resources, "live_shorthand", "local_llm", ("live_shorthand", rid), legacy=True):
-                        result = await synthesizer.synthesize(clean_text, created["captured_at"], segments, session.get("brief"))
+                    synthesizer = ShorthandSynthesizer(
+                        llm_provider=OpenAICompatibleProvider(profile),
+                        resources=resources, owner=("live_shorthand", rid),
+                    )
+                    result = await synthesizer.synthesize(clean_text, created["captured_at"], segments, session.get("brief"))
 
                     speaker = (
                         result["speakers"][0]
@@ -140,6 +141,7 @@ def register_routes(app, services: ApplicationServices):
                     updated = await run_in_threadpool(
                         recordings.update_note, rid,
                         note_id,
+                        expected_raw=clean_text,
                         status=result["status"],
                         synthesized_text=result["synthesized_text"],
                         anchor_start=result["anchor_start"],
@@ -156,7 +158,9 @@ def register_routes(app, services: ApplicationServices):
                 except (Exception, asyncio.CancelledError) as err:
                     logger.warning("Shorthand synthesis unavailable: %s", type(err).__name__)
                     try:
-                        updated = recordings.update_note(rid, note_id, status="failed")
+                        updated = await run_in_threadpool(
+                            recordings.update_note, rid, note_id, expected_raw=clean_text, status="failed"
+                        )
                         if updated and live_sessions:
                             live_sessions.emit(rid, "note_synthesized", note=updated)
                     except (OSError, ValueError, KeyError):
@@ -174,10 +178,9 @@ def register_routes(app, services: ApplicationServices):
     @app.get("/api/recordings/{rid}/notes/shorthand")
     def shorthand_notes(rid: str):
         try:
-            session = recordings.read(rid)
+            notes = recordings.copilot_notes(rid)
         except (FileNotFoundError, ValueError) as error:
             raise HTTPException(404, "录音会话不存在") from error
-        notes = [note for note in session["notes"] if "status" in note]
         return [
             {**note, "status": "failed"} if note["status"] == "synthesizing"
             and (rid, note["id"]) not in pending_synthesis else note
@@ -255,6 +258,7 @@ def register_routes(app, services: ApplicationServices):
             "note_type": "action" if cand.kind == "todo" else "decision",
             "note_scope": "meeting",
             "speaker_hint": cand.speaker,
+            "shorthand_track": cand.source_track,
             "owner": cand.owner,
             "due_date": cand.due_date,
             "candidate_id": cid,

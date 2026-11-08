@@ -90,3 +90,39 @@ def test_synthesizer_graceful_failure_on_error():
         assert 'Metal memory exhausted' in result['error']
 
     asyncio.run(run_test())
+
+
+def test_cancelled_waiter_keeps_model_lease_until_http_returns(monkeypatch):
+    import asyncio
+    import io
+    import threading
+    from types import SimpleNamespace
+    import urllib.request
+    from app.resources import ResourceScheduler
+
+    entered = threading.Event()
+    release = threading.Event()
+
+    def blocked_open(*args, **kwargs):
+        entered.set()
+        assert release.wait(5)
+        return io.BytesIO(b'{"choices":[{"message":{"content":"{}"}}]}')
+
+    monkeypatch.setattr(urllib.request, "build_opener", lambda *_: SimpleNamespace(open=blocked_open))
+    provider = SimpleNamespace(base_url="http://127.0.0.1:1234/v1", resolve_model=lambda: "test")
+    scheduler = ResourceScheduler()
+    synth = ShorthandSynthesizer(llm_provider=provider, resources=scheduler)
+
+    async def check():
+        task = asyncio.create_task(synth._execute_llm([], {}))
+        try:
+            assert await asyncio.to_thread(entered.wait, 2)
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+            assert scheduler.admission_reason("live_shorthand", {"local_llm": 1}) == "local_llm_busy"
+        finally:
+            release.set()
+
+    asyncio.run(check())
+    assert scheduler.admission_reason("live_shorthand", {"local_llm": 1}) == ""

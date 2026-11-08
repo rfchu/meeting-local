@@ -130,7 +130,35 @@ def test_shorthand_does_not_send_to_cloud_profile(test_client, monkeypatch):
     result = test_client.post(f"/api/recordings/{rid}/notes/shorthand", json={
         "raw_text": "仅保存在本机", "synthesize": True,
     }).json()
-    saved = test_client.app.state.services.recordings.get_note(rid, result["id"])
+    deadline = time.monotonic() + 2
+    while True:
+        saved = test_client.app.state.services.recordings.get_note(rid, result["id"])
+        if saved["status"] != "synthesizing" or time.monotonic() >= deadline:
+            break
+        time.sleep(.01)
     assert saved["raw_text"] == "仅保存在本机"
     assert saved["status"] == "failed"
     assert not requests
+
+
+def test_published_note_edit_wins_over_pending_expansion(test_client):
+    rid = create_mock_recording(test_client)
+    recordings = test_client.app.state.services.recordings
+    note = recordings.add_note(rid, {"raw_text": "初始原文", "status": "synthesizing"})
+    recordings.metadata(rid, [], 12, 1)
+    recordings.chunk(rid, 0, b"synthetic audio")
+    recordings.finish(rid, 1)
+
+    updated = test_client.put(
+        f"/api/meetings/{rid}/notes/{note['id']}",
+        json={"note_type": "note", "raw_text": "用户校对后的原文"},
+    )
+    assert updated.status_code == 200
+    assert recordings.update_note(
+        rid, note["id"], expected_raw="初始原文",
+        status="ready", synthesized_text="不应出现的过期扩写",
+    ) is None
+    [published] = test_client.get(f"/api/recordings/{rid}/notes/shorthand").json()
+    assert published["raw_text"] == "用户校对后的原文"
+    assert published["status"] == "raw"
+    assert published["synthesized_text"] == ""

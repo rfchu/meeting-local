@@ -75,6 +75,7 @@ class SpeculativeCandidate:
     confidence: float = 0.90
     speaker: str = ""
     timestamp: float = 0.0
+    source_track: str = ""
     anchor_segments: List[Any] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
@@ -295,6 +296,8 @@ def detect_candidates_from_segments(
         speaker = seg.get("speaker", "")
         start_time = float(seg.get("start", 0.0))
         seg_id = seg.get("id")
+        if seg.get("live_range_id") and isinstance(seg.get("live_segment_index"), int):
+            seg_id = f"{seg['live_range_id']}:{seg['live_segment_index']}"
 
         detected = detector.detect_text(
             text=text,
@@ -305,6 +308,8 @@ def detect_candidates_from_segments(
 
         for cand in detected:
             if cand.candidate_id not in emitted_ids:
+                if seg.get("source_track") in ("system", "microphone"):
+                    cand.source_track = seg["source_track"]
                 emitted_ids.add(cand.candidate_id)
                 found.append(cand)
 

@@ -88,12 +88,14 @@ def test_live_todo_is_published_once_with_owner_and_due_date(test_client, monkey
     rid = create_mock_recording(test_client)
     services = test_client.app.state.services
     monkeypatch.setattr(services.live_sessions, "snapshot", lambda _: {"segments": [
-        {"text": "李四负责压测脚本，本周五前完成。", "start": 4, "end": 8},
+        {"text": "李四负责压测脚本，本周五前完成。", "start": 4, "end": 8,
+         "source_track": "microphone", "live_range_id": "range", "live_segment_index": 1},
         {"text": "我们还没有决定采用新的方案。", "start": 8, "end": 12},
     ]})
     route = f"/api/recordings/{rid}"
     candidates = test_client.get(route + "/candidates").json()["candidates"]
     assert [c["kind"] for c in candidates] == ["todo"]
+    assert candidates[0]["anchor_segments"] == ["range:1"]
     path = route + f"/candidates/{candidates[0]['candidate_id']}/accept"
     first = test_client.post(path).json()["note"]
     assert test_client.post(path).json()["note"]["id"] == first["id"]
@@ -103,4 +105,5 @@ def test_live_todo_is_published_once_with_owner_and_due_date(test_client, monkey
     meeting = test_client.get(f"/api/meetings/{rid}").json()
     [todo] = meeting["note_todos"]
     assert todo["note_id"] == first["id"]
+    assert next(n for n in meeting["notes"] if n["id"] == first["id"])["shorthand_track"] == "microphone"
     assert todo["owner"] == "李四" and "周五" in todo["due_date"]

@@ -117,7 +117,7 @@ class RecordingStore:
                 'anchor_end': note.get('anchor_end'),
                 'speaker_hint': note.get('speaker_hint', ''),
                 'shorthand_quote': '',
-                'shorthand_track': '',
+                'shorthand_track': note.get('shorthand_track', ''),
                 'copilot': True,
                 'candidate_id': note.get('candidate_id', ''),
                 'owner': note.get('owner', ''),
@@ -139,7 +139,7 @@ class RecordingStore:
             self.write(self.folder(rid) / 'session.json', value)
             return entry
 
-    def update_note(self, rid, nid, **updates):
+    def update_note(self, rid, nid, *, expected_raw=None, **updates):
         with self.lock:
             now = time.time()
             if self.store.one('SELECT id FROM meetings WHERE id=?', (rid,)):
@@ -147,6 +147,12 @@ class RecordingStore:
                     db.execute('BEGIN IMMEDIATE')
                     from .notes import ensure_note_columns
                     ensure_note_columns(db)
+                    if expected_raw is not None:
+                        current = db.execute(
+                            "SELECT status, raw_text FROM meeting_notes WHERE id=? AND meeting_id=?", (nid, rid)
+                        ).fetchone()
+                        if not current or current['status'] != 'synthesizing' or current['raw_text'] != expected_raw:
+                            return None
                     allowed = {
                         'raw_text', 'synthesized_text', 'status',
                         'anchor_start', 'anchor_end', 'speaker_hint', 'shorthand_quote', 'shorthand_track',
@@ -167,6 +173,8 @@ class RecordingStore:
             target = None
             for item in notes:
                 if item.get('id') == nid:
+                    if expected_raw is not None and (item['status'] != 'synthesizing' or item['raw_text'] != expected_raw):
+                        return None
                     item.update(updates)
                     item['updated'] = now
                     target = item
@@ -176,6 +184,16 @@ class RecordingStore:
             value['updated'] = now
             self.write(self.folder(rid) / 'session.json', value)
             return target
+
+    def copilot_notes(self, rid):
+        with self.lock:
+            notes = [note for note in self.read(rid)['notes'] if 'status' in note]
+            if not self.store.one('SELECT id FROM meetings WHERE id=?', (rid,)):
+                return notes
+            published = {row['id']: row for row in self.store.all(
+                'SELECT * FROM meeting_notes WHERE meeting_id=?', (rid,)
+            )}
+            return [{**note, **published[note['id']]} for note in notes if note['id'] in published]
 
     def get_note(self, rid, nid):
         if self.store.one('SELECT id FROM meetings WHERE id=?', (rid,)):

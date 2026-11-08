@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../api";
 import type { LiveDraftSegment, SpeculativeCandidate } from "../../types";
 import { draftSourceId } from "../overview/notes";
+import { locateLiveSource } from "./liveSource";
 import { ExtractedSidebar } from "./ExtractedSidebar";
 import { SpeculativeChips } from "./SpeculativeChips";
 import { TimelineItem, type UnifiedItem } from "./TimelineItem";
@@ -121,6 +122,7 @@ export function LiveCopilot({
       speaker: note.speaker_hint,
       synthesizedText: note.synthesized_text,
       quote: note.shorthand_quote,
+      sourceTrack: note.shorthand_track || undefined,
       anchorStart: note.anchor_start ?? undefined,
       anchorEnd: note.anchor_end ?? undefined,
       owner: note.owner,
@@ -129,10 +131,8 @@ export function LiveCopilot({
   ].sort((a, b) => a.timestamp - b.timestamp);
 
   function locate(time: number, id?: string) {
-    const segment =
-      segments.find((part) => draftSourceId(part) === id) ||
-      segments.find((part) => part.start <= time && part.end >= time);
-    const sourceId = segment && draftSourceId(segment);
+    const track = items.find((item) => item.id === id)?.sourceTrack;
+    const sourceId = locateLiveSource(confirmed, time, id, track);
     if (sourceId) onLocate(sourceId);
     else setMessage("该时点暂无可定位的实时文字，录音结束后可回听原音");
   }

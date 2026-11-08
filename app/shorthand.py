@@ -4,6 +4,8 @@ import json
 import logging
 from typing import Any, Callable, Coroutine, Dict, List, Optional
 
+from .resources import optional_slot
+
 logger = logging.getLogger(__name__)
 
 SYNTHESIS_SCHEMA = {
@@ -80,11 +82,12 @@ class ShorthandSynthesizer:
 
     def __init__(
         self,
-        store: Optional[Any] = None,
         llm_provider: Optional[Any] = None,
         llm_call: Optional[Callable[[List[Dict[str, str]], Dict[str, Any]], Coroutine[Any, Any, Dict[str, Any]]]] = None,
+        *, resources=None, owner=None,
     ):
-        self.store = store
+        self.resources = resources
+        self.owner = owner
         self.provider = llm_provider
         self._custom_call = llm_call
 
@@ -145,8 +148,11 @@ class ShorthandSynthesizer:
                 requester = native_minutes_requester(request_once, request_once)
             else:
                 requester = request_once
-            response = requester(url, headers, payload)
-            return extract_json(response)
+            # Cancelling the asyncio waiter does not stop a blocking HTTP read.
+            # Keep the lease with the request until the worker actually returns.
+            with optional_slot(self.resources, "live_shorthand", "local_llm", self.owner, legacy=True):
+                response = requester(url, headers, payload)
+                return extract_json(response)
 
         return await asyncio.to_thread(do_request)
 
