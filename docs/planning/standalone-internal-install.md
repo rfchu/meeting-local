@@ -9,3 +9,11 @@
 5. 录音保存后可以转写、回听和导出 TXT、SRT 或 JSON。本地或云端 LLM 可按需在运行管理配置。
 
 内部版默认使用 `127.0.0.1:18876`，数据和备份位于 `~/Library/Application Support/cn.seeknow.tingji.host.standalone/`。迁移旧资料、更新或回退请参照[工作空间维护指南](../engineering/WORKSPACE.md)。正式签名、公证、干净机和正式权限验证的状态见 [D17 评审](standalone-release-review.md)。
+
+## 0.4.0-internal.1 实录验收
+
+2026-11-08，在本机实际安装的 App（构建 6）及其独立后台复验。系统音频和麦克风权限预检均通过，短录完成后正常保存。分别通过会议的分轨回放接口取得并播放两份 WAV。两轨各 84,001 帧（约 5.25 秒，16 kHz 单声道），PCM 峰值分别为 25,306 和 6,285。
+
+已启用模型包 0.1.0。会议后台 Qwen 任务完成，两个片段分别标记为系统声和麦克风，均识别出扬声器播放的合成测试句 “The meeting will start on Friday morning.”。TXT、SRT、JSON 均成功导出，JSON 与服务中的文字稿版本及片段一致，TXT 和 SRT 均含两段预期文本。
+
+本次使用当前已授权环境，覆盖权限可用性、采集、回放、转写和导出。首次拒绝与授权恢复、正式签名包权限、干净 Mac 验收仍见 D17 待验项。
