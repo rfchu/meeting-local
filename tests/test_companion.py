@@ -72,7 +72,7 @@ def test_bilingual_reads_only_the_latest_confirmed_text_and_cached_translation(t
     client = TestClient(app)
     params = {'mode': 'bilingual', 'rid': rid}
     path = '/api/runtime/companion'
-    assert client.get(path, params=params).json()['snapshot']['lines'] == [latest['text'], '等待工作台译文']
+    assert client.get(path, params=params).json()['snapshot']['lines'] == [latest['text'], '等待译文']
     write_translation(translation_file(services.store.directory(rid), latest, language, provider), '我们会核对最新的录音。')
     assert client.get(path, params=params).json()['snapshot']['lines'] == [latest['text'], '我们会核对最新的录音。']
 
@@ -118,3 +118,96 @@ def test_companion_exposes_only_current_native_track_levels(tmp_path, monkeypatc
     assert view['microphone_levels'] == [0, 0]
     services.recordings.write(path, {**report, 'updated': time.time() - 60})
     assert 'system_levels' not in snapshot(services, 'status', rid)
+
+
+def test_companion_follows_fresh_recording_past_abandoned_browser_session(tmp_path):
+    import time
+
+    app = create_app(tmp_path, start_worker=False)
+    recordings = app.state.services.recordings
+    client = TestClient(app)
+    path = '/api/runtime/companion'
+    first = recordings.create('audio/webm')
+    assert client.get(path).json()['snapshot']['recording_id'] == first['id']
+
+    first['updated'] = time.time() - 120
+    recordings.write(recordings.folder(first['id'])/'session.json', first)
+    second = recordings.create('audio/webm')
+    assert client.get(path).json()['snapshot']['recording_id'] == second['id']
+    assert client.get(path, params={'rid': first['id']}).json()['snapshot']['phase'] == 'unknown'
+
+
+def test_companion_subtitles_follow_live_drafts_and_translate_without_workbench(tmp_path, monkeypatch):
+    from app.analysis import OpenAICompatibleProvider
+    from app.db import encode, uid
+
+    app = create_app(tmp_path, start_worker=False)
+    services = app.state.services
+    rid = services.recordings.create('audio/webm')['id']
+    profile_id = uid()
+    profile = {'id': profile_id, 'provider_type': 'local', 'model': 'local-test',
+               'base_url': 'http://127.0.0.1:1234/v1', 'api_key': ''}
+    monkeypatch.setattr(type(services.configurations), 'get', lambda _, __: profile)
+    monkeypatch.setattr(services.retrieval, 'translation_providers',
+                        lambda _: [OpenAICompatibleProvider(profile)])
+    calls = []
+    def translate(_, source):
+        calls.append(source)
+        return {'translation': '我们确认了交付日期。'}
+    monkeypatch.setattr('app.chinese_record.request_translation', translate)
+    source = {'start': 0, 'end': 5, 'text': 'We confirmed the delivery date.', 'source_track': 'system'}
+    aid, _ = services.live_results.begin(rid, 'browser', 'qwen', 0, 5, b'fixture', {})
+    services.live_results.complete(aid, [source])
+    partial = {'tracks': [
+        {'start': 5, 'end': 8, 'text': 'Our next topic is staffing.', 'stable_text': 'Our next topic', 'source_track': 'system'},
+        {'start': 5, 'end': 8, 'text': '我来说明。', 'source_track': 'microphone'},
+    ]}
+    services.store.execute('INSERT INTO live_sessions(recording_id,source,config,seq,partial) VALUES(?,?,?,?,?)',
+                           (rid, 'browser', encode({'engine': 'qwen'}), 7, encode(partial)))
+    client = TestClient(app)
+    path = '/api/runtime/companion'
+    original = client.get(path, params={'mode': 'original'}).json()['snapshot']
+    assert original['subtitle_seq'] == 7
+    assert original['drafts'][0]['stable_text'] == 'Our next topic'
+    assert original['drafts'][1]['source_track'] == 'microphone'
+    assert 'translation_request' not in original
+    bilingual = client.get(path, params={'mode': 'bilingual'}).json()['snapshot']
+    reference = bilingual['translation_request']
+    assert reference == {'aid': aid, 'index': 0, 'profile_id': profile_id}
+    assert not calls
+    claim = services.resources.request('live_translation', {'local_llm': 1}, rid)
+    assert claim.acquire(blocking=False)
+    try:
+        assert client.post(path + '/translation', params={'rid': rid, **reference}).status_code == 429
+        assert client.get(path, params={'mode': 'bilingual'}).json()['snapshot']['drafts'] == original['drafts']
+        assert not calls
+    finally:
+        claim.close()
+    for _ in range(2):
+        assert client.post(path + '/translation', params={'rid': rid, **reference}).status_code == 204
+    assert calls == [source['text']]
+    bilingual = client.get(path, params={'mode': 'bilingual'}).json()['snapshot']
+    assert bilingual['lines'] == [source['text'], '我们确认了交付日期。']
+    assert bilingual['drafts'] == original['drafts']
+    assert 'translation_request' not in bilingual
+
+
+def test_companion_subscription_wakes_on_same_live_event(tmp_path):
+    import asyncio
+
+    app = create_app(tmp_path, start_worker=False)
+    services = app.state.services
+    manager = services.live_sessions
+    rid = services.recordings.create('audio/webm')['id']
+    services.store.execute("INSERT INTO live_sessions(recording_id,source,config) VALUES(?,?,?)",
+                           (rid, 'browser', '{"engine":"qwen"}'))
+
+    async def verify():
+        async with asyncio.timeout(.5):
+            waiter = asyncio.create_task(manager.wait_for_change(rid, 0))
+            await asyncio.sleep(0)
+            assert not waiter.done()
+            manager.emit(rid, 'partial', partial={'text': '正在发言'})
+            await waiter
+            await manager.wait_for_change(rid, 0)  # reconnect behind the current sequence
+    asyncio.run(verify())

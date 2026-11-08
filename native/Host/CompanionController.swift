@@ -56,6 +56,8 @@ final class CompanionController: NSObject, NSWindowDelegate {
     private let panel: NSPanel
     private let status = NSImageView()
     private let content = NSTextField(wrappingLabelWithString: "")
+    private let draftContent = NSTextField(wrappingLabelWithString: "")
+    private let subtitleMode = NSSegmentedControl(labels: ["原文", "双语"], trackingMode: .selectOne, target: nil, action: nil)
     private let translation = NSTextField(wrappingLabelWithString: "")
     private let elapsed = NSTextField(labelWithString: "")
     private let systemMeter = CompanionMeter()
@@ -72,7 +74,9 @@ final class CompanionController: NSObject, NSWindowDelegate {
     private var timer: Timer?
     private var generation = ProbeGeneration()
     private var pending = false
-    private var recording: String?
+    private var translationPending = false
+    private var lastTranslation: (String, CompanionSnapshot.TranslationRequest, Date, Int)?
+    private var nextStatusPoll = Date.distantPast
     private var mode: CompanionMode { CompanionMode.allCases[max(0, modes.selectedSegment)] }
 
     init(configuration: HostConfiguration, client: ServiceClient) {
@@ -89,6 +93,13 @@ final class CompanionController: NSObject, NSWindowDelegate {
         setStatus("正在查看录音状态…", symbol: "ellipsis.circle")
         content.font = .systemFont(ofSize: 13)
         content.maximumNumberOfLines = 6
+        draftContent.font = content.font
+        draftContent.maximumNumberOfLines = 5
+        draftContent.isHidden = true
+        subtitleMode.selectedSegment = 1
+        subtitleMode.controlSize = .small
+        subtitleMode.target = self; subtitleMode.action = #selector(changeMode)
+        subtitleMode.isHidden = true
         translation.font = .systemFont(ofSize: 12)
         translation.textColor = .secondaryLabelColor
         translation.maximumNumberOfLines = 5
@@ -153,7 +164,7 @@ final class CompanionController: NSObject, NSWindowDelegate {
         microphoneMeter.color = .systemGreen
         let signals = NSStackView(views: [elapsed, systemMeter, microphoneMeter])
         signals.spacing = 8
-        let stack = NSStackView(views: [header, signals, content, translation, inputField, inputFeedback])
+        let stack = NSStackView(views: [header, signals, subtitleMode, content, translation, draftContent, inputField, inputFeedback])
         stack.orientation = .vertical; stack.alignment = .leading; stack.spacing = 6
         stack.translatesAutoresizingMaskIntoConstraints = false
         let view = NSView(); panel.contentView = view; view.addSubview(stack)
@@ -164,6 +175,7 @@ final class CompanionController: NSObject, NSWindowDelegate {
             stack.bottomAnchor.constraint(equalTo: view.bottomAnchor, constant: -10),
             header.widthAnchor.constraint(equalTo: stack.widthAnchor),
             content.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            draftContent.widthAnchor.constraint(equalTo: stack.widthAnchor),
             translation.widthAnchor.constraint(equalTo: stack.widthAnchor),
             inputField.widthAnchor.constraint(equalTo: stack.widthAnchor),
             inputFeedback.widthAnchor.constraint(equalTo: stack.widthAnchor)
@@ -180,8 +192,9 @@ final class CompanionController: NSObject, NSWindowDelegate {
 
     func show() {
         guard !panel.isVisible else { panel.orderFrontRegardless(); return }
-        recording = nil; observation = CompanionObservation(); returnButton.isHidden = true; modes.selectedSegment = 0
+        observation = CompanionObservation(); returnButton.isHidden = true; modes.selectedSegment = 0
         setStatus("正在查看录音状态…", symbol: "ellipsis.circle")
+        subtitleMode.isHidden = true; nextStatusPoll = .distantPast
         clearContent(); updateSignals(nil)
         panel.setContentSize(NSSize(width: 370, height: 78))
         if let screen = NSScreen.screens.first(where: { $0.frame.contains(NSEvent.mouseLocation) }) ?? NSScreen.main {
@@ -189,7 +202,7 @@ final class CompanionController: NSObject, NSWindowDelegate {
             panel.setFrameTopLeftPoint(NSPoint(x: frame.maxX - 386, y: frame.maxY - 16))
         }
         panel.orderFrontRegardless()
-        timer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in self?.poll() }
+        timer = Timer.scheduledTimer(withTimeInterval: 0.3, repeats: true) { [weak self] _ in self?.poll() }
         poll()
     }
 
@@ -200,6 +213,8 @@ final class CompanionController: NSObject, NSWindowDelegate {
 
     @objc private func changeMode() {
         _ = generation.next(); pending = false
+        nextStatusPoll = .distantPast
+        subtitleMode.isHidden = mode != .bilingual
         clearContent(); resize(); poll()
     }
 
@@ -207,8 +222,12 @@ final class CompanionController: NSObject, NSWindowDelegate {
         guard panel.isVisible else { return }
         if observation.latest != nil && !observation.isCurrent(at: Date()) { showUnavailable() }
         guard !pending else { return }
+        guard Date() >= nextStatusPoll else { return }
+        let current = observation.active(at: Date())
+        nextStatusPoll = Date().addingTimeInterval(mode != .bilingual ? 2 : current?.subtitle_seq == nil ? 1 : 0)
         let token = generation.next(); pending = true
-        client.companion(configuration, mode: mode, recording: recording) { [weak self] snapshot in
+        client.companion(configuration, mode: mode, recording: nil, original: subtitleMode.selectedSegment == 0,
+                         follow: current?.recording_id, after: current?.subtitle_seq) { [weak self] snapshot in
             DispatchQueue.main.async {
                 guard let self, self.generation.accepts(token), self.panel.isVisible else { return }
                 self.pending = false; self.observation.receive(snapshot)
@@ -239,7 +258,6 @@ final class CompanionController: NSObject, NSWindowDelegate {
         let labels = ["idle":"当前没有录音", "multiple":"有多个录音，请在工作台查看", "recording":"正在录音",
                       "missing":"找不到原录音会话", "paused":"录音已暂停", "starting":"正在准备录音", "unknown":"录音状态待确认",
                       "interrupted":"录音已中断", "saved":"录音已保存", "saving":"正在保存录音"]
-        recording = recording ?? snapshot.recording_id
         let issues = [snapshot.storage == "failed" ? "保存失败" : nil,
                           snapshot.asr == "failed" ? "识别失败" : nil].compactMap { $0 }
         let symbols = ["recording": "record.circle.fill", "paused": "pause.circle", "saved": "checkmark.circle",
@@ -256,8 +274,20 @@ final class CompanionController: NSObject, NSWindowDelegate {
             case .status:
                 break
             case .bilingual:
-                content.stringValue = snapshot.lines.first ?? "等待已确认文字"
-                translation.stringValue = snapshot.lines.dropFirst().first ?? ""
+                let drafts = snapshot.drafts ?? []
+                let bilingual = subtitleMode.selectedSegment == 1
+                if drafts.isEmpty || bilingual && snapshot.lines.count > 1 {
+                    if let confirmed = snapshot.lines.first {
+                        content.stringValue = drafts.isEmpty ? confirmed : "已确认 · " + confirmed
+                    } else {
+                        content.stringValue = "等待实时文字"
+                    }
+                }
+                if bilingual, let line = snapshot.lines.dropFirst().first {
+                    translation.stringValue = line
+                }
+                renderDrafts(drafts)
+                if bilingual { requestTranslation(snapshot) }
             case .highlights:
                 content.stringValue = snapshot.lines.isEmpty ? "暂无会中重点" :
                     snapshot.lines.prefix(3).map { "• " + $0 }.joined(separator: "\n")
@@ -265,6 +295,44 @@ final class CompanionController: NSObject, NSWindowDelegate {
         }
         returnButton.isHidden = snapshot.recording_id == nil
         resize()
+    }
+
+    private func renderDrafts(_ drafts: [CompanionSnapshot.Draft]) {
+        guard !drafts.isEmpty else { return }
+        let text = NSMutableAttributedString(string: "")
+        let stable: [NSAttributedString.Key: Any] = [.foregroundColor: NSColor.labelColor]
+        let revisable: [NSAttributedString.Key: Any] = [.foregroundColor: NSColor.secondaryLabelColor]
+        for draft in drafts {
+            if text.length > 0 { text.append(NSAttributedString(string: "\n")) }
+            let label = draft.source_track == "system" ? "线上" : draft.source_track == "microphone" ? "现场" : "实时"
+            text.append(NSAttributedString(string: label + " · ", attributes: revisable))
+            if draft.text.hasPrefix(draft.stable_text) {
+                text.append(NSAttributedString(string: draft.stable_text, attributes: stable))
+                text.append(NSAttributedString(string: String(draft.text.dropFirst(draft.stable_text.count)), attributes: revisable))
+            } else {
+                text.append(NSAttributedString(string: draft.text, attributes: revisable))
+            }
+        }
+        draftContent.attributedStringValue = text
+    }
+
+    private func requestTranslation(_ snapshot: CompanionSnapshot) {
+        guard !translationPending, let rid = snapshot.recording_id, let reference = snapshot.translation_request,
+              ["recording", "paused"].contains(snapshot.phase) else { return }
+        if let (lastRID, lastReference, retryAt, code) = lastTranslation, lastRID == rid, lastReference == reference,
+           Date() < retryAt {
+            if code != 204 && code != 429 { translation.stringValue = "译文暂不可用，稍后重试" }
+            return
+        }
+        translationPending = true
+        client.translateSubtitle(configuration, recording: rid, reference: reference) { [weak self] code in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.translationPending = false
+                let delay: TimeInterval = code == 429 ? 3 : 15
+                self.lastTranslation = (rid, reference, Date().addingTimeInterval(delay), code)
+            }
+        }
     }
 
     private func updateSignals(_ snapshot: CompanionSnapshot?) {
@@ -291,13 +359,15 @@ final class CompanionController: NSObject, NSWindowDelegate {
     private func clearContent() {
         content.stringValue = ""; content.isHidden = true
         translation.stringValue = ""; translation.isHidden = true
+        draftContent.stringValue = ""; draftContent.isHidden = true
     }
 
     private func resize() {
         content.isHidden = content.stringValue.isEmpty
         translation.isHidden = translation.stringValue.isEmpty
+        draftContent.isHidden = draftContent.stringValue.isEmpty
         let width: CGFloat = 380
-        let textHeight = [content, translation].reduce(CGFloat.zero) { total, field in
+        let textHeight = [content, translation, draftContent].reduce(CGFloat.zero) { total, field in
             guard !field.isHidden else { return total }
             let size = field.cell?.cellSize(forBounds: NSRect(x: 0, y: 0, width: width - 28, height: 1000)) ?? .zero
             let lineHeight = (field.font?.pointSize ?? 13) + 4
@@ -305,8 +375,9 @@ final class CompanionController: NSObject, NSWindowDelegate {
         }
         let frame = panel.frame
         let signalExtra: CGFloat = elapsed.isHidden ? 0 : 22
+        let modeExtra: CGFloat = subtitleMode.isHidden ? 0 : 25
         let inputExtra: CGFloat = inputFeedback.stringValue.isEmpty ? 48 : 66
-        panel.setContentSize(NSSize(width: width, height: 48 + textHeight + inputExtra + signalExtra))
+        panel.setContentSize(NSSize(width: width, height: 48 + textHeight + inputExtra + signalExtra + modeExtra))
         let visible = panel.screen?.visibleFrame
         let top = visible.map { max(frame.maxY, $0.minY + panel.frame.height) } ?? frame.maxY
         panel.setFrameTopLeftPoint(NSPoint(x: frame.minX, y: top))

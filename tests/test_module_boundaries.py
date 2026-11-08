@@ -68,6 +68,7 @@ def test_http_contract_matches_pre_split_v22(tmp_path):
     assert set(schema['paths'].pop('/api/audience-templates/{audience}'))=={'get','put'}
     assert schema['components']['schemas'].pop('AudienceTemplateUpdate')
     assert set(schema['paths'].pop('/api/runtime/companion'))=={'get'}
+    assert set(schema['paths'].pop('/api/runtime/companion/translation'))=={'post'}
     assert schema['components']['schemas']['InterviewPreparation']['properties'].pop('speaker_roles')
     assert schema['components']['schemas']['InterviewQA']['properties'].pop('question_evidence')
     assert schema['components']['schemas'].pop('InterviewSpeakerRoles')

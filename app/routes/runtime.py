@@ -2,7 +2,10 @@
 import json, os, shutil, sqlite3
 from pathlib import Path
 from typing import Literal
-from fastapi import HTTPException, Query
+from fastapi import HTTPException, Query, Response
+from starlette.concurrency import run_in_threadpool
+from ..chinese_record import TranslationInput, live_source, translate_segment
+from ..resources import ResourceBusy
 from ..db import uid
 from .. import companion, workspace_readiness
 from ..host_bridge import identity as host_identity, maintenance_busy
@@ -32,8 +35,36 @@ def register_routes(app,services:ApplicationServices):
         return host_identity(app.state.paths)
 
     @app.get('/api/runtime/companion')
-    def companion_status(mode:Literal['status','bilingual','highlights']='status', rid:str|None=Query(default=None,pattern=r'^[0-9a-f]{32}$')):
-        return {'host':host_identity(app.state.paths),'snapshot':companion.snapshot(services,mode,rid)}
+    async def companion_status(mode:Literal['status','original','bilingual','highlights']='status',
+                               rid:str|None=Query(default=None,pattern=r'^[0-9a-f]{32}$'),
+                               follow:str|None=Query(default=None,pattern=r'^[0-9a-f]{32}$'),
+                               after:int|None=Query(default=None,ge=0)):
+        if mode in ('original', 'bilingual') and follow and after is not None and (not rid or rid == follow):
+            await services.live_sessions.wait_for_change(follow, after)
+        view = await run_in_threadpool(companion.snapshot, services, mode, rid)
+        return {'host':host_identity(app.state.paths),'snapshot':view}
+
+    @app.post('/api/runtime/companion/translation', status_code=204)
+    def companion_translation(rid:str=Query(pattern=r'^[0-9a-f]{32}$'),
+                              aid:str=Query(pattern=r'^[0-9a-f]{32}$'),
+                              index:int=Query(ge=0),
+                              profile_id:str=Query(min_length=1,max_length=100)):
+        def read_source():
+            return live_source(services, rid, aid, index)
+
+        try:
+            if services.recording_runtime.read(rid)['phase'] not in ('recording', 'paused'):
+                raise HTTPException(409, '当前录音已结束')
+            source, _ = read_source()
+            body = TranslationInput(profile_id=profile_id, expected_text=source['text'])
+            translate_segment(services, rid, read_source, body, 'live_translation')
+        except FileNotFoundError as error:
+            raise HTTPException(404, '录音会话不存在') from error
+        except ResourceBusy as error:
+            raise HTTPException(429, '本地模型忙碌') from error
+        except (ValueError, RuntimeError, OSError, TypeError) as error:
+            raise HTTPException(503, '本地翻译暂不可用，原文已保留') from error
+        return Response(status_code=204)
 
     @app.get('/api/runtime/host-diagnostics')
     def host_diagnostics():

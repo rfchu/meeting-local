@@ -9,7 +9,7 @@ final class ServiceClient: NSObject, URLSessionTaskDelegate, URLSessionDataDeleg
         let options = URLSessionConfiguration.ephemeral
         if let protocolClasses { options.protocolClasses = protocolClasses }
         options.timeoutIntervalForRequest = 3
-        options.timeoutIntervalForResource = 4
+        options.timeoutIntervalForResource = 30
         options.httpShouldSetCookies = false
         options.httpCookieStorage = nil
         options.urlCredentialStorage = nil
@@ -23,14 +23,29 @@ final class ServiceClient: NSObject, URLSessionTaskDelegate, URLSessionDataDeleg
             completion(code == 0 ? .unavailable : validateIdentity(data, statusCode: code, configuration: configuration))
         }
     }
-    func companion(_ configuration: HostConfiguration, mode: CompanionMode, recording: String?, completion: @escaping (CompanionSnapshot?) -> Void) {
+    func companion(_ configuration: HostConfiguration, mode: CompanionMode, recording: String?, original: Bool = false, follow: String? = nil, after: Int? = nil, completion: @escaping (CompanionSnapshot?) -> Void) {
         var url = URLComponents(url: configuration.workspaceURL.appendingPathComponent("api/runtime/companion"), resolvingAgainstBaseURL: false)!
-        url.queryItems = [URLQueryItem(name: "mode", value: mode.rawValue)]
+        url.queryItems = [URLQueryItem(name: "mode", value: mode == .bilingual && original ? "original" : mode.rawValue)]
         if let recording { url.queryItems?.append(URLQueryItem(name: "rid", value: recording)) }
+        if let follow, let after {
+            url.queryItems?.append(URLQueryItem(name: "follow", value: follow))
+            url.queryItems?.append(URLQueryItem(name: "after", value: String(after)))
+        }
         get(url.url!) { data, code in
             completion(CompanionSnapshot.verified(data, code: code, configuration: configuration, recording: recording))
         }
     }
+    func translateSubtitle(_ configuration: HostConfiguration, recording: String, reference: CompanionSnapshot.TranslationRequest,
+                           completion: @escaping (Int) -> Void) {
+        var url = URLComponents(url: configuration.workspaceURL.appendingPathComponent("api/runtime/companion/translation"), resolvingAgainstBaseURL: false)!
+        url.queryItems = [URLQueryItem(name: "rid", value: recording), URLQueryItem(name: "aid", value: reference.aid),
+                          URLQueryItem(name: "index", value: String(reference.index)),
+                          URLQueryItem(name: "profile_id", value: reference.profile_id)]
+        var request = URLRequest(url: url.url!, timeoutInterval: 27)
+        request.httpMethod = "POST"
+        send(request, deadline: 30) { _, code in completion(code) }
+    }
+
     func diagnostics(_ configuration: HostConfiguration, completion: @escaping (HostDiagnostics?) -> Void) {
         get(configuration.workspaceURL.appendingPathComponent("api/runtime/host-diagnostics")) { data, code in
             guard code == 200, let report = try? JSONDecoder().decode(HostDiagnostics.self, from: data),
@@ -55,17 +70,19 @@ final class ServiceClient: NSObject, URLSessionTaskDelegate, URLSessionDataDeleg
             "client_id": clientID
         ]
         request.httpBody = try? JSONSerialization.data(withJSONObject: payload)
-        let task = session.dataTask(with: request)
-        lock.lock(); replies[task.taskIdentifier] = (Data(), 0, { _, code in completion(code == 201 || code == 200) }); lock.unlock()
-        task.resume()
+        send(request) { _, code in completion(code == 201 || code == 200) }
     }
     private func get(_ url: URL, completion: @escaping (Data, Int) -> Void) {
         var request = URLRequest(url: url)
         request.cachePolicy = .reloadIgnoringLocalAndRemoteCacheData
         request.setValue("application/json", forHTTPHeaderField: "Accept")
+        send(request, completion: completion)
+    }
+    private func send(_ request: URLRequest, deadline: TimeInterval = 4, completion: @escaping (Data, Int) -> Void) {
         let task = session.dataTask(with: request)
         lock.lock(); replies[task.taskIdentifier] = (Data(), 0, completion); lock.unlock()
         task.resume()
+        DispatchQueue.global().asyncAfter(deadline: .now() + deadline) { [weak task] in task?.cancel() }
     }
     // A loopback redirect must never turn into a request to another service or a cloud host.
     func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) { completionHandler(nil) }
@@ -136,13 +153,27 @@ enum CompanionMode: String, CaseIterable {
     var title: String {
         switch self {
         case .status: return "录音状态"
-        case .bilingual: return "双语"
+        case .bilingual: return "实时字幕"
         case .highlights: return "重点"
         }
     }
 }
 
 struct CompanionSnapshot: Decodable {
+    struct Draft: Decodable {
+        let text: String
+        let stable_text: String
+        let source_track: String?
+    }
+    struct TranslationRequest: Decodable, Equatable {
+        let aid: String
+        let index: Int
+        let profile_id: String
+    }
+    let subtitle_seq: Int?
+    let drafts: [Draft]?
+    let translation_request: TranslationRequest?
+
     let observed_at: Double
     let recording_id: String?
     let meeting_id: String?

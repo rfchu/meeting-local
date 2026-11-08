@@ -427,7 +427,9 @@ class LiveSessions:
                             event=json.loads(line)
                             if event['type']=='partial' and time.monotonic()-last_sent>=.15:
                                 text=event['text'];prefix=stable if text.startswith(stable) else ''
-                                self.emit(rid,'partial',partial={'start':event['start'],'end':event['end'],'text':text,'stable_text':prefix,**{k:window[k] for k in ('continuation_id','continues_previous','continues_next','boundary_reason')}})
+                                partial={'start':event['start'],'end':event['end'],'text':text,'stable_text':prefix,**{k:window[k] for k in ('continuation_id','continues_previous','continues_next','boundary_reason')}}
+                                self.checkpoint(rid,partial=partial)
+                                self.emit(rid,'partial',partial=partial)
                                 last_sent=time.monotonic()
                             elif event['type']=='final':result=event['result']
                             elif event['type']=='error':failure=event['message']
@@ -523,6 +525,17 @@ class LiveSessions:
         tasks=list(self.tasks.values())
         for task in tasks:task.cancel()
         await asyncio.gather(*tasks,return_exceptions=True)
+    async def wait_for_change(self, rid, after):
+        row = self.store.one('SELECT seq,status FROM live_sessions WHERE recording_id=?', (rid,))
+        if not row or row['status'] == 'stopped' or row['seq'] != after:
+            return
+        wake = self.wakes.setdefault(rid, asyncio.Event())
+        wake.clear()
+        try:
+            await asyncio.wait_for(wake.wait(), 1.4)
+        except TimeoutError:
+            pass
+
     async def events(self,rid,after):
         self.row(rid);wake=self.wakes.setdefault(rid,asyncio.Event())
         rows=self.store.all('SELECT seq,payload FROM live_session_events WHERE recording_id=? AND seq>? ORDER BY seq',(rid,after))

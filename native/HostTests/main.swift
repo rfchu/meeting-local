@@ -44,6 +44,17 @@ let recordingSnapshot = CompanionSnapshot.verified(companionPayload(payload()), 
 check(recordingSnapshot?.recording_id == companionID, "companion verifies identity and bound recording")
 check(CompanionSnapshot.verified(companionPayload(payload(["data_fingerprint":"other"])), code: 200, configuration: configuration, recording: companionID) == nil, "companion refuses other workspace content")
 check(CompanionSnapshot.verified(companionPayload(payload()), code: 200, configuration: configuration, recording: String(repeating: "b", count: 32)) == nil, "companion refuses other recording content")
+let subtitlePayload = try JSONSerialization.data(withJSONObject: [
+    "host": try JSONSerialization.jsonObject(with: payload()),
+    "snapshot": ["observed_at": observed.timeIntervalSince1970, "recording_id": companionID,
+                 "phase": "recording", "lines": ["Confirmed", "已确认"], "subtitle_seq": 9,
+                 "drafts": [["text": "New live text", "stable_text": "New", "source_track": "system"]],
+                 "translation_request": ["aid": companionID, "index": 0, "profile_id": "local"]]
+])
+let subtitle = CompanionSnapshot.verified(subtitlePayload, code: 200, configuration: configuration, recording: companionID)
+check(subtitle?.subtitle_seq == 9 && subtitle?.drafts?.first?.stable_text == "New", "subtitle snapshot carries provisional text and sequence")
+check(subtitle?.translation_request?.index == 0 && subtitle?.lines == ["Confirmed", "已确认"], "confirmed source and translation stay paired")
+check(CompanionMode.bilingual.title == "实时字幕", "subtitle is the main entry for original and bilingual display")
 var observation = CompanionObservation()
 observation.receive(recordingSnapshot)
 check(observation.target(at: observed) == companionID, "only current bound recording is a return target")
