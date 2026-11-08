@@ -1,6 +1,6 @@
 """Recordings HTTP routes; shared services are supplied by the composition root."""
 from ..resources import ResourceBusy
-from ..chinese_record import TranslationInput, live_source, translate_segment
+from ..chinese_record import LiveTranslationProfileChanged, TranslationInput, live_translation_provider, provider_for, translate_live_segment
 from ..languages import configure_asr, recording_language, SourceLanguage
 import sqlite3, io, json, subprocess, tempfile, time, wave
 from pathlib import Path
@@ -326,12 +326,37 @@ def register_routes(app,services:ApplicationServices):
         except (FileNotFoundError,ValueError):return {'status':'stopped'}
 
 
-    @app.post('/api/recordings/{rid}/chinese-record/{aid}/{index}')
-    def translate_live_segment(rid:str,aid:str,index:int,body:TranslationInput):
+    @app.get('/api/recordings/{rid}/translation-profile')
+    def recording_translation_profile(rid: str):
         try:
-            return translate_segment(services,rid,lambda:live_source(services,rid,aid,index),body,'live_translation')
+            provider = live_translation_provider(services, rid)
+        except FileNotFoundError as error:
+            raise HTTPException(404, '录音会话不存在') from error
+        return {'profile_id': provider.profile['id'] if provider else ''}
+
+    @app.put('/api/recordings/{rid}/translation-profile')
+    def select_recording_translation_profile(rid: str, profile_id: str = Query(min_length=1, max_length=100)):
+        try:
+            provider_for(services, profile_id).resolve_model()
+            with recordings.lock:
+                session = recordings.read(rid)
+                if session.get('translation_profile_id') != profile_id:
+                    session['translation_profile_id'] = profile_id
+                    recordings.write(recordings.folder(rid)/'session.json', session)
+        except FileNotFoundError as error:
+            raise HTTPException(404, '录音会话不存在') from error
+        except (ValueError, RuntimeError) as error:
+            raise HTTPException(400, str(error)) from error
+        return {'profile_id': profile_id}
+
+    @app.post('/api/recordings/{rid}/chinese-record/{aid}/{index}')
+    def translate_live_segment_route(rid:str,aid:str,index:int,body:TranslationInput):
+        try:
+            return translate_live_segment(services,rid,aid,index,body)
         except FileNotFoundError:raise HTTPException(404,'录音会话不存在')
         except HTTPException:raise
+        except LiveTranslationProfileChanged as error:
+            raise HTTPException(409,{'code':'translation_profile_changed','message':str(error)}) from error
         except ResourceBusy as error:
             raise HTTPException(409,{'code':'translation_busy','message':'本地模型忙碌，将自动继续'}) from error
         except (ValueError,RuntimeError) as error:raise HTTPException(409,str(error))

@@ -3,7 +3,7 @@ import json
 import math
 import time
 
-from .chinese_record import saved_translation, segment_language, translation_file
+from .chinese_record import live_translation_provider, saved_translation, segment_language, translation_file
 from .languages import recording_language
 
 
@@ -102,17 +102,16 @@ def subtitles(services, rid, engine, bilingual):
     result['lines'] = [source['text'][:500]]
     language = segment_language(source['text'], hint)
     if bilingual and language in ('en', 'ja'):
-        with services.store.connect() as db:
-            providers = services.retrieval.translation_providers(db)
-        for provider in providers:
+        provider = live_translation_provider(services, rid)
+        if provider:
+            profile_id = provider.profile['id']
             path = translation_file(services.store.directory(rid), source, language, provider)
             if translation := saved_translation(path):
                 result['lines'].append(translation[:500])
-                break
+            else:
+                result['lines'].append('等待译文')
+                if aid:
+                    result['translation_request'] = {'aid': aid, 'index': index, 'profile_id': profile_id}
         else:
-            result['lines'].append('等待译文' if providers else '请在运行管理配置本地翻译模型')
-            if providers and aid:
-                preferred = next((provider for provider in providers if provider.profile.get('is_default')), providers[0])
-                result['translation_request'] = {'aid': aid, 'index': index,
-                                                 'profile_id': preferred.profile['id']}
+            result['lines'].append('请在运行管理配置本地翻译模型')
     return result

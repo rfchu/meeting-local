@@ -1,4 +1,6 @@
 import { createPortal } from "react-dom";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { api } from "../../api";
 import { liveChineseKey, useLiveChinese } from "./useLiveChinese";
 import { draftSourceId } from "../overview/notes";
 import { useLayoutEffect, useRef, useState } from "react";
@@ -70,10 +72,22 @@ export default function LiveDraftList({
       list.current.scrollTop = list.current.scrollHeight;
   }, [active]);
   const [bilingual, setBilingual] = useState(false);
-  const [model, setModel] = useState("");
-  const profile = profiles.some((item) => item.id === model)
-    ? model
-    : profiles[0]?.id || "";
+  const queryClient = useQueryClient();
+  const profileKey = ["live-translation-profile", recordingId] as const;
+  const selection = useQuery({
+    queryKey: profileKey,
+    queryFn: () => api.liveTranslationProfile(recordingId!),
+    enabled: !!recordingId && (bilingual || subtitleEnabled),
+    refetchInterval: 1500,
+  });
+  const selectProfile = useMutation({
+    mutationFn: (profileId: string) =>
+      api.selectLiveTranslationProfile(recordingId!, profileId),
+    onMutate: () => queryClient.cancelQueries({ queryKey: profileKey }),
+    onSuccess: (value) => queryClient.setQueryData(profileKey, value),
+    onSettled: () => queryClient.invalidateQueries({ queryKey: profileKey }),
+  });
+  const profile = selection.data?.profile_id || "";
   const latest = drafts.at(-1);
   const caption = partial || latest;
   const translation = useLiveChinese(
@@ -131,12 +145,20 @@ export default function LiveDraftList({
           <details className="workbench-transcript-menu">
             <summary>翻译设置</summary>
             <label>
-              本地翻译模型
+              本场翻译模型
               <select
                 value={profile}
-                onChange={(event) => setModel(event.target.value)}
+                disabled={!recordingId || selection.isPending || selectProfile.isPending}
+                onChange={(event) => selectProfile.mutate(event.target.value)}
               >
-                {!profiles.length && <option value="">未配置本地模型</option>}
+                {!profile && (
+                  <option value="" disabled>
+                    {selection.isPending ? "正在读取…" : "请选择本地模型"}
+                  </option>
+                )}
+                {profile && !profiles.some((item) => item.id === profile) && (
+                  <option value={profile}>{profile}</option>
+                )}
                 {profiles.map((item) => (
                   <option key={item.id} value={item.id}>
                     {item.name}
@@ -144,6 +166,11 @@ export default function LiveDraftList({
                 ))}
               </select>
             </label>
+            {(selectProfile.error || selection.error) && (
+              <small role="alert">
+                {(selectProfile.error || selection.error)?.message}
+              </small>
+            )}
           </details>
         )}
         <button

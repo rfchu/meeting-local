@@ -916,6 +916,13 @@ export const api = {
         signal: AbortSignal.any([signal, AbortSignal.timeout(30000)]),
       },
     ),
+  liveTranslationProfile: (id: string) =>
+    request<{ profile_id: string }>(`/recordings/${id}/translation-profile`),
+  selectLiveTranslationProfile: (id: string, profile: string) =>
+    request<{ profile_id: string }>(
+      `/recordings/${id}/translation-profile?profile_id=${encodeURIComponent(profile)}`,
+      { method: "PUT" },
+    ),
   translateLiveSegment: (
     id: string,
     range: string,

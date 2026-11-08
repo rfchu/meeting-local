@@ -16,6 +16,7 @@ def test_http_contract_matches_pre_split_v22(tmp_path):
             definition.get('properties',{}).pop(name,None)
 
     assert schema['paths'].pop('/api/recordings/{rid}/chinese-record/{aid}/{index}')
+    assert set(schema['paths'].pop('/api/recordings/{rid}/translation-profile')) == {'get', 'put'}
     assert set(schema['paths'].pop('/api/recordings/{rid}/live-audio/{aid}/{index}'))=={'get'}
     assert 'source_track' in schema['components']['schemas']['Segment']['properties']
     schema['components']['schemas']['Segment']['properties'].pop('source_track')

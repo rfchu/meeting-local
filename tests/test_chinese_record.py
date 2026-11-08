@@ -225,3 +225,62 @@ def test_japanese_draft_translation_is_bound_to_candidate_and_excluded_from_form
         'question': '星期五交付什么？', 'query': '星期五交付', 'profile_id': 'local',
     })
     assert qa.status_code == 201 and qa.json()['sources'] == []
+
+
+def test_shared_live_profile_switch_and_concurrent_translation(live, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+
+    client, store, rid, aid, texts, _ = live
+    app = client.app
+    store.execute("INSERT INTO llm_configs(id,name,provider_type,base_url,model) VALUES('other','Other','local','http://127.0.0.1:1234/v1','second')")
+    profile_path = f'/api/recordings/{rid}/translation-profile'
+    workbench = f'/api/recordings/{rid}/chinese-record/{aid}/1'
+    companion = '/api/runtime/companion'
+    selection = {'rid': rid, 'mode': 'bilingual'}
+    body = {'profile_id': 'local', 'expected_text': texts[1]}
+    # Give the companion the same confirmed English segment as the workbench.
+    segments = json.loads(store.one('SELECT segments FROM live_asr_ranges WHERE id=?', (aid,))['segments'])
+    store.execute('UPDATE live_asr_ranges SET segments=? WHERE id=?', (json.dumps(segments[:2]), aid))
+    assert client.get(profile_path).json() == {'profile_id': 'local'}
+    assert client.post(workbench, json=body).status_code == 200
+    assert client.get(companion, params=selection).json()['snapshot']['lines'][1] == '我们星期五交付。'
+
+    before = app.state.services.recordings.read(rid)
+    assert client.put(profile_path, params={'profile_id': 'other'}).json() == {'profile_id': 'other'}
+    assert app.state.services.recordings.read(rid) == {**before, 'translation_profile_id': 'other'}
+    assert client.get(profile_path).json() == {'profile_id': 'other'}
+    second = client.post('/api/recordings', json={}).json()['id']
+    assert client.get(f'/api/recordings/{second}/translation-profile').json() == {'profile_id': 'local'}
+    view = client.get(companion, params=selection).json()['snapshot']
+    assert view['lines'][1] == '等待译文'
+    assert view['translation_request']['profile_id'] == 'other'
+    assert client.post(workbench, json=body).json()['detail']['code'] == 'translation_profile_changed'
+    native = {'rid': rid, 'aid': aid, 'index': 1, 'profile_id': 'other'}
+    assert client.post(companion + '/translation', params={**native, 'profile_id': 'local'}).status_code == 429
+
+    entered, release = Event(), Event()
+    calls = []
+
+    def model(provider, source):
+        calls.append((provider.resolve_model(), source))
+        entered.set()
+        assert release.wait(5)
+        return {'translation': '第二个模型的译文。'}
+
+    monkeypatch.setattr('app.chinese_record.request_translation', model)
+    with ThreadPoolExecutor() as pool:
+        pending = pool.submit(client.post, companion + '/translation', params=native)
+        try:
+            assert entered.wait(5)
+            busy = client.post(workbench, json={**body, 'profile_id': 'other'})
+            assert busy.json()['detail']['code'] == 'translation_busy'
+        finally:
+            release.set()
+        assert pending.result(timeout=5).status_code == 204
+    assert client.post(workbench, json={**body, 'profile_id': 'other'}).json()['text'] == '第二个模型的译文。'
+    assert client.get(companion, params=selection).json()['snapshot']['lines'][1] == '第二个模型的译文。'
+    assert calls == [('second', texts[1])]
+    assert client.put(profile_path, params={'profile_id': 'local'}).status_code == 200
+    assert client.post(workbench, json=body).json()['text'] == '我们星期五交付。'
+    assert len(calls) == 1

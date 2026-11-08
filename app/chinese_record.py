@@ -59,6 +59,26 @@ def provider_for(services, profile_id):
     return OpenAICompatibleProvider(profile)
 
 
+def live_translation_provider(services, rid):
+    selection = services.recordings.read(rid).get('translation_profile_id')
+    with services.store.connect() as db:
+        providers = services.retrieval.translation_providers(db)
+    return (next((provider for provider in providers if provider.profile['id'] == selection), None)
+            or next((provider for provider in providers if provider.profile.get('is_default')), None)
+            or next(iter(providers), None))
+
+
+class LiveTranslationProfileChanged(ValueError):
+    pass
+
+
+def translate_live_segment(services, rid, aid, index, body):
+    provider = live_translation_provider(services, rid)
+    if not provider or provider.profile['id'] != body.profile_id:
+        raise LiveTranslationProfileChanged('本场翻译模型已变化，正在同步')
+    return translate_segment(services, rid, lambda: live_source(services, rid, aid, index), body, 'live_translation')
+
+
 def translation_path(services, owner, source, language, provider):
     return translation_file(services.store.directory(owner), source, language, provider)
 

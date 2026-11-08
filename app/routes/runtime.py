@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Literal
 from fastapi import HTTPException, Query, Response
 from starlette.concurrency import run_in_threadpool
-from ..chinese_record import TranslationInput, live_source, translate_segment
+from ..chinese_record import LiveTranslationProfileChanged, TranslationInput, live_source, translate_live_segment
 from ..resources import ResourceBusy
 from ..db import uid
 from .. import companion, workspace_readiness
@@ -57,10 +57,10 @@ def register_routes(app,services:ApplicationServices):
                 raise HTTPException(409, '当前录音已结束')
             source, _ = read_source()
             body = TranslationInput(profile_id=profile_id, expected_text=source['text'])
-            translate_segment(services, rid, read_source, body, 'live_translation')
+            translate_live_segment(services, rid, aid, index, body)
         except FileNotFoundError as error:
             raise HTTPException(404, '录音会话不存在') from error
-        except ResourceBusy as error:
+        except (ResourceBusy, LiveTranslationProfileChanged) as error:
             raise HTTPException(429, '本地模型忙碌') from error
         except (ValueError, RuntimeError, OSError, TypeError) as error:
             raise HTTPException(503, '本地翻译暂不可用，原文已保留') from error
