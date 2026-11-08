@@ -1,7 +1,7 @@
 import AppKit
 import Carbon.HIToolbox
 
-final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDelegate {
+final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDelegate, NSMenuItemValidation {
     private var configuration: HostConfiguration
     private let defaults: HostConfiguration
     private let preferences: HostPreferences
@@ -86,9 +86,24 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, 
         let config = submenu.addItem(withTitle: "连接设置…", action: #selector(showConfiguration), keyEquivalent: ","); config.target = self
         submenu.addItem(withTitle: "打开伴随窗口", action: #selector(showCompanion), keyEquivalent: "").target = self
         submenu.addItem(.separator())
+        submenu.addItem(withTitle: "重新载入工作区…", action: #selector(reloadWorkspace), keyEquivalent: "r").target = self
+        submenu.addItem(withTitle: "返回宿主", action: #selector(showWindow), keyEquivalent: "").target = self
+        submenu.addItem(.separator())
         let quit = submenu.addItem(withTitle: "退出听记宿主", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"); quit.target = NSApp
         app.submenu = submenu; menu.addItem(app); NSApp.mainMenu = menu
     }
+    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        if menuItem.action == #selector(reloadWorkspace) {
+            return workspace?.canReload == true && !starting && !restarting
+        }
+        return true
+    }
+
+    @objc private func reloadWorkspace() {
+        guard !starting, !restarting else { return }
+        workspace?.reloadWorkspace()
+    }
+
     private func buildWindow() {
         window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 640, height: 560), styleMask: [.titled, .closable, .miniaturizable], backing: .buffered, defer: false)
         window.title = "听记 · 本机宿主"; window.delegate = self; window.isReleasedWhenClosed = false
@@ -331,8 +346,6 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, 
             existing.show()
         } else {
             let controller = WorkspaceController(configuration: configuration)
-            controller.openBrowser = { [weak self] in self?.openBrowserWorkspace() }
-            controller.showHost = { [weak self] in self?.showWindow() }
             workspace = controller
             if let recording { controller.showRecording(recording) }
             controller.prepareAndLoad()

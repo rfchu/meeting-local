@@ -5,8 +5,9 @@ final class WorkspaceController: NSObject, NSWindowDelegate, WKNavigationDelegat
     let policy: WorkspacePolicy
     let window: NSWindow
     private(set) var webView: WKWebView
-    private let notice = NSTextField(wrappingLabelWithString: "正在准备工作区…")
+    private let notice = NSTextField(wrappingLabelWithString: "")
     private let shield = NSTextField(wrappingLabelWithString: "正在核对连接…")
+    private var noticeDismissal: DispatchWorkItem?
     private let downloads: WorkspaceDownloads
     private var previews: [WorkspaceController] = []
     private var valid = true
@@ -20,10 +21,9 @@ final class WorkspaceController: NSObject, NSWindowDelegate, WKNavigationDelegat
     private var openPanel: NSOpenPanel?
     private let previewOnly: Bool
     private let initialURL: URL
-    var openBrowser: () -> Void = {}
-    var showHost: () -> Void = {}
     var didClosePreview: () -> Void = {}
     var busy: Bool { choosingFile || downloads.busy || previews.contains { $0.busy } }
+    var canReload: Bool { valid && !busy && !preparing && !disposed && window.attachedSheet == nil }
     init(configuration: HostConfiguration, webConfiguration supplied: WKWebViewConfiguration? = nil, previewOnly: Bool = false, initialURL: URL? = nil) {
         policy = WorkspacePolicy(configuration: configuration); self.previewOnly = previewOnly; self.initialURL = initialURL ?? configuration.workspaceURL
         let options = supplied ?? WKWebViewConfiguration()
@@ -43,20 +43,23 @@ final class WorkspaceController: NSObject, NSWindowDelegate, WKNavigationDelegat
         window.title = previewOnly ? "听记 · 纪要预览" : "听记 · 会议工作区"; window.delegate = self; window.isReleasedWhenClosed = false
         window.minSize = NSSize(width: 900, height: 600); window.isRestorable = false
         webView.navigationDelegate = self; webView.uiDelegate = self
-        downloads.window = window; downloads.message = { [weak self] text in self?.notice.stringValue = text }
-        let root = NSStackView(); root.orientation = .vertical; root.alignment = .leading; root.spacing = 8; root.distribution = .fill; root.translatesAutoresizingMaskIntoConstraints = false
-        window.contentView!.addSubview(root)
-        NSLayoutConstraint.activate([root.leadingAnchor.constraint(equalTo: window.contentView!.leadingAnchor, constant: 12), root.trailingAnchor.constraint(equalTo: window.contentView!.trailingAnchor, constant: -12),root.topAnchor.constraint(equalTo: window.contentView!.topAnchor, constant: 10),root.bottomAnchor.constraint(equalTo: window.contentView!.bottomAnchor, constant: -10)])
-        let reload = NSButton(title: "重新载入", target: self, action: #selector(reloadWorkspace)); reload.bezelStyle = .rounded
-        let browser = NSButton(title: "浏览器工作台", target: self, action: #selector(externalBrowser)); browser.bezelStyle = .rounded
-        let host = NSButton(title: "返回宿主", target: self, action: #selector(backToHost)); host.bezelStyle = .rounded
-        let back = NSButton(title: "后退", target: self, action: #selector(goBack)); back.bezelStyle = .rounded
-        let forward = NSButton(title: "前进", target: self, action: #selector(goForward)); forward.bezelStyle = .rounded
-        let controls = NSStackView(views: configuration.portableRuntime == nil ? [back,forward,reload,browser,host] : [back,forward,reload,host]); controls.spacing = 12; root.addArrangedSubview(controls)
-        notice.font = .systemFont(ofSize: 12); notice.textColor = .secondaryLabelColor; root.addArrangedSubview(notice)
+        downloads.window = window
+        downloads.message = { [weak self] text in self?.message(text) }
+        let root = NSStackView()
+        root.orientation = .vertical
+        root.alignment = .leading
+        root.distribution = .fill
+        root.spacing = 0
+        window.contentView = root
+        let content = NSView()
+        content.setContentHuggingPriority(.defaultLow, for: .vertical)
+        root.addArrangedSubview(content)
+        content.widthAnchor.constraint(equalTo: root.widthAnchor).isActive = true
+        notice.font = .systemFont(ofSize: 12)
+        notice.textColor = .secondaryLabelColor
+        notice.isHidden = true
+        root.addArrangedSubview(notice)
         notice.widthAnchor.constraint(equalTo: root.widthAnchor).isActive = true
-        let content = NSView(); root.addArrangedSubview(content); content.widthAnchor.constraint(equalTo: root.widthAnchor).isActive = true
-        content.heightAnchor.constraint(greaterThanOrEqualToConstant: 400).isActive = true
         webView.translatesAutoresizingMaskIntoConstraints = false; content.addSubview(webView)
         shield.translatesAutoresizingMaskIntoConstraints = false; shield.font = .systemFont(ofSize: 18); shield.alignment = .center; content.addSubview(shield)
         NSLayoutConstraint.activate([webView.leadingAnchor.constraint(equalTo: content.leadingAnchor),webView.trailingAnchor.constraint(equalTo: content.trailingAnchor),webView.topAnchor.constraint(equalTo: content.topAnchor),webView.bottomAnchor.constraint(equalTo: content.bottomAnchor),shield.centerXAnchor.constraint(equalTo: content.centerXAnchor),shield.centerYAnchor.constraint(equalTo: content.centerYAnchor),shield.widthAnchor.constraint(lessThanOrEqualTo: content.widthAnchor, constant: -40)])
@@ -70,7 +73,7 @@ final class WorkspaceController: NSObject, NSWindowDelegate, WKNavigationDelegat
         let ruleID = "tingji-e3-" + policy.storeIdentifier.uuidString
         WKContentRuleListStore.default().compileContentRuleList(forIdentifier: ruleID, encodedContentRuleList: policy.networkRules) { [weak self] rules, error in
             guard let self, !self.disposed else { return }
-            guard let rules, error == nil else { self.preparing = false; self.shield.stringValue = "网络边界初始化失败，请明确重试载入。"; self.message("工作区未载入，可点击重新载入重试。"); return }
+            guard let rules, error == nil else { self.preparing = false; self.shield.stringValue = "网络边界初始化失败，请明确重试载入。"; self.message("工作区未载入，可从「听记」菜单重新载入。"); return }
             self.webView.configuration.userContentController.add(rules)
             let configuration = self.policy.configuration
             var credentials = [("tingji_workspace_binding", self.policy.binding)]
@@ -100,9 +103,8 @@ final class WorkspaceController: NSObject, NSWindowDelegate, WKNavigationDelegat
         valid = verified
         webView.isHidden = !verified || !prepared || contentFailed
         shield.isHidden = verified && prepared && !contentFailed
-        if !verified { webView.stopLoading(); shield.stringValue = "服务连接无法核对，工作区已暂停。\n请返回宿主检查连接；当前页面保留。"; notice.stringValue = "连接中断或工作空间变化；未自动重载。" }
+        if !verified { webView.stopLoading(); shield.stringValue = "服务连接无法核对，工作区已暂停。\n请在「听记」菜单选择「返回宿主」检查连接。" }
         else if contentFailed { shield.stringValue = "页面进程已结束，请核对已保存内容，再明确重新载入。" }
-        else if prepared { notice.stringValue = "本机工作区 · 浏览器采集未启用 · 关闭此窗口会保留页面" }
         previews.forEach { $0.updateConnection(verified) }
     }
     func show() { window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true) }
@@ -145,20 +147,24 @@ final class WorkspaceController: NSObject, NSWindowDelegate, WKNavigationDelegat
         if previewOnly && !disposed { disposed = true; downloads.close(); webView.stopLoading(); webView.navigationDelegate = nil; webView.uiDelegate = nil; didClosePreview() }
     }
     func dispose() {
-        disposed = true; downloads.close(); openPanel?.cancel(nil); previews.forEach { $0.dispose() }; previews.removeAll()
+        disposed = true; noticeDismissal?.cancel(); downloads.close(); openPanel?.cancel(nil); previews.forEach { $0.dispose() }; previews.removeAll()
         webView.stopLoading(); webView.navigationDelegate = nil; webView.uiDelegate = nil; window.delegate = nil; window.close()
     }
-    private func message(_ text: String) { notice.stringValue = text }
-    @objc private func goBack() { if valid && !busy && webView.canGoBack { webView.goBack() } }
-    @objc private func goForward() { if valid && !busy && webView.canGoForward { webView.goForward() } }
-    @objc private func backToHost() { showHost() }
-    @objc private func externalBrowser() { openBrowser() }
-    @objc private func reloadWorkspace() {
-        guard valid, !busy else { message("请先完成或取消文件选择与下载。"); return }
+    private func message(_ text: String) {
+        noticeDismissal?.cancel()
+        notice.stringValue = text
+        notice.isHidden = false
+        let dismissal = DispatchWorkItem { [weak self] in self?.notice.isHidden = true }
+        noticeDismissal = dismissal
+        DispatchQueue.main.asyncAfter(deadline: .now() + 8, execute: dismissal)
+    }
+    func reloadWorkspace() {
+        guard canReload else { return }
+        show()
         if !prepared { prepareAndLoad(); return }
         let alert = NSAlert(); alert.messageText = "重新载入内嵌页面？"; alert.informativeText = "请先保存编辑并完成会中操作；重新载入不会停止 API 服务。"
         alert.addButton(withTitle: "取消"); alert.addButton(withTitle: "重新载入")
-        alert.beginSheetModal(for: window) { [weak self] choice in if choice == .alertSecondButtonReturn, self?.valid == true { if let self { self.contentFailed = false; self.updateConnection(true); if self.webView.url == nil { self.webView.load(URLRequest(url: self.initialURL)) } else { self.webView.reload() } } } }
+        alert.beginSheetModal(for: window) { [weak self] choice in if choice == .alertSecondButtonReturn, self?.valid == true, self?.busy == false { if let self { self.contentFailed = false; self.updateConnection(true); if self.webView.url == nil { self.webView.load(URLRequest(url: self.initialURL)) } else { self.webView.reload() } } } }
     }
     func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
         guard valid, !disposed else { decisionHandler(.cancel); return }
@@ -179,7 +185,6 @@ final class WorkspaceController: NSObject, NSWindowDelegate, WKNavigationDelegat
     func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration, for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
         guard valid, !previewOnly, previews.count < 4, policy.preview(navigationAction.request.url) else { message("此新窗口未获允许；仅在独立窗口打开本机纪要 PDF 预览。"); return nil }
         let child = WorkspaceController(configuration: policy.configuration, webConfiguration: configuration, previewOnly: true, initialURL: navigationAction.request.url)
-        child.openBrowser = openBrowser; child.showHost = showHost
         child.didClosePreview = { [weak self, weak child] in self?.previews.removeAll { $0 === child } }
         previews.append(child); return child.webView
     }
