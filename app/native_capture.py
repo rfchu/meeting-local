@@ -270,7 +270,7 @@ class NativeCapture:
             horizon=min(status.get('duration',0),available_frames/16000)
             begin=round(offset*16000);end=int(horizon*16000);skipped=0
             elastic=responsive and allow_stopped
-            limit=(8 if split_tracks else HARD_SECONDS) if elastic else 15
+            limit=HARD_SECONDS if elastic else 15
             if not split_tracks and end-begin>2*limit*16000:
                 latest=max(begin,end-limit*16000);skipped=(latest-begin)/16000;begin=latest
             if skipped:sentence_end=None
@@ -282,7 +282,7 @@ class NativeCapture:
             maximum=limit if elastic else (15 if confirmed else window_seconds)
             count=min(maximum*16000,max(0,end-begin))
             minimum=8000 if status['state'] in ('paused','stopped','interrupted','failed') else (3 if quiet else min(window_seconds,limit) if elastic else maximum)*16000
-            if elastic and sentence_end is not None and status['state']=='recording':minimum=3*16000
+            if elastic and (split_tracks or sentence_end is not None) and status['state']=='recording':minimum=3*16000
             if count<minimum:return {'ready':False,'next_offset':offset,'skipped_seconds':0}
             folder=self.recordings.folder(rid);tracks=[]
             for name in ('system','microphone') if session.get('include_microphone') else ('system',):
@@ -302,7 +302,6 @@ class NativeCapture:
                 if plan is None:return {'ready':False,'next_offset':offset,'skipped_seconds':0}
                 count=plan.pop('count');confirmed=plan['confirmed'];mixed=mixed[:count];boundary=plan
             if split_tracks and len(tracks)==2:
-                if boundary.get('boundary_reason')=='hard_limit':boundary['boundary_reason']='dual_limit'
                 payloads={}
                 for name,samples in zip(names,tracks):
                     output=io.BytesIO()

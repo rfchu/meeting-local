@@ -19,3 +19,11 @@ test('English word boundaries stay readable without removing or inventing punctu
  const result=paragraphs([{...parts[0],text:'review the'},{...parts[1],text:'release plan.'}]);
  assert.equal(result[0].text,'review the release plan.');
 });
+test('A confirmed same-track forced cut can join a dependent Chinese phrase without editing evidence',()=>{
+ const left={...parts[0],text:'GDP增速是负。',source_track:'system',boundary_reason:'hard_limit'};
+ const right={...parts[1],text:'的百分之二十八点八。',source_track:'system'};
+ const [group]=paragraphs([left,right]);
+ assert.equal(group.text,'GDP增速是负的百分之二十八点八。');
+ assert.equal(group.parts[0].text,'GDP增速是负。');
+ assert.equal(paragraphs([left,{...right,source_track:'microphone'}]).length,2);
+});

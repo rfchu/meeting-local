@@ -1,6 +1,7 @@
 """Recording-bound ASR supervisor. Subscribers never own inference lifetime."""
 from .languages import AUTO_LANGUAGE_ERROR, configure_asr, recording_language
 from .resource_policy import sync_live_demand
+from array import array
 import asyncio,hashlib,io,json,math,os,shutil,time,unicodedata,wave
 from contextlib import aclosing
 from .db import encode
@@ -8,7 +9,7 @@ from .live_batch import whisper_events
 from .live_policy import sentence_hint,update_load
 from .live_stream import qwen_events,inspect_audio
 from .live_results import RATE,plan_ranges
-from .live_segmentation import elastic_plan,HARD_SECONDS,PAUSE_SECONDS
+from .live_segmentation import acoustic_pause,elastic_plan,HARD_SECONDS,PAUSE_SECONDS
 from .track_audio import StreamingEchoCanceller
 
 MAX_EVENTS=192
@@ -201,7 +202,34 @@ class LiveSessions:
         return {'continuation_id':last['continuation_id'] if linked else rid+':'+str(start),
                 'continues_previous':linked,'continues_next':window.get('boundary_reason')=='hard_limit',
                 'boundary_reason':window.get('boundary_reason','standard')}
-    async def recognize_tracks(self,rid,config,window,on_partial=None,previous_tracks=None,echo=None):
+    def link_track_windows(self,rid,window,segments,payloads,break_at,failed_tracks):
+        start=round(window['offset']*RATE)
+        end=round(window['next_offset']*RATE)
+        previous=self.store.one("SELECT segments FROM live_asr_ranges WHERE recording_id=? AND engine='qwen' AND state='completed' AND end_frame=? ORDER BY rowid DESC LIMIT 1",(rid,start))
+        prior=json.loads(previous['segments']) if previous else []
+        frames=round(PAUSE_SECONDS*RATE)
+        for track,payload in payloads.items():
+            parts=[part for part in segments if part['source_track']==track]
+            if not parts:continue
+            last=next((part for part in reversed(prior) if part.get('source_track')==track),{})
+            with wave.open(io.BytesIO(payload),'rb') as wav:
+                head=wav.readframes(frames)
+                wav.setpos(max(0,wav.getnframes()-frames))
+                tail=array('h')
+                tail.frombytes(wav.readframes(frames))
+            tail.reverse()
+            first,final=parts[0],parts[-1]
+            linked=bool(last.get('continues_next') and last.get('continuation_id') and
+                        not window.get('skipped_seconds') and break_at!=start and
+                        round(last['end']*RATE)==round(first['start']*RATE)==start and
+                        acoustic_pause(head)[1]<PAUSE_SECONDS)
+            key=last['continuation_id'] if linked else f"{rid}:{start}:{track}"
+            first.update(continuation_id=key,continues_previous=linked)
+            final.update(continuation_id=key,boundary_reason=window['boundary_reason'],
+                         continues_next=not failed_tracks and window['boundary_reason']=='hard_limit' and
+                         round(final['end']*RATE)==end and acoustic_pause(tail.tobytes())[1]<PAUSE_SECONDS)
+
+    async def recognize_tracks(self,rid,config,window,on_partial=None,previous_tracks=None,echo=None,*,break_at=-1):
         """Preview each track independently, then persist the reconciled window."""
         payloads=window.pop('track_payloads')
         engine=config['engine']
@@ -209,7 +237,7 @@ class LiveSessions:
         if not factory:raise ValueError('实时识别引擎尚未配置')
         provider=configure_asr(factory(),config['source_language'])
         from .track_audio import ECHO_VERSION, reduce_echo_wav, remove_echo_duplicates, wav_echo_evidence, limit_asr_repetition
-        identity={'model':provider.identity(),'track_mode':'dual-v1','echo_version':ECHO_VERSION}
+        identity={'model':provider.identity(),'track_mode':'dual-v1','segmentation_version':2,'echo_version':ECHO_VERSION}
         duration=window['next_offset']-window['offset']
         confirmed=window.get('confirmed',True)
         aid=cached=None
@@ -264,8 +292,12 @@ class LiveSessions:
                                 parts=[dict(part,text=limit_asr_repetition(part['text'])) for part in event['result']['segments']]
                                 segments.extend(dict(part,source_track=track) for part in parts)
                                 if parts:
-                                    publish_partial({'source_track':track,'start':parts[0]['start'],
-                                                     'end':parts[-1]['end'],'text':' '.join(part['text'] for part in parts)})
+                                    text=' '.join(part['text'] for part in parts)
+                                    preview={'source_track':track,'start':parts[0]['start'],
+                                             'end':parts[-1]['end'],'text':text}
+                                    if engine=='qwen' and config.get('responsive'):
+                                        preview['stable_text']=stable_prefix(previous_track.get('text',''),text)
+                                    publish_partial(preview)
                                 break
                         else:raise RuntimeError('独立音轨未返回识别结果')
                 if confirmed:
@@ -273,6 +305,8 @@ class LiveSessions:
                     segments=await asyncio.to_thread(remove_echo_duplicates,segments,lambda start,end:
                         wav_echo_evidence(io.BytesIO(payloads['system']),io.BytesIO(original_mic),start-offset,end-offset),mark_mixed=True)
                     segments.sort(key=lambda item:item['start'])
+                    if engine=='qwen' and 'boundary_reason' in window:
+                        self.link_track_windows(rid,window,segments,payloads,break_at,failed_tracks)
                     if failed_tracks:self.cache.partial(aid,segments,failed_tracks)
                     else:self.cache.complete(aid,segments)
                     segments=[dict(part,live_range_id=aid,live_segment_index=i) for i,part in enumerate(segments)]
@@ -328,9 +362,13 @@ class LiveSessions:
                     available=max(0,capture.get('duration',0)-cursor/RATE)
                     target=min(HARD_SECONDS,max(next_target,math.floor(available))) if config['responsive'] else 15
                     dual=self.recordings.read(rid).get('include_microphone',False)
-                    window=await asyncio.to_thread(self.native.draft_window,rid,cursor/RATE,(min(8,next_target) if config['responsive'] else 15) if dual else target,
-                        config['responsive'],True,
-                        **({'split_tracks':True} if dual else {'sentence_end':hint} if hint is not None else {}))
+                    if dual:
+                        # A short acoustic pause is a boundary only when each decoded track ends a sentence.
+                        hints=[sentence_hint(part['text'],(preview_end-cursor)/RATE) for part in previous_tracks.values()]
+                        hint=hints[0] if preview_start==cursor and hints and all(h is not None for h in hints) else None
+                    window=await asyncio.to_thread(self.native.draft_window,rid,cursor/RATE,
+                        next_target if dual and config['responsive'] else target,
+                        config['responsive'],True,sentence_end=hint,split_tracks=dual)
                     paused=capture.get('state')=='paused'
                 else:
                     if not draining and row['status']=='running' and self.input_end(rid)<=preview_end:
@@ -361,9 +399,10 @@ class LiveSessions:
                     def publish_track(part):
                         track=part['source_track']
                         old=dual_preview.get(track,{})
-                        if len(part['text'])<len(old.get('text','')) and part['end']>=old.get('end',0):
+                        # A completed decode can legitimately revise the preview to shorter text.
+                        if 'stable_text' not in part and len(part['text'])<len(old.get('text','')) and part['end']>=old.get('end',0):
                             return
-                        if config['engine']=='qwen' and config['responsive']:
+                        if 'stable_text' not in part and config['engine']=='qwen' and config['responsive']:
                             prefix=previous_tracks.get(track,{}).get('stable_text','')
                             part=dict(part,stable_text=prefix if part['text'].startswith(prefix) else '')
                         dual_preview[track]=part
@@ -371,7 +410,7 @@ class LiveSessions:
                         self.checkpoint(rid,partial=partial)
                         self.emit(rid,'partial',partial=partial)
                     was_failed=echo.failed if echo is not None else False
-                    result,failure=await self.recognize_tracks(rid,config,window,publish_track,previous_tracks,echo)
+                    result,failure=await self.recognize_tracks(rid,config,window,publish_track,previous_tracks,echo,break_at=break_at)
                     if echo is not None and echo.failed and not was_failed:
                         self.emit(rid,'status',message='AEC3 不可用，已切回标准回声处理')
                 else:

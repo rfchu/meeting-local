@@ -311,7 +311,12 @@ def test_dual_supervisor_revises_each_track_without_sharing_prefix(tmp_path,monk
                 track=continuation['key'].rsplit(':',1)[-1]
                 with wave.open(str(path),'rb') as wav:duration=wav.getnframes()/16000
                 calls.append((track,continuation))
-                text=track_text[track]+('还要确认日期' if duration<=3 else '日期已经确认')
+                if track=='microphone' and duration>3:
+                    preview=manager.snapshot(rid)['partial']['tracks']
+                    system=next(part for part in preview if part['source_track']=='system')
+                    assert system['text']==track_text['system']+'日期已经确认'
+                    assert system['stable_text']==track_text['system']
+                text=track_text[track]+('接下来还要确认日期' if duration<=3 else '日期已经确认')
                 yield {'type':'qwen_partial','text':text}
                 yield {'type':'qwen_final','segments':[{'start':0,'end':duration,'text':text}]}
 
@@ -330,9 +335,33 @@ def test_dual_supervisor_revises_each_track_without_sharing_prefix(tmp_path,monk
                 for part in json.loads(manager.row(rid)['partial']).get('tracks',[])
             ) and len(calls)>=4)
             for track,continuation in calls[2:4]:
-                assert continuation['previous_text']==track_text[track]+'还要确认日期'
+                assert continuation['previous_text']==track_text[track]+'接下来还要确认日期'
             preview=manager.snapshot(rid)['partial']['tracks']
             assert {part['source_track']:part['stable_text'] for part in preview}==track_text
             assert not manager.cache.snapshot(rid,'qwen')
         finally:await manager.close()
     asyncio.run(run())
+
+
+@pytest.mark.parametrize('break_at,leading_quiet,expected',[
+    (-1,False,True),(25*16000,False,False),(-1,True,False),
+])
+def test_dual_forced_boundary_links_only_contiguous_same_track_audio(tmp_path,break_at,leading_quiet,expected):
+    manager,recordings,rid,_,_=setup(tmp_path)
+    parts=[{'start':0,'end':25,'text':track,'source_track':track}
+           for track in ('system','microphone')]
+    recordings.write(recordings.folder(rid)/'session.json',recordings.read(rid)|{'source':'macos'})
+    aid,_=manager.cache.begin(rid,'native','qwen',0,25,b'first',{})
+    manager.link_track_windows(rid,{'offset':0,'next_offset':25,'boundary_reason':'hard_limit'},
+        parts,{'system':audio(25),'microphone':audio(25)},-1,[])
+    manager.cache.complete(aid,parts)
+    assert parts[0]['continuation_id']!=parts[1]['continuation_id']
+    assert all(part['continues_next'] for part in parts)
+
+    next_parts=[{'start':25,'end':28,'text':'下一段','source_track':'system'}]
+    system=pcm_wav(b'\0\0'*12800+b'\x70\x17'*35200) if leading_quiet else audio(3)
+    manager.link_track_windows(rid,{'offset':25,'next_offset':28,'boundary_reason':'silence'},
+        next_parts,{'system':system,'microphone':audio(3)},break_at,[])
+    assert next_parts[0]['continues_previous']==expected
+    assert (next_parts[0]['continuation_id']==parts[0]['continuation_id'])==expected
+    assert not next_parts[0]['continues_next']

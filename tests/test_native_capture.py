@@ -253,5 +253,20 @@ def test_dual_continuous_speech_commits_while_still_recording(capture):
     for track in ('system','microphone'):
         (folder/(track+'.pcm')).write_bytes(b'\x70\x17'*8*16000)
     result=capture.draft_window(rid,0,3,True,True,split_tracks=True)
-    assert result['confirmed'] and result['next_offset']==8
+    assert not result['confirmed'] and result['next_offset']==8
+    RecordingStore.write(folder/'capture.json',{'state':'recording','duration':25,
+        'system_frames':25*16000,'microphone_frames':25*16000,'error':''})
+    for track in ('system','microphone'):
+        (folder/(track+'.pcm')).write_bytes(b'\x70\x17'*25*16000)
+    result=capture.draft_window(rid,0,11,True,True,split_tracks=True)
+    assert result['confirmed'] and result['next_offset']==25
+    assert result['boundary_reason']=='hard_limit'
     assert set(result['track_payloads'])=={'system','microphone'}
+
+def test_dual_uses_natural_pause_and_does_not_cut_other_active_track(capture):
+    rid,folder=running_window(capture,12,microphone=True)
+    (folder/'system.pcm').write_bytes(b'\x70\x17'*9*16000+b'\0\0'*3*16000)
+    (folder/'microphone.pcm').write_bytes(b'\x70\x17'*11*16000+b'\0\0'*16000)
+    result=capture.draft_window(rid,0,15,True,True,split_tracks=True)
+    assert result['confirmed'] and result['boundary_reason']=='silence'
+    assert result['next_offset']==11.8

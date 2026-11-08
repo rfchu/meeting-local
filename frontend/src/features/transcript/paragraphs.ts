@@ -36,6 +36,14 @@ export function paragraphs<T extends ContinuousPart>(
         /[A-Za-z0-9]$/.test(previous.text) && /^[A-Za-z0-9]/.test(segment.text)
           ? " "
           : "";
+      const lastPart = previous.parts[previous.parts.length - 1];
+      if (
+        lastPart.source_track &&
+        lastPart.boundary_reason === "hard_limit" &&
+        /^的[百千万]分之/.test(segment.text)
+      ) {
+        previous.text = previous.text.replace(/。$/, "");
+      }
       previous.text += separator + segment.text;
       previous.end = segment.end;
       previous.parts.push(segment);

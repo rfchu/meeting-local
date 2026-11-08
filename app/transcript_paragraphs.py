@@ -2,7 +2,7 @@
 import re
 
 def continuous(left,right):
-    return bool(left.get('continues_next') and right.get('continues_previous') and
+    return bool(left.get('source_track')==right.get('source_track') and left.get('continues_next') and right.get('continues_previous') and
         left.get('continuation_id') and left.get('continuation_id')==right.get('continuation_id') and
         abs(left['end']-right['start'])<=1/16000+.000001 and left.get('speaker','')==right.get('speaker',''))
 
