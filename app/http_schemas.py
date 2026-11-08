@@ -225,6 +225,7 @@ class LiveSessionInput(BaseModel):
     source_language: SourceLanguage | None=None
     engine: Literal["whisper","qwen"]="qwen"
     prefix_enabled: bool=True
+    echo_mode: Literal["standard","aec3"]="standard"
     responsive: bool=True
     context_enabled: bool=True
     terms: str=Field(default='',max_length=1000)

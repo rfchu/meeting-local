@@ -39,6 +39,7 @@ export default function RecordingView({
   captureSource,
   checkCapture,
   checkingCapture,
+  echoMode,
   closeWithPreparation,
   completing,
   completionMode,
@@ -122,6 +123,7 @@ export default function RecordingView({
   setCaptureSource,
   setCompletionMode,
   setContextEnabled,
+  setEchoMode,
   setCorrectionEnabled,
   setCorrectionProfileId,
   setCorrectionReviewOpen,
@@ -1201,6 +1203,8 @@ export default function RecordingView({
           engineLabel={engineLabel}
           engines={engines}
           environment={environment}
+          echoMode={echoMode}
+          setEchoMode={setEchoMode}
           flowReady={flowReady}
           meetings={meetings}
           minutesModel={minutesModel}

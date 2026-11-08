@@ -254,6 +254,7 @@ export function useRecordingController({
       preferences.correctionEnabled,
     ),
     [correctionReviewOpen, setCorrectionReviewOpen] = useState(false),
+    [echoMode, setEchoMode] = useState<"standard" | "aec3">("standard"),
     [responsiveMode, setResponsiveMode] = useState(preferences.responsiveMode),
     [modelStatus, setModelStatus] = useState<Awaited<
       ReturnType<typeof api.liveModelStatus>
@@ -409,6 +410,7 @@ export function useRecordingController({
       context_enabled: contextEnabled,
       terms: recognitionTerms,
       prefix_enabled: prefixEnabled,
+      echo_mode: captureSource === "macos-both" ? echoMode : "standard",
     },
     (event) => {
       if (event.type === "snapshot") {
@@ -585,6 +587,7 @@ export function useRecordingController({
     setPrefixEnabled(entry.config?.prefix_enabled !== false);
     setRecognitionTerms(entry.config?.terms || "");
     accruedRef.current = session.duration;
+    setEchoMode(entry.config?.echo_mode ?? "standard");
     activeSinceRef.current = performance.now();
     draftEnabledRef.current = !!entry.config;
     stateRef.current = "requesting";
@@ -1723,6 +1726,7 @@ export function useRecordingController({
     savedMeetingId,
     sessionRef,
     setAutoProcess,
+    echoMode,
     setBrief,
     setCaptureSource,
     setCompletionMode,
@@ -1745,6 +1749,7 @@ export function useRecordingController({
     setPrefixEnabled,
     setRecognitionTerms,
     setResponsiveMode,
+    setEchoMode,
     setSettingsOpen,
     setSettingsTab,
     setSilenceReminder,

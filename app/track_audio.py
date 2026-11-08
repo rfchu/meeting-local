@@ -1,6 +1,7 @@
 """Reference-based echo reduction for recognition; never modifies source audio."""
 from difflib import SequenceMatcher
 import io
+import logging
 import re
 import unicodedata
 import wave
@@ -74,6 +75,10 @@ def peak_frame_rms(samples):
 def reduce_echo_wav(system, microphone):
     mic = wav_samples(io.BytesIO(microphone))
     cleaned = _reduce_echo(wav_samples(io.BytesIO(system)), mic)
+    return echo_wave(cleaned)
+
+
+def echo_wave(cleaned):
     if peak_frame_rms(cleaned) < 64:
         cleaned = np.zeros_like(cleaned)
     output = io.BytesIO()
@@ -81,6 +86,44 @@ def reduce_echo_wav(system, microphone):
         wav.setparams((1, 2, RATE, 0, 'NONE', 'not compressed'))
         wav.writeframes(cleaned.astype('<i2', copy=False).tobytes())
     return output.getvalue()
+
+
+class StreamingEchoCanceller:
+    """Process each new sample once, keeping only the current ASR window."""
+
+    def __init__(self):
+        self.processor = None
+        self.offset = None
+        self.cleaned = np.empty(0, dtype=np.int16)
+        self.failed = False
+
+    def process(self, system, microphone, offset):
+        if self.failed:
+            return reduce_echo_wav(system, microphone)
+        try:
+            far = wav_samples(io.BytesIO(system))
+            near = wav_samples(io.BytesIO(microphone))
+            if len(far) != len(near):
+                raise ValueError('AEC3 双轨长度不一致')
+            if self.offset != offset:
+                if self.offset is None or self.offset + len(self.cleaned) != offset:
+                    from pywebrtc_audio import EchoCanceller
+                    self.processor = EchoCanceller(sample_rate=RATE)
+                self.offset = offset
+                self.cleaned = np.empty(0, dtype=np.int16)
+            seen = len(self.cleaned)
+            # Preserve the DSP frame boundary across overlapping ASR previews.
+            end = len(near) // (RATE // 100) * (RATE // 100)
+            if end > seen:
+                tail = self.processor.process(near[seen:end], far[seen:end])
+                self.cleaned = np.concatenate((self.cleaned, tail))
+            return echo_wave(np.concatenate((self.cleaned[:end], near[end:])))
+        except Exception:
+            logging.getLogger(__name__).exception('AEC3 unavailable, reverting to reference echo reduction')
+            self.failed = True
+            self.processor = None
+            self.cleaned = np.empty(0, dtype=np.int16)
+            return reduce_echo_wav(system, microphone)
 
 
 def echo_evidence(system, mic):

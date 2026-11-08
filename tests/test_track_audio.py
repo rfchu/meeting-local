@@ -71,3 +71,41 @@ def test_sustained_echo_drops_identical_text_but_keeps_anchored_local_question()
     assert kept[1]['echo_original_text'] == question['text']
     assert remove_echo_duplicates(kept, evidence) == kept
     assert remove_echo_duplicates([online, question], lambda *_:'none') == [online, question]
+
+
+def test_aec3_keeps_state_across_growing_previews_and_falls_back(monkeypatch):
+    import io
+    import sys
+    from types import SimpleNamespace
+    from app.live_session import pcm_wav
+    from app.track_audio import StreamingEchoCanceller, reduce_echo_wav, wav_samples
+
+    calls = []
+
+    class Processor:
+        def __init__(self, sample_rate):
+            assert sample_rate == RATE
+            calls.append('new')
+
+        def process(self, near, far):
+            calls.append(len(near))
+            if len(calls) == 5:
+                raise RuntimeError('synthetic DSP failure')
+            return near - far
+
+    monkeypatch.setitem(sys.modules, 'pywebrtc_audio', SimpleNamespace(EchoCanceller=Processor))
+    canceller = StreamingEchoCanceller()
+    def audio(value, frames):
+        return pcm_wav(np.full(frames, value, dtype=np.int16).tobytes())
+
+    for offset, size in ((0, 165), (0, 320), (320, 160)):
+        result = canceller.process(audio(500, size), audio(1200, size), offset)
+        cleaned = wav_samples(io.BytesIO(result))
+        assert len(cleaned) == size
+        assert np.all(cleaned[:160] == 700)
+    assert calls == ['new', 160, 160, 160]
+    far, near = audio(500, 320), audio(1200, 320)
+    assert canceller.process(far, near, 320) == reduce_echo_wav(far, near)
+    assert canceller.failed
+    assert canceller.process(far, near, 320) == reduce_echo_wav(far, near)
+    assert calls == ['new', 160, 160, 160, 160]

@@ -11,6 +11,8 @@ type Props = Pick<
   | "briefReady"
   | "briefSaved"
   | "captureSource"
+  | "echoMode"
+  | "setEchoMode"
   | "checkCapture"
   | "checkingCapture"
   | "completionMode"
@@ -62,6 +64,8 @@ export default function RecordingSettingsDialog({
   briefReady,
   briefSaved,
   captureSource,
+  echoMode,
+  setEchoMode,
   checkCapture,
   checkingCapture,
   completionMode,
@@ -401,6 +405,24 @@ export default function RecordingSettingsDialog({
               ))}
             </select>
           </label>
+          {captureSource === "macos-both" && (
+            <label className="capture-source">
+              双轨实时消回声
+              <select
+                value={echoMode}
+                disabled={state !== "idle"}
+                onChange={(event) =>
+                  setEchoMode(
+                    event.target.value === "aec3" ? "aec3" : "standard",
+                  )
+                }
+              >
+                <option value="standard">标准</option>
+                <option value="aec3">WebRTC AEC3（实验）</option>
+              </select>
+              <small>AEC3 不可用时自动切回标准处理。原始音轨独立保存。</small>
+            </label>
+          )}
           <p className="native-capture-hint">
             实时草稿与停止后的正式转写引擎独立选择。
             {draftEngine === "qwen"

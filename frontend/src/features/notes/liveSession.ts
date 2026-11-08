@@ -11,6 +11,7 @@ export interface SessionConfig {
   context_enabled: boolean;
   terms: string;
   prefix_enabled?: boolean;
+  echo_mode?: "standard" | "aec3";
 }
 export interface SessionSnapshot {
   protocol_version?: number;

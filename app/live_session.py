@@ -9,6 +9,7 @@ from .live_policy import sentence_hint,update_load
 from .live_stream import qwen_events,inspect_audio
 from .live_results import RATE,plan_ranges
 from .live_segmentation import elastic_plan,HARD_SECONDS,PAUSE_SECONDS
+from .track_audio import StreamingEchoCanceller
 
 MAX_EVENTS=192
 
@@ -105,17 +106,19 @@ class LiveSessions:
 
     async def start(self,rid,config):
         if self.closed:raise ValueError('服务正在关闭')
-        config={'engine':'qwen','prefix_enabled':True,**config}
+        config={'engine':'qwen','prefix_enabled':True,'echo_mode':'standard',**config}
         config['source_language']=recording_language(self.recordings,rid,config.get('source_language'))
         if config['engine'] not in ('qwen','whisper'):raise ValueError('不支持的实时识别引擎')
         if config['engine']=='whisper':config.update(responsive=False,prefix_enabled=False,context_enabled=False,terms='')
         session=self.recordings.read(rid)
         if session['state']=='completed' or self.store.one('SELECT id FROM meetings WHERE id=?',(rid,)):raise ValueError('录音已保存，不能重启实时识别')
         source='native' if session.get('source')=='macos' else 'browser'
+        if source!='native' or not session.get('include_microphone'):
+            config['echo_mode']='standard'
         if source=='native' and self.native.status(rid,touch=False).get('state') not in ('recording','paused'):raise ValueError('原生采集未运行，已有结果仍可查看')
         row=self.store.one('SELECT * FROM live_sessions WHERE recording_id=?',(rid,))
         if row and row['status']=='stopped':raise ValueError('实时会话已结束，已有结果仍可查看')
-        if row and {'engine':'qwen','prefix_enabled':True,'source_language':'zh',**json.loads(row['config'])}!=config:raise ValueError('正在运行的实时会话不能更换识别配置')
+        if row and {'engine':'qwen','prefix_enabled':True,'echo_mode':'standard','source_language':'zh',**json.loads(row['config'])}!=config:raise ValueError('正在运行的实时会话不能更换识别配置')
         if not row:
             # Adopt old completed ranges without re-recognizing them after an upgrade.
             ranges,_=plan_ranges(self.cache.snapshot(rid,config['engine'],config['source_language']),86400)
@@ -198,7 +201,7 @@ class LiveSessions:
         return {'continuation_id':last['continuation_id'] if linked else rid+':'+str(start),
                 'continues_previous':linked,'continues_next':window.get('boundary_reason')=='hard_limit',
                 'boundary_reason':window.get('boundary_reason','standard')}
-    async def recognize_tracks(self,rid,config,window,on_partial=None,previous_tracks=None):
+    async def recognize_tracks(self,rid,config,window,on_partial=None,previous_tracks=None,echo=None):
         """Preview each track independently, then persist the reconciled window."""
         payloads=window.pop('track_payloads')
         engine=config['engine']
@@ -210,9 +213,6 @@ class LiveSessions:
         duration=window['next_offset']-window['offset']
         confirmed=window.get('confirmed',True)
         aid=cached=None
-        if confirmed:
-            aid,cached=self.cache.begin(rid,'native',engine,window['offset'],duration,
-                                       b''.join(payloads.values()),identity)
         started=time.monotonic()
         failed_tracks=[]
         first_text_ms=None
@@ -221,10 +221,20 @@ class LiveSessions:
             if first_text_ms is None:first_text_ms=round((time.monotonic()-started)*1000)
             if on_partial:on_partial(part)
         try:
+            original_mic=payloads['microphone']
+            raw_tracks=b''.join(payloads.values()) if confirmed else None
+            if echo is not None:
+                payloads['microphone']=await asyncio.to_thread(
+                    echo.process,payloads['system'],original_mic,round(window['offset']*RATE))
+                if not echo.failed:
+                    identity['echo_mode']='aec3'
+                    if confirmed:identity['cleaned_sha256']=hashlib.sha256(payloads['microphone']).hexdigest()
+            if confirmed:
+                aid,cached=self.cache.begin(rid,'native',engine,window['offset'],duration,raw_tracks,identity)
             if cached is None:
                 segments=[]
-                original_mic=payloads['microphone']
-                payloads['microphone']=await asyncio.to_thread(reduce_echo_wav,payloads['system'],payloads['microphone'])
+                if echo is None:
+                    payloads['microphone']=await asyncio.to_thread(reduce_echo_wav,payloads['system'],original_mic)
                 for track,payload in payloads.items():
                     previous_track=(previous_tracks or {}).get(track,{})
                     continuation={
@@ -269,7 +279,8 @@ class LiveSessions:
                 cached=segments
             return {**window,'engine':engine,'segments':cached,'duration':duration,'confirmed':confirmed,
                     'processing_ms':round((time.monotonic()-started)*1000),'first_text_ms':first_text_ms,
-                    'persisted':confirmed,'decoder':{},'failed_tracks':failed_tracks},None
+                    'persisted':confirmed,'decoder':{},'failed_tracks':failed_tracks,
+                    'echo_mode':identity.get('echo_mode','standard')},None
         except asyncio.CancelledError:
             if aid:self.cache.fail(aid,'双轨识别中断，原音已保留')
             raise
@@ -287,6 +298,7 @@ class LiveSessions:
         previous='';stable='';preview_end=0;preview_start=None;next_target=3;errors=0
         dual_preview={}
         previous_tracks={}
+        echo=StreamingEchoCanceller() if json.loads(self.row(rid)['config']).get('echo_mode')=='aec3' else None
         saved_metrics=json.loads(self.row(rid)['metrics']);totals=dict(saved_metrics.get('decoder_totals',{}))
         break_at=saved_metrics.get('continuation_break_at',-1)
         load=saved_metrics.get('load',{});resource_notice=0
@@ -358,7 +370,10 @@ class LiveSessions:
                         partial=self.track_preview(window,dual_preview)
                         self.checkpoint(rid,partial=partial)
                         self.emit(rid,'partial',partial=partial)
-                    result,failure=await self.recognize_tracks(rid,config,window,publish_track,previous_tracks)
+                    was_failed=echo.failed if echo is not None else False
+                    result,failure=await self.recognize_tracks(rid,config,window,publish_track,previous_tracks,echo)
+                    if echo is not None and echo.failed and not was_failed:
+                        self.emit(rid,'status',message='AEC3 不可用，已切回标准回声处理')
                 else:
                     if config.get('engine','qwen')=='qwen':window.update(self.continuation(rid,window,break_at))
                     payload=window.pop('payload');window.pop('silent',None);result=None;failure=None;last_sent=0
@@ -384,6 +399,7 @@ class LiveSessions:
                 errors=0;text=''.join(s['text'] for s in result['segments'])
                 stable=stable_prefix(previous,text);previous=text;preview_end=end
                 metrics={k:result.get(k) for k in ('processing_ms','first_text_ms','duration','confirmed','skipped_seconds','decoder','boundary_reason','extending')}
+                if dual_window:metrics['echo_mode']=result['echo_mode']
                 recovery=json.loads(self.row(rid)['metrics']).get('recovery')
                 if recovery:
                     metrics['recovery']=dict(recovery,state=('catching_up' if result['confirmed'] else 'resuming'))
