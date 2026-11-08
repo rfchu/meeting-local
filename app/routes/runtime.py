@@ -2,13 +2,13 @@
 import json, os, shutil, sqlite3
 from pathlib import Path
 from typing import Literal
-from fastapi import HTTPException, Query, Response
+from fastapi import HTTPException, Query, Request, Response
 from starlette.concurrency import run_in_threadpool
 from ..chinese_record import LiveTranslationProfileChanged, TranslationInput, live_source, translate_live_segment
 from ..resources import ResourceBusy
 from ..db import uid
 from .. import companion, workspace_readiness
-from ..host_bridge import identity as host_identity, maintenance_busy
+from ..host_bridge import identity as host_identity, maintenance_busy, workspace_proof
 from ..release_readiness import source_digest, frontend_delivery, inspect_bundle
 from ..native_capture import HELPER
 from ..providers import WhisperCpp, engine_catalog, LocalDiarization, LocalPunctuation
@@ -26,23 +26,26 @@ def register_routes(app,services:ApplicationServices):
 
     loaded_backend = source_digest(Path(__file__).resolve().parents[2])
 
+    def proof(request, purpose):
+        return workspace_proof(app.state.workspace_key, purpose, request.headers.get('x-tingji-challenge', ''))
+
     @app.get('/api/runtime/workspace')
     def workspace_status():
         return workspace_readiness.inspect(app.state.paths)
 
     @app.get('/api/runtime/host')
-    def host_connection():
-        return host_identity(app.state.paths)
+    def host_connection(request: Request):
+        return host_identity(app.state.paths) | proof(request, 'host')
 
     @app.get('/api/runtime/companion')
-    async def companion_status(mode:Literal['status','original','bilingual','highlights']='status',
+    async def companion_status(request: Request, mode:Literal['status','original','bilingual','highlights']='status',
                                rid:str|None=Query(default=None,pattern=r'^[0-9a-f]{32}$'),
                                follow:str|None=Query(default=None,pattern=r'^[0-9a-f]{32}$'),
                                after:int|None=Query(default=None,ge=0)):
         if mode in ('original', 'bilingual') and follow and after is not None and (not rid or rid == follow):
             await services.live_sessions.wait_for_change(follow, after)
         view = await run_in_threadpool(companion.snapshot, services, mode, rid)
-        return {'host':host_identity(app.state.paths),'snapshot':view}
+        return {'host':host_identity(app.state.paths),'snapshot':view} | proof(request, 'companion')
 
     @app.post('/api/runtime/companion/translation', status_code=204)
     def companion_translation(rid:str=Query(pattern=r'^[0-9a-f]{32}$'),
@@ -80,9 +83,9 @@ def register_routes(app,services:ApplicationServices):
                 'capture': capture, 'busy': busy}
 
     @app.get('/api/runtime/service')
-    def service_identity():
+    def service_identity(request: Request):
         return {'pid':os.getpid(),'instance_id':os.getenv('TINGJI_INSTANCE_ID'),
-                'mode':os.getenv('TINGJI_SERVICE_MODE','foreground'),'journal_available':lifecycle.available}
+                'mode':os.getenv('TINGJI_SERVICE_MODE','foreground'),'journal_available':lifecycle.available} | proof(request, 'service')
 
 
     @app.get('/api/runtime/lifecycle')
@@ -124,7 +127,8 @@ def register_routes(app,services:ApplicationServices):
         try:base_url=validate_llm_endpoint(body.provider_type,body.base_url)
         except ValueError as error:raise HTTPException(400,str(error))
         old=llm_config(body.config_id) if body.config_id else None
-        api_key=(body.api_key or '').strip() or (old['api_key'] if old else '')
+        same_destination=old and old['provider_type']==body.provider_type and old['base_url']==base_url
+        api_key='' if body.clear_api_key else ((body.api_key or '').strip() or (old['api_key'] if same_destination else ''))
         if body.provider_type=='cloud' and not api_key:raise HTTPException(400,'云端模型需要 API Key')
         profile={'provider_type':body.provider_type,'base_url':base_url,'model':body.model.strip(),'api_key':api_key}
         provider=OpenAICompatibleProvider(profile);result=provider.status()
@@ -171,7 +175,8 @@ def register_routes(app,services:ApplicationServices):
                 if json.loads(job['config']).get('profile_id')==cid:raise HTTPException(409,'此模型正被任务使用，请在任务完成后修改连接或推理参数；功能默认方案仍可独立调整')
         try:base_url=validate_llm_endpoint(body.provider_type,body.base_url)
         except ValueError as error:raise HTTPException(400,str(error))
-        api_key='' if body.clear_api_key else ((body.api_key or '').strip() or old['api_key'])
+        same_destination=old['provider_type']==body.provider_type and old['base_url']==base_url
+        api_key='' if body.clear_api_key else ((body.api_key or '').strip() or (old['api_key'] if same_destination else ''))
         if body.provider_type=='cloud' and not api_key:raise HTTPException(400,'云端模型需要 API Key')
         try:analysis_chunk_chars(body.context_window,body.analysis_chunk_mode,body.analysis_chunk_chars)
         except ValueError as error:raise HTTPException(400,str(error))

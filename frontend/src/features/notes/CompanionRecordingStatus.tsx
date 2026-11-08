@@ -28,6 +28,23 @@ export default function CompanionRecordingStatus({
   const verified = !query.isError && runtime?.identity?.recording_id === id;
   const view = verified ? recordingStatus(runtime, "", false) : undefined;
   const meeting = verified ? runtime?.identity?.meeting_id : undefined;
+  const nativeActive =
+    verified &&
+    !meeting &&
+    query.data?.source === "native" &&
+    ["recording", "paused", "starting"].includes(runtime?.phase || "");
+  const nativeControl = useQuery({
+    queryKey: ["companion-native-control", id],
+    queryFn: ({ signal }) => api.nativeStatus(id, signal),
+    enabled: nativeActive,
+    retry: false,
+    refetchInterval: 3000,
+  });
+  const canRecover =
+    nativeActive &&
+    !nativeControl.isError &&
+    nativeControl.data?.ownership?.control_required &&
+    nativeControl.data.ownership.can_recover_control;
   return (
     <Modal className="small-dialog" ariaLabel="本场录音状态" onClose={onClose}>
       <h2>本场录音状态</h2>
@@ -52,15 +69,12 @@ export default function CompanionRecordingStatus({
             : "暂时无法核对本场录音，未切换到其他会话。"}
         </p>
       )}
-      {verified &&
-        !meeting &&
-        query.data?.source === "native" &&
-        ["recording", "paused", "starting"].includes(runtime?.phase || "") &&
-        onNativeRecording && (
-          <button onClick={() => onNativeRecording(id)}>
-            继续查看本场录音
-          </button>
-        )}
+      {nativeActive && !canRecover && (
+        <p>这里显示本场录音状态。请回到开始录音的工作台控制录音。</p>
+      )}
+      {canRecover && onNativeRecording && (
+        <button onClick={() => onNativeRecording(id)}>恢复本场录音控制</button>
+      )}
       {meeting && onMeeting && (
         <button onClick={() => onMeeting(meeting)}>打开本场会议</button>
       )}

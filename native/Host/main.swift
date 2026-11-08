@@ -6,10 +6,28 @@ let probeOnly = arguments == ["--probe"]
 let activateOnly = arguments == ["--activate"]
 guard arguments.isEmpty || probeOnly || activateOnly else { fputs("用法：TingjiHost [--probe|--activate]\n", stderr); exit(2) }
 guard let configurationURL = Bundle.main.url(forResource: "host-config", withExtension: "json"),
-      let defaults = try? HostConfiguration.load(configurationURL),
+      let bundled = try? HostConfiguration.load(configurationURL),
       let directory = try? HostPreferences.resolveDirectory(),
       let preferences = try? HostPreferences(directory: directory) else {
     fputs("宿主连接或配置目录无效，请检查本机配置。\n", stderr); exit(2)
+}
+let defaults: HostConfiguration
+if Bundle.main.object(forInfoDictionaryKey: "TingjiPortableRuntime") as? Bool == true,
+   let resources = Bundle.main.resourceURL,
+   let portable = try? HostConfiguration(
+       projectRoot: resources.appendingPathComponent("PortableRuntime/code").path,
+       dataRoot: directory.appendingPathComponent("data").path,
+       backupsRoot: directory.appendingPathComponent("backups").path,
+       port: bundled.port) {
+    defaults = portable
+} else {
+    defaults = bundled
+}
+func loadConnection() -> HostConfigurationLoad {
+    if defaults.portableRuntime != nil {
+        return HostConfigurationLoad(configuration: defaults, token: nil, saved: false, problem: false)
+    }
+    return preferences.load(defaults: defaults)
 }
 func activateOwner() {
     DistributedNotificationCenter.default().postNotificationName(HostInstanceLock.activationName(preferences: preferences), object: nil, userInfo: nil, deliverImmediately: true)
@@ -18,7 +36,7 @@ if activateOnly {
     guard HostInstanceLock.isRunning(preferences: preferences) else { exit(1) }
     activateOwner(); exit(0)
 }
-let loaded = preferences.load(defaults: defaults)
+let loaded = loadConnection()
 let configuration = loaded.configuration
 if probeOnly {
     guard !loaded.problem else { print("{\"connected\":false,\"configuration_error\":true}"); exit(2) }
@@ -38,8 +56,12 @@ do {
     guard let acquired = try HostInstanceLock(preferences: preferences) else { activateOwner(); exit(0) }
     lease = acquired
 } catch { fputs("宿主运行锁不可用，未启动新实例。\n", stderr); exit(2) }
+if configuration.portableRuntime != nil {
+    do { _ = try preferences.workspaceKey(create: true) }
+    catch { fputs("无法建立私有工作空间授权，请检查本机配置。\n", stderr); exit(2) }
+}
 let application = NSApplication.shared
-let activeLoad = preferences.load(defaults: defaults)
+let activeLoad = loadConnection()
 let delegate = HostAppDelegate(defaults: defaults, loaded: activeLoad, preferences: preferences)
 application.setActivationPolicy(.regular); application.delegate = delegate
 withExtendedLifetime((lease, delegate)) { application.run() }

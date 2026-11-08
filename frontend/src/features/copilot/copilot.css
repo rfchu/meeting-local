@@ -434,6 +434,8 @@
 
 /* Right Extracted Sidebar */
 .copilot-sidebar {
+  position: static;
+  width: auto;
   flex: 0 0 340px;
   height: 100%;
   overflow-y: auto;

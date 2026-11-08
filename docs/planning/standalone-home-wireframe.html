@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>听记 · 首页低保真评审</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#ededed;color:#202020;font:16px/1.6 system-ui,sans-serif}
+main{max-width:950px;margin:auto;padding:32px 20px 60px}h1,h2,h3,p{margin:0 0 12px}h1{font-size:32px}h2{font-size:19px}h3{font-size:26px}
+nav,.actions{display:flex;flex-wrap:wrap;gap:8px}nav{margin:20px 0 30px}nav a,.button{border:1px solid #777;border-radius:6px;padding:6px 12px;background:white;color:inherit;text-decoration:none}.primary{background:#252525;color:white;border-color:#252525}
+section{margin-top:30px;scroll-margin-top:16px}.window{border:1px solid #999;background:#fff;border-radius:10px;overflow:hidden;margin-bottom:12px}
+.bar{display:flex;justify-content:space-between;gap:10px;padding:10px 20px;border-bottom:1px solid #bbb}.screen{padding:22px}.quiet{color:#555}.note,.notice{background:#f1f1f1;border:1px solid #bdbdbd;border-radius:6px;padding:12px 14px;margin-top:16px}.notice{border-left:4px solid #333}.empty{border:1px dashed #aaa;padding:14px;margin-top:16px}.list{margin-top:18px}.row{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:9px 0;border-top:1px solid #ccc}.subcase{margin-top:20px}.caption{font-size:14px;color:#555}
+</style>
+<main>
+<h1>听记首页 · 低保真原型</h1>
+<p class="quiet">独立发行评审稿。示例数据用于说明布局与流程，操作按钮为静态占位。</p>
+<nav aria-label="跳到状态"><a href="#first">01 首次使用</a><a href="#daily">02 日常使用</a><a href="#ongoing">03 录音与恢复</a></nav>
+
+<section id="first">
+<h2>01 · 首次使用</h2>
+<div class="window"><div class="bar"><strong>听记</strong><span>运行管理</span></div>
+<div class="screen"><h3>开始记录会议</h3><p class="quiet">录制电脑声音或麦克风，也可以整理已有录音。</p>
+<div class="actions"><span class="button primary">开始录音</span><span class="button">导入音频</span></div>
+<div class="note"><strong>转写模型尚未安装</strong><br>可以先录音或导入音频，模型安装后再转写。 <u>安装模型</u></div>
+<div class="empty">还没有会议记录。 <u>查看样例会议</u></div></div></div>
+<p class="caption">后台就绪即到此页。点击开始录音后选择音源，再按所选音源提示权限。使用 AI 功能时再进入 LLM 配置引导。</p>
+</section>
+
+<section id="daily">
+<h2>02 · 日常使用</h2>
+<div class="window"><div class="bar"><strong>听记</strong><span>资料库　·　运行管理</span></div>
+<div class="screen"><h3>会议工作台</h3>
+<div class="actions"><span class="button primary">开始录音</span><span class="button">导入音频</span></div>
+<div class="list"><strong>最近会议</strong>
+<div class="row"><span>项目进度会 <small class="quiet">· 录音已保存</small></span><span class="button">继续整理</span></div>
+<div class="row"><span>产品评审 <small class="quiet">· 纪要已采用</small></span><span class="button">查看成果</span></div></div></div></div>
+<p class="caption">沿用同一首页结构。已有记录时，用最近会议替代空态。正常运行时收起环境提示。</p>
+</section>
+
+<section id="ongoing">
+<h2>03 · 有录音或待恢复</h2>
+<p class="subcase"><strong>仍在录音或已暂停 · 直接回到本场</strong></p>
+<div class="window"><div class="bar"><strong>本场会议</strong><span>● 正在录音　02:18</span></div>
+<div class="screen"><div class="actions"><span class="button primary">实时文字</span><span class="button">AI 概览</span></div>
+<div class="note">继续讨论下周交付时间与验收安排……</div>
+<p class="caption">当前会话原样打开。已暂停时显示暂停状态。</p></div></div>
+<p class="subcase"><strong>没有活跃会话 · 首页提醒检查已保存内容</strong></p>
+<div class="window"><div class="bar"><strong>听记</strong><span>资料库　·　运行管理</span></div>
+<div class="screen"><div class="notice"><strong>有 1 场中断录音可检查</strong><br>已保存的音频和简记可在录音恢复中查看。 <span class="button">查看已保存内容</span></div>
+<div class="actions" style="margin-top:16px"><span class="button primary">开始录音</span><span class="button">导入音频</span></div></div></div>
+<p class="caption">优先返回可唯一确认的活跃会话。会话归属不明时显示核对入口。只有空记录时，首页不展示音频恢复提示。</p>
+</section>
+</main>
+</html>

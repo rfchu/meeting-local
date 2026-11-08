@@ -1,5 +1,6 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { ModelConfigDialog } from "../../components/Dialogs";
+import ModelDirectoryImport from "./ModelDirectoryImport";
 import type { RuntimeOverview } from "./types";
 
 export default function ModelServicesPage({
@@ -41,10 +42,11 @@ export default function ModelServicesPage({
             </div>
           ))}
           <p className="muted">
-            本轮保留现有安装方式；本场引擎仍在录音或转写时选择。
+            在录音或转写时选择本场使用的语音引擎。
           </p>
         </section>
       )}
+      <ModelDirectoryImport active={active} />
       <ModelConfigDialog
         embedded
         onDirtyChange={onDirtyChange}

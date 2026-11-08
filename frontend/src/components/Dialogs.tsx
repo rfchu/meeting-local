@@ -135,6 +135,7 @@ export function ModelConfigDialog({
     [form, setForm] = useState<LLMConfigInput>(emptyConfig(false)),
     [result, setResult] = useState(""),
     [busy, setBusy] = useState(false);
+  const [testing, setTesting] = useState(false);
   const [dirty, setDirty] = useState(false);
   useEffect(() => {
     onDirtyChange?.(dirty);
@@ -186,7 +187,12 @@ export function ModelConfigDialog({
       <div className="config-header">
         <div>
           <h2>LLM 模型配置</h2>
-          <p>会议文字稿只会发送到你选择的分析接口。</p>
+          <p>使用你已运行的模型服务。可跳过配置，继续录音、转写和导出原文。</p>
+          {embedded && (
+            <button className="text-btn" onClick={onClose}>
+              返回工作区
+            </button>
+          )}
         </div>
         {!embedded && (
           <button className="text-btn" onClick={onClose}>
@@ -199,6 +205,7 @@ export function ModelConfigDialog({
           <div className="config-list-head">
             <b>配置列表</b>
             <button
+              disabled={busy || testing}
               onClick={() => {
                 if (
                   dirty &&
@@ -218,7 +225,7 @@ export function ModelConfigDialog({
             {configs.map((item) => (
               <button
                 key={item.id}
-                disabled={busy}
+                disabled={busy || testing}
                 className={`config-item${form.config_id === item.id ? " active" : ""}`}
                 onClick={() => select(item)}
               >
@@ -252,141 +259,155 @@ export function ModelConfigDialog({
             }
           }}
         >
-          <label>
-            配置名称
-            <input
-              required
-              maxLength={100}
-              value={form.name}
-              onChange={(e) => field("name", e.target.value)}
-            />
-          </label>
-          <label>
-            模型位置
-            <select
-              value={form.provider_type}
-              onChange={(e) => {
-                const local = e.target.value === "local";
-                setForm((old) => ({
-                  ...old,
-                  provider_type: local ? "local" : "cloud",
-                  base_url: local
-                    ? "http://127.0.0.1:1234/v1"
-                    : "https://api.openai.com/v1",
-                  name: old.config_id
-                    ? old.name
-                    : local
-                      ? "本机 LM Studio"
-                      : "云端模型",
-                }));
-              }}
-            >
-              <option value="local">本地模型</option>
-              <option value="cloud">云端模型</option>
-            </select>
-          </label>
-          <label>
-            接口地址
-            <input
-              required
-              value={form.base_url}
-              onChange={(e) => field("base_url", e.target.value)}
-            />
-          </label>
-          <label>
-            模型名称
-            <input
-              required
-              placeholder="例如：qwen3-8b"
-              value={form.model}
-              onChange={(e) => field("model", e.target.value)}
-            />
-          </label>
-          <label>
-            上下文窗口（tokens）
-            <input
-              type="number"
-              required
-              min={4096}
-              max={2000000}
-              step={1024}
-              value={form.context_window}
-              onChange={(e) => field("context_window", Number(e.target.value))}
-            />
-          </label>
-          <small>测试连接会在接口提供元数据时自动回填。</small>
-          <details>
-            <summary>高级设置</summary>
+          <fieldset disabled={testing || busy} className="llm-config-fields">
             <label>
-              最大分析分块
+              配置名称
+              <input
+                required
+                maxLength={100}
+                value={form.name}
+                onChange={(e) => field("name", e.target.value)}
+              />
+            </label>
+            <label>
+              模型位置
               <select
-                value={form.analysis_chunk_mode}
+                value={form.provider_type}
                 onChange={(e) => {
-                  const mode = e.target
-                    .value as LLMConfigInput["analysis_chunk_mode"];
+                  const local = e.target.value === "local";
+                  setDirty(true);
+                  setResult("");
                   setForm((old) => ({
                     ...old,
-                    analysis_chunk_mode: mode,
-                    analysis_chunk_chars:
-                      mode === "custom" && !old.analysis_chunk_chars
-                        ? Math.min(48000, safeChunkChars(old.context_window))
-                        : old.analysis_chunk_chars,
+                    provider_type: local ? "local" : "cloud",
+                    api_key: "",
+                    base_url: local
+                      ? "http://127.0.0.1:1234/v1"
+                      : "https://api.openai.com/v1",
+                    name: old.config_id
+                      ? old.name
+                      : local
+                        ? "本机 LM Studio"
+                        : "云端模型",
                   }));
                 }}
               >
-                <option value="auto">自动 · 按上下文窗口调整</option>
-                <option value="quality">质量优先 · 最高 48,000 字符</option>
-                <option value="speed">速度优先 · 最高 96,000 字符</option>
-                <option value="custom">自定义</option>
+                <option value="local">本地模型</option>
+                <option value="cloud">云端模型</option>
               </select>
             </label>
-            {form.analysis_chunk_mode === "custom" && (
-              <label>
-                自定义字符数
-                <input
-                  type="number"
-                  required
-                  min={8000}
-                  max={safeChunkChars(form.context_window)}
-                  step={1000}
-                  value={form.analysis_chunk_chars || 8000}
-                  onChange={(e) =>
-                    field("analysis_chunk_chars", Number(e.target.value))
-                  }
-                />
-              </label>
-            )}
+            <label>
+              接口地址
+              <input
+                required
+                value={form.base_url}
+                onChange={(e) => field("base_url", e.target.value)}
+              />
+            </label>
             <small>
-              当前将按约 {estimatedChunkChars(form).toLocaleString()}{" "}
-              个字符分块；当前上下文的安全预算不超过{" "}
-              {safeChunkChars(form.context_window).toLocaleString()}{" "}
-              字符。自动模式在 256K、512K 和更长上下文下最高分别使用 48K、64K 和
-              96K 字符。
+              {form.provider_type === "local"
+                ? "先在 LM Studio 等本机工具中启动 OpenAI 兼容服务，填入接口地址和模型 ID。"
+                : "填入服务商的 HTTPS 接口、模型 ID 和 API Key。测试连接只查询模型列表，发送会议资料时另行确认。"}
             </small>
-          </details>
-          <label>
-            API Key
-            <input
-              type="password"
-              autoComplete="new-password"
-              value={form.api_key || ""}
-              onChange={(e) => field("api_key", e.target.value)}
-            />
-          </label>
-          <small>
-            {form.config_id
-              ? "留空将保持已保存的 API Key 不变。"
-              : "密钥只保存在本机数据库，不会回显。"}
-          </small>
-          <label className="config-check">
-            <input
-              type="checkbox"
-              checked={form.is_default}
-              onChange={(e) => field("is_default", e.target.checked)}
-            />{" "}
-            设为默认分析模型
-          </label>
-          <div className="config-result">{result}</div>
+            <label>
+              模型名称
+              <input
+                required
+                placeholder="例如：qwen3-8b"
+                value={form.model}
+                onChange={(e) => field("model", e.target.value)}
+              />
+            </label>
+            <label>
+              上下文窗口（tokens）
+              <input
+                type="number"
+                required
+                min={4096}
+                max={2000000}
+                step={1024}
+                value={form.context_window}
+                onChange={(e) =>
+                  field("context_window", Number(e.target.value))
+                }
+              />
+            </label>
+            <small>测试连接会在接口提供元数据时自动回填。</small>
+            <details>
+              <summary>高级设置</summary>
+              <label>
+                最大分析分块
+                <select
+                  value={form.analysis_chunk_mode}
+                  onChange={(e) => {
+                    const mode = e.target
+                      .value as LLMConfigInput["analysis_chunk_mode"];
+                    setForm((old) => ({
+                      ...old,
+                      analysis_chunk_mode: mode,
+                      analysis_chunk_chars:
+                        mode === "custom" && !old.analysis_chunk_chars
+                          ? Math.min(48000, safeChunkChars(old.context_window))
+                          : old.analysis_chunk_chars,
+                    }));
+                  }}
+                >
+                  <option value="auto">自动 · 按上下文窗口调整</option>
+                  <option value="quality">质量优先 · 最高 48,000 字符</option>
+                  <option value="speed">速度优先 · 最高 96,000 字符</option>
+                  <option value="custom">自定义</option>
+                </select>
+              </label>
+              {form.analysis_chunk_mode === "custom" && (
+                <label>
+                  自定义字符数
+                  <input
+                    type="number"
+                    required
+                    min={8000}
+                    max={safeChunkChars(form.context_window)}
+                    step={1000}
+                    value={form.analysis_chunk_chars || 8000}
+                    onChange={(e) =>
+                      field("analysis_chunk_chars", Number(e.target.value))
+                    }
+                  />
+                </label>
+              )}
+              <small>
+                当前将按约 {estimatedChunkChars(form).toLocaleString()}{" "}
+                个字符分块；当前上下文的安全预算不超过{" "}
+                {safeChunkChars(form.context_window).toLocaleString()}{" "}
+                字符。自动模式在 256K、512K 和更长上下文下最高分别使用 48K、64K
+                和 96K 字符。
+              </small>
+            </details>
+            <label>
+              API Key
+              <input
+                type="password"
+                autoComplete="new-password"
+                value={form.api_key || ""}
+                onChange={(e) => field("api_key", e.target.value)}
+              />
+            </label>
+            <small>
+              {form.config_id
+                ? "接口地址与模型位置保持原值时，留空沿用已保存的 API Key。"
+                : "密钥只保存在本机数据库，不会回显。"}
+            </small>
+            <label className="config-check">
+              <input
+                type="checkbox"
+                checked={form.is_default}
+                onChange={(e) => field("is_default", e.target.checked)}
+              />{" "}
+              设为默认分析模型
+            </label>
+          </fieldset>
+          <div className="config-result" role="status">
+            {result}
+          </div>
           <div className="config-actions">
             {form.config_id && (
               <button
@@ -409,7 +430,9 @@ export function ModelConfigDialog({
             )}
             <button
               type="button"
+              disabled={testing || busy}
               onClick={async () => {
+                setTesting(true);
                 setResult("正在连接模型服务…");
                 try {
                   const value = await api.testConfig(form);
@@ -424,12 +447,14 @@ export function ModelConfigDialog({
                   );
                 } catch (error) {
                   setResult((error as Error).message);
+                } finally {
+                  setTesting(false);
                 }
               }}
             >
               测试连接
             </button>
-            <button className="primary" disabled={busy}>
+            <button className="primary" disabled={busy || testing}>
               保存配置
             </button>
           </div>

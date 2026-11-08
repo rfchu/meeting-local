@@ -67,7 +67,8 @@ class RecordingHealth:
         if native and capture.get('state')=='failed':
             failure_code='permission_required' if '隐私与安全性' in error and '允许听记采集器' in error else 'storage_failed' if diagnostics.get('failure_stage')=='storage' or error.startswith('磁盘保存失败') else 'capture_failed'
         # Empty failed starts are not recordings. Keep metadata and offer reversible hiding.
-        has_preparation=bool(any(session.get('brief',{}).values()))
+        has_preparation=any(value for key,value in (session.get('brief') or {}).items()
+                            if key not in ('source_language','output_language'))
         has_asr=bool(self.store.one('SELECT 1 FROM live_asr_ranges WHERE recording_id=? LIMIT 1',(rid,)))
         extra_audio=any(file_bytes(p)>0 for pattern in ('*.tmp','*.wav') for p in folder.glob(pattern))
         empty=native and not completed and not running and state in ('failed','interrupted','stopped') and not saved_bytes and not session.get('notes') and not has_preparation and not has_asr and not extra_audio

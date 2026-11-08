@@ -2,7 +2,7 @@
 import argparse,json,os,sqlite3,subprocess,time,uuid
 from pathlib import Path
 from app.paths import RuntimePaths
-from app.backups import create_backup,verify_backup,restore_backup,drill_backup,preflight,BackupError,write_json
+from app.backups import create_backup,verify_backup,restore_backup,preview_restore,drill_backup,preflight,BackupError,write_json
 ROOT=Path(__file__).resolve().parents[1]
 
 def main():
@@ -14,9 +14,10 @@ def main():
     create=actions.add_parser('create',help='服务停止后备份数据目录')
     create.add_argument('--data',default=str(paths.data))
     create.add_argument('--output',default=None)
-    for name in ('verify','drill','restore'):
+    for name in ('verify','drill','preview','restore'):
         child=actions.add_parser(name);child.add_argument('backup')
-        if name=='restore':child.add_argument('--target',required=True)
+        if name in ('preview','restore'):child.add_argument('--target',required=True)
+        if name=='restore':child.add_argument('--preview-id',default=None)
         if name=='drill':child.add_argument('--report',default=None)
     args=parser.parse_args()
     try:
@@ -27,7 +28,10 @@ def main():
             result=create_backup(args.data,output,revision.stdout.strip() if revision.returncode==0 else None)
             result['backup_directory']=str(output.resolve())
         elif args.action=='verify':result=verify_backup(args.backup)
-        elif args.action=='restore':result=restore_backup(args.backup,args.target);result['restored_directory']=str(Path(args.target).resolve())
+        elif args.action=='preview':result=preview_restore(args.backup,args.target)
+        elif args.action=='restore':
+            result=restore_backup(args.backup,args.target,args.preview_id)
+            result['restored_directory']=str(Path(args.target).resolve())
         else:
             result=drill_backup(args.backup)
             if args.report:write_json(Path(args.report),result)

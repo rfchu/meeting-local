@@ -30,3 +30,41 @@ MEETING_DATA=/local/new-data ./service.command start
 ```
 
 回退编号可从状态报告查询。宿主仍与本机源码和 Python 环境绑定。需要回退源码或数据结构时，按相应版本的运行要求和离线备份流程操作。
+
+## 将旧备份导入独立版
+
+在旧版结束录音、同步暂存并停止服务后，可用 `./backup.command create --data "$old_data" --output "$backup"` 生成备份。在独立版首次启动之前，预览备份并恢复到独立版的全新数据目录。
+
+```sh
+target="$HOME/Library/Application Support/cn.seeknow.tingji.host.standalone/data"
+./backup.command preview "$backup" --target "$target"
+./backup.command restore "$backup" --target "$target" --preview-id "<预览返回的 preview_id>"
+```
+
+预览列出备份来源、应用与数据库版本、文件类型、字节数和资料数量。备份若含已保存的模型配置，预览仅提示存在，恢复则保留备份里的配置和凭据。确认范围后再执行恢复。独立版包内也可调用相同命令。
+
+```sh
+runtime="/Applications/Tingji.app/Contents/Resources/PortableRuntime"
+"$runtime/python" backend "$runtime/code/scripts/manage_backups.py" preview "$backup" --target "$target"
+```
+
+恢复成功后打开独立版，抽查历史文字稿、简记、纪要和录音。若独立版已有资料，使用一个独立的新工作区演练，目标设为该工作区的 `data` 子目录，启动宿主时通过 `TINGJI_HOST_STATE_DIR` 指定该工作区。恢复途中中断会留下带标记的目标目录，应用会拒绝打开。先确认恢复进程已退出，将半成品移到旁边保留，再重新预览和恢复。原备份可以继续使用。
+
+## 手动更新与回退独立版
+
+将新版 DMG 中的 `Tingji.app` 提取到单独目录。先结束录音和后台任务，再退出旧版宿主和后台。更新期间使用原工作区。录音、任务或数据库写入尚在进行时，更新命令会要求稍后重试。
+
+```sh
+PYTHONPATH=. .venv/bin/python scripts/update_standalone.py update \
+  --app "$installed_app" --state "$workspace" \
+  --candidate "$extracted_app" --backup "$new_backup"
+```
+
+命令核对签名与数据库兼容性，保存备份，再替换应用。打开新版检查历史会议、录音和模型。需要回退时，退出宿主并停止后台，用更新返回的 `release` 编号找回上一版本。
+
+```sh
+PYTHONPATH=. .venv/bin/python scripts/update_standalone.py rollback \
+  --app "$installed_app" --state "$workspace" --release "$release"
+```
+
+若换包中断，使用同一命令入口的 `recover --app "$installed_app" --state "$workspace"` 核对换包结果。恢复完成后可重新启动相应版本。如果旧版无法读取升级后的数据库，将升级前备份恢复到新工作区，并单独保留升级后生成的资料。

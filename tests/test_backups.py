@@ -185,3 +185,91 @@ def test_cloud_placeholder_preflight_reads_no_content_and_backup_fails_before_co
     with pytest.raises(BackupError,match='云端占位'):create_backup(source,tmp_path/'backup')
     assert not (tmp_path/'backup').exists()
     assert not (source/'.backup-in-progress').exists()
+
+
+def test_d14_preview_and_retry_with_synthetic_meeting_and_audio(tmp_path, monkeypatch):
+    from array import array
+    from shutil import disk_usage
+    import wave
+
+    source = tmp_path / 'source'
+    store, mid, rid = sample(source)
+
+    def wav(path, amplitude):
+        with wave.open(str(path), 'wb') as audio:
+            audio.setparams((1, 2, 16000, 0, 'NONE', 'not compressed'))
+            audio.writeframes(array('h', [amplitude, -amplitude] * 8000).tobytes())
+
+    original = source / mid / 'original'
+    wav(original, 500)
+    (original.parent / 'asset.json').write_text(json.dumps(backups.hash_file(original)))
+    recording = source / 'recordings' / rid
+    for name, amplitude in [('system.wav', 1000), ('microphone.wav', 2000)]:
+        wav(recording / name, amplitude)
+    store.execute("UPDATE meetings SET revision=2 WHERE id=?", (mid,))
+    for version in (1, 2):
+        store.execute('INSERT INTO revisions(meeting_id,revision,segments,source) VALUES(?,?,?,?)',
+                      (mid, version, json.dumps([{'id':'s1','text':f'Synthetic version {version}'}]), 'manual'))
+    store.execute('INSERT INTO meeting_notes(id,meeting_id,raw_text) VALUES(?,?,?)',
+                  ('note', mid, 'Synthetic action item'))
+    store.execute("INSERT INTO artifacts(id,meeting_id,revision,kind,payload) VALUES(?,?,2,'meeting_minutes',?)",
+                  ('minutes', mid, '{"title":"Synthetic minutes"}'))
+    package = tmp_path / 'package'
+    create_backup(source, package, 'd14-fixture')
+
+    cli = [sys.executable, 'scripts/manage_backups.py']
+    def command(*args):
+        return json.loads(subprocess.check_output([*cli, *map(str,args)], text=True))
+
+    target = tmp_path / 'standalone' / 'data'
+    preview = command('preview', package, '--target', target)
+    assert not target.parent.exists()
+    assert preview['code_version'] == 'd14-fixture'
+    assert preview['logical_inventory']['revision_count'] == 2
+    assert preview['logical_inventory']['note_count'] == 1
+    assert preview['logical_inventory']['artifact_count'] == 2
+    assert preview['files_by_kind']['original_audio']['count'] == 1
+    assert preview['files_by_kind']['recording_audio']['count'] == 3
+    assert preview['includes_saved_model_configuration']
+    assert 'PRIVATE-KEY' not in json.dumps(preview)
+    with pytest.raises(BackupError, match='预览不一致'):
+        restore_backup(package, tmp_path / 'wrong-target', preview['preview_id'])
+
+    with monkeypatch.context() as limited:
+        limited.setattr(backups.shutil, 'disk_usage', lambda path: disk_usage(path)._replace(free=0))
+        with pytest.raises(BackupError, match='空间不足'):
+            restore_backup(package, target, preview['preview_id'])
+        assert not target.parent.exists()
+
+    interrupt = """
+import os,sys
+from app import backups
+copy = backups.copy_file
+def stop_after_copy(*args):
+    copy(*args)
+    os._exit(87)
+backups.copy_file = stop_after_copy
+backups.restore_backup(*sys.argv[1:])
+"""
+    child = subprocess.run([sys.executable, '-c', interrupt, str(package), str(target), preview['preview_id']])
+    assert child.returncode == 87
+    assert (target / '.restore-in-progress').is_file()
+    assert stat.S_IMODE(target.parent.stat().st_mode) == 0o700
+    with pytest.raises(RuntimeError, match='恢复尚未完成'):
+        create_app(target, start_worker=False)
+    assert verify_backup(package)['status'] == 'verified'
+
+    target.rename(target.with_name('interrupted'))
+    assert command('restore', package, '--target', target, '--preview-id', preview['preview_id'])['status'] == 'restore_verified'
+    restored = create_app(target, start_worker=False).state.store
+    assert restored.one('SELECT revision FROM meetings WHERE id=?', (mid,))['revision'] == 2
+    assert [row['revision'] for row in restored.all('SELECT revision FROM revisions ORDER BY revision')] == [1,2]
+    assert restored.one('SELECT raw_text FROM meeting_notes WHERE id=?', ('note',))['raw_text'] == 'Synthetic action item'
+    assert json.loads(restored.one('SELECT payload FROM artifacts WHERE id=?', ('minutes',))['payload'])['title'] == 'Synthetic minutes'
+    for file in [original, recording / 'system.wav', recording / 'microphone.wav']:
+        relative = file.relative_to(source)
+        assert backups.hash_file(target / relative) == backups.hash_file(file) == backups.hash_file(package / 'data' / relative)
+        with wave.open(str(target / relative), 'rb') as audio:
+            assert audio.getframerate() == audio.getnframes() == 16000
+            assert audio.getnchannels() == 1
+            assert any(audio.readframes(16000))

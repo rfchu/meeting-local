@@ -88,6 +88,23 @@ def test_native_pause_in_another_page_is_observed_even_if_session_row_still_runn
     sync_live_demand(scheduler,store);assert scheduler.live_owners
 
 
+def test_abandoned_browser_session_releases_queued_transcription(tmp_path):
+    app=create_app(tmp_path,start_worker=False);services=app.state.services
+    store=services.store;recordings=services.recordings
+    session=recordings.create('audio/webm');rid=session['id']
+    store.execute("INSERT INTO live_sessions(recording_id,source,status,config) VALUES(?,'browser','running','{}')",(rid,))
+    mid=uid();jid=uid()
+    store.execute('INSERT INTO meetings(id,title,filename) VALUES(?,?,?)',(mid,'synthetic','test.wav'))
+    store.execute("INSERT INTO jobs(id,meeting_id,state,kind,config) VALUES(?,?,'queued','transcription','{}')",(jid,mid))
+    assert services.worker.next_job() is None
+    session['updated']=time.time()-120
+    recordings.write(recordings.folder(rid)/'session.json',session)
+    assert services.worker.next_job()['id']==jid
+    assert recordings.read(rid)['state']=='recording'
+    recordings.metadata(rid,[],0,0)
+    assert services.worker.next_job() is None
+
+
 def test_cancel_endpoint_withdraws_waiting_job_only_and_prevents_early_retry(tmp_path):
     app=create_app(tmp_path,start_worker=False);store=app.state.store;scheduler=app.state.services.resources
     mid=uid();jid=uid();store.execute('INSERT INTO meetings(id,title,filename) VALUES(?,?,?)',(mid,'synthetic','test.wav'))

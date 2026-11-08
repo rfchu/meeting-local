@@ -30,7 +30,7 @@ bash scripts/setup_qwen.sh
 bash scripts/build_capture.sh
 ```
 
-使用原生采集时，请按 macOS 提示授权所选音源。查看服务状态可运行 `./service.command status`，停止服务可运行 `./service.command stop`。
+使用原生采集时，请按 macOS 提示授权所选音源。日常可从 Mac 宿主菜单栏的「服务状态」查看、启动或重启后台。命令行使用 `./service.command status`、`./service.command restart` 或 `./service.command stop`。重启前会检查录音和后台任务。
 
 ## 模型与数据
 

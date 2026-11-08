@@ -46,3 +46,35 @@ def test_binding_changes_with_project_and_data_not_backup_path(tmp_path):
     assert workspace_binding(a)!=workspace_binding(RuntimePaths(a.repository,tmp_path/'other',a.backups))
     assert workspace_binding(a)!=workspace_binding(RuntimePaths(tmp_path/'other',a.data,a.backups))
     assert workspace_binding(a)==workspace_binding(RuntimePaths(a.repository,a.data,tmp_path/'elsewhere'))
+
+
+def test_portable_requires_private_authorization_before_workbench_and_companion_writes(tmp_path, monkeypatch):
+    import hmac
+    monkeypatch.setenv('TINGJI_PORTABLE_SERVICE', '1')
+    secret = bytes(range(32))
+    keyfile = tmp_path/'workspace.key'
+    keyfile.write_bytes(secret)
+    keyfile.chmod(0o600)
+    app = create_app(tmp_path/'data', start_worker=False)
+    with TestClient(app) as client:
+        challenge = 'a'*32
+        host = client.get('/api/runtime/host', headers={'X-Tingji-Challenge': challenge})
+        assert host.json()['proof'] == hmac.digest(secret, b'host:'+challenge.encode(), 'sha256').hex()
+        write = '/api/meeting-preparation'
+        translation = '/api/runtime/companion/translation'
+        for token in (None, workspace_binding(app.state.paths), '0'*64):
+            headers = {'X-Tingji-Authorization': token} if token is not None else {}
+            assert client.put(write, json={'title': 'unauthorized'}, headers=headers).status_code == 403
+            assert client.post(translation, headers=headers).status_code == 403
+            assert client.post('/api/native-capture', json={}, headers=headers).status_code == 403
+            assert client.get('/api/runtime/companion', headers=headers).status_code == 403
+        assert not app.state.store.one('SELECT * FROM meeting_preparation')
+        token = hmac.digest(secret, ('request:'+workspace_binding(app.state.paths)).encode(), 'sha256').hex()
+        client.cookies.set('tingji_workspace_authorization', token)
+        assert client.put(write, json={'title': 'authorized'}).status_code == 200
+        client.cookies.clear()
+        headers = {'X-Tingji-Authorization': token, 'X-Tingji-Challenge': challenge}
+        companion = client.get('/api/runtime/companion', headers=headers)
+        assert companion.status_code == 200
+        assert companion.json()['proof'] == hmac.digest(secret, b'companion:'+challenge.encode(), 'sha256').hex()
+        assert client.post(translation, headers=headers).status_code == 422

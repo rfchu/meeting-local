@@ -1,6 +1,7 @@
 """Composition root: construct shared resources, bind lifecycle and register feature routes."""
 from .task_management import register_task_management
 from .model_preferences import register_model_preferences
+from .model_import import register_model_import
 from .runtime_management import register_runtime_management
 from .recording_acceptance import RecordingAcceptance,register_acceptance
 from .quality_samples import QualitySamples
@@ -109,7 +110,6 @@ def _create_app(data_dir=None,start_worker=True):
     for name in ('store','worker','lifecycle','capture_probes','keep_awake','recording_runtime',
                  'recording_validation','live_sessions','recording_commands','live_overview'):
         setattr(app.state,name,getattr(services,name))
-    register_local_only(app)
     register_onboarding(app,store,native_capture,capture_probes)
     quality_samples=QualitySamples(store.root)
     app.state.quality_samples=quality_samples
@@ -119,6 +119,12 @@ def _create_app(data_dir=None,start_worker=True):
     register_acceptance(app,acceptance)
     register_runtime_management(app,store,native_capture,resident,capture_probes,recording_runtime,resources,live_sessions,acceptance)
     register_model_preferences(app,store)
+    from .resource_policy import active_live_sessions
+    register_model_import(app, store.root, capture_busy=lambda: (
+        native_capture.ownership()['lease'] != 'free'
+        or any(active_live_sessions(store))
+        or bool(store.one("SELECT 1 FROM jobs WHERE state IN ('queued','running') AND COALESCE(kind,'transcription')='transcription' LIMIT 1"))
+    ))
     register_task_management(app,store,worker,resources)
     register_recording_validation(app,recording_validation)
     register_recording_commands(app,recording_commands)
@@ -135,6 +141,7 @@ def create_app(data_dir=None,start_worker=True):
     with DataLease(paths.data):
         app=_create_app(paths.data,start_worker)
         app.state.paths=paths
+        register_local_only(app)
         return app
 
 app=create_app()

@@ -1312,7 +1312,16 @@ dialog code {
   flex-direction: column;
   gap: 12px;
 }
-#modelConfigForm > label:not(.config-check) {
+.llm-config-fields {
+  border: 0;
+  padding: 0;
+  margin: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+#modelConfigForm .llm-config-fields > label:not(.config-check) {
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -3485,6 +3494,10 @@ button.note-options-trigger {
 }
 .live-draft-partial .live-stable-prefix {
   color: #334155;
+}
+.live-draft-partial .live-revisable-tail {
+  text-decoration: underline dotted;
+  text-underline-offset: 0.22em;
 }
 .live-session-resume {
   display: flex;

@@ -1,4 +1,5 @@
 """Meetings HTTP routes; shared services are supplied by the composition root."""
+from ..analysis_jobs import require_cloud_confirmation
 from ..chinese_record import (MeetingTranslationInput, TranslationInput, meeting_source, read_meeting_record,
                               read_japanese_draft_record, translate_japanese_draft_segment, translate_segment)
 from ..languages import EXPERIMENTAL_TRANSCRIPTION_LANGUAGES, configure_transcription_asr, meeting_languages
@@ -195,6 +196,7 @@ def register_routes(app,services:ApplicationServices):
         try:
             provider=OpenAICompatibleProvider(profile) if profile else LMStudioProvider()
             model=provider.resolve_model(body.model);aid=uid()
+            require_cloud_confirmation(profile,body,model)
             max_chars=analysis_chunk_chars(profile['context_window'],profile['analysis_chunk_mode'],profile['analysis_chunk_chars']) if profile else 8000
             resource='cloud_llm' if profile and profile['provider_type']=='cloud' else 'local_llm'
             with optional_slot(services.resources,'speaker_review',resource,('speaker_review',mid),legacy=resource=='local_llm'):
@@ -351,6 +353,7 @@ def register_routes(app,services:ApplicationServices):
         try:
             if profile:
                 provider=OpenAICompatibleProvider(profile);model=provider.resolve_model(body.model)
+                require_cloud_confirmation(profile,body,model)
                 provider_snapshot={'id':profile['id'],'name':profile['name'],'provider_type':profile['provider_type'],'base_url':profile['base_url'],
                     'context_window':profile['context_window'],'analysis_chunk_mode':profile['analysis_chunk_mode']}
             else:
@@ -365,7 +368,7 @@ def register_routes(app,services:ApplicationServices):
             if db.execute("SELECT 1 FROM jobs WHERE meeting_id=? AND state IN ('running','queued')",(mid,)).fetchone():raise HTTPException(409,'已有任务正在处理')
             budget=min(8000,int(((int(profile['context_window']) if profile else 32768)-2048-1200)*.6)-len(note['raw_text']))
             if budget<256:raise HTTPException(409,'当前模型上下文不足以容纳简记和依据，请缩短简记或选择更大上下文模型')
-            config={'note_id':nid,'revision':current['revision'],'profile_id':profile['id'] if profile else None,'provider':provider_snapshot,'model':model,
+            config={'note_id':nid,'cloud_confirmed':bool(profile and profile['provider_type']=='cloud' and body.confirm_cloud),'revision':current['revision'],'profile_id':profile['id'] if profile else None,'provider':provider_snapshot,'model':model,
                 **{key:note[key] for key in ('raw_text','note_type','captured_at','note_scope')},'segments':nearby_segments(json.loads(current['segments']),note['captured_at'],budget)}
             db.execute('INSERT INTO jobs(id,meeting_id,state,stage,config,kind) VALUES(?,?,?,?,?,?)',(jid,mid,'queued','等待简记扩写',encode(config),'note_expansion'))
         return {'id':jid,'model':model,'revision':current['revision']}

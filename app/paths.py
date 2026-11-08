@@ -5,7 +5,16 @@ from pathlib import Path
 
 ROOT=Path(__file__).resolve().parents[1]
 
+_activated_models = None
+
+def set_activated_models(path):
+    global _activated_models
+    _activated_models = path
+
 def model_root():
+    return _activated_models or configured_model_root()
+
+def configured_model_root():
     return Path(os.getenv('MEETING_MODELS') or ROOT/'models').expanduser().resolve()
 
 

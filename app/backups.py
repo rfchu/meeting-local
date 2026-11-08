@@ -300,18 +300,51 @@ def verify_backup(bundle):
             'logical_inventory':logical,'audio_content_validated':False}
 
 
-def restore_backup(bundle,target):
-    bundle=Path(bundle).absolute();manifest=load_manifest(bundle);bundle=bundle.resolve();target=Path(target).resolve()
-    source=Path(manifest.get('source_root','/')).resolve()
-    if target==bundle or target.is_relative_to(bundle) or bundle.is_relative_to(target) or target==source or target.is_relative_to(source):raise BackupError('恢复必须使用备份和原数据目录之外的新目录')
-    if target.exists():raise BackupError('恢复目标已存在，未覆盖任何内容')
-    verify_backup(bundle)
+def restore_plan(bundle,target):
+    bundle=Path(bundle).absolute()
+    manifest=load_manifest(bundle)
+    bundle=bundle.resolve()
+    target=Path(target).resolve()
+    source=Path(manifest['source_root']).resolve()
+    if any(target.is_relative_to(root) or root.is_relative_to(target) for root in (bundle,source)):
+        raise BackupError('恢复必须使用备份和原数据目录之外的新目录')
+    if target.exists():
+        raise BackupError('恢复目标已存在，未覆盖任何内容')
+    return bundle,target,manifest
+
+
+def preview_id(bundle,target,manifest):
+    payload=json.dumps([str(bundle),str(target),manifest],ensure_ascii=False,sort_keys=True)
+    return hashlib.sha256(payload.encode()).hexdigest()
+
+
+def preview_restore(bundle,target):
+    bundle,target,manifest=restore_plan(bundle,target)
+    logical=verify_data(bundle/'data',manifest)
+    files={}
+    for entry in manifest['files']:
+        scope=files.setdefault(entry['kind'],{'count':0,'bytes':0})
+        scope['count']+=1
+        scope['bytes']+=entry['size']
+    size=sum(item['bytes'] for item in files.values())
+    require_space(target.parent,size)
+    return {'status':'restore_preview','preview_id':preview_id(bundle,target,manifest),
+            'source_directory':manifest['source_root'],'target_directory':str(target),
+            'format_version':manifest['format_version'],'code_version':manifest.get('code_version'),
+            'database_versions':{name:item['user_version'] for name,item in manifest['databases'].items()},
+            'logical_inventory':logical,'files_by_kind':files,'total_bytes':size,
+            'includes_saved_model_configuration':bool(manifest['databases']['meetings.sqlite3']['tables'].get('llm_configs'))}
+
+
+def restore_backup(bundle,target,expected_preview=None):
+    bundle,target,manifest=restore_plan(bundle,target)
+    if expected_preview is not None and expected_preview!=preview_id(bundle,target,manifest):
+        raise BackupError('备份清单或目标与预览不一致，请重新预览')
+    verify_data(bundle/'data',manifest)
     require_space(target.parent,sum(entry['size'] for entry in manifest['files']))
-    owned=False
     try:
-        target.parent.mkdir(parents=True,exist_ok=True);target.mkdir(mode=0o700)
+        target.parent.mkdir(parents=True,exist_ok=True,mode=0o700);target.mkdir(mode=0o700)
         with DataLease(target,exclusive=True):
-            owned=True
             (target/'.restore-in-progress').touch(mode=0o600)
             for rel in manifest['directories']:(target/rel).mkdir(parents=True,exist_ok=True,mode=0o700)
             for entry in manifest['files']:

@@ -398,9 +398,15 @@ class OpenAICompatibleProvider(LMStudioProvider):
 
     def model_catalog(self,timeout=8):
         if self._catalog_cache is not None:return self._catalog_cache
+        from scripts.lmstudio_analyze import NoRedirect
         request=urllib.request.Request(self.base_url+'/models',headers=self._headers())
         try:
-            with urllib.request.urlopen(request,timeout=timeout) as response:payload=json.load(response)
+            with urllib.request.build_opener(NoRedirect()).open(request,timeout=timeout) as response:
+                payload=json.load(response)
+            if not isinstance(payload,dict) or not isinstance(payload.get('data'),list):
+                raise ValueError
+        except (ValueError, UnicodeError) as error:
+            raise RuntimeError('模型接口未返回有效模型列表，请检查接口地址') from error
         except urllib.error.HTTPError as error:
             if error.code in (401,403):raise RuntimeError('API Key 无效或没有访问权限') from error
             raise RuntimeError(f'模型服务返回 HTTP {error.code}') from error

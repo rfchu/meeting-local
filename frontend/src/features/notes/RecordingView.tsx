@@ -1,3 +1,5 @@
+import { useQuery } from "@tanstack/react-query";
+import { api } from "../../api";
 import { useEffect, useState } from "react";
 import {
   browserCaptureAllowed,
@@ -37,9 +39,9 @@ export default function RecordingView({
   recoveringControl,
   recoverActiveControl,
   captureSource,
+  echoMode,
   checkCapture,
   checkingCapture,
-  echoMode,
   closeWithPreparation,
   completing,
   completionMode,
@@ -121,9 +123,9 @@ export default function RecordingView({
   setAutoProcess,
   setBrief,
   setCaptureSource,
+  setEchoMode,
   setCompletionMode,
   setContextEnabled,
-  setEchoMode,
   setCorrectionEnabled,
   setCorrectionProfileId,
   setCorrectionReviewOpen,
@@ -159,7 +161,13 @@ export default function RecordingView({
   termsOpen,
   toast,
 }: RecordingViewModel) {
-  const [copilotOpen, setCopilotOpen] = useState(false);
+  const timelineNotes = useQuery({
+    queryKey: ["copilot-notes", correctionSessionId],
+    queryFn: () => api.shorthandNotes(correctionSessionId!),
+    enabled: !!correctionSessionId && state !== "finished",
+    refetchInterval: 4000,
+    retry: false,
+  });
   const [notesCollapsed, setNotesCollapsed] = useState(false);
   const [subtitleCollapsed, setSubtitleCollapsed] = useState(false);
   const [subtitleTarget, setSubtitleTarget] = useState<HTMLDivElement | null>(
@@ -184,6 +192,14 @@ export default function RecordingView({
     localSaveFailedRef.current ||
     /失败|未完成|错误|待重试/.test(saveStatus);
   const retry = () => void retrySync().catch((error) => toast(error.message));
+  const emptyNativeFailure =
+    state === "failed" &&
+    sessionRef.current?.source === "macos" &&
+    !!captureHealth?.tracks.length &&
+    captureHealth.tracks.every((track) => track.saved_seconds === 0) &&
+    elapsed === 0 &&
+    !failedChunksRef.current.length &&
+    !localSaveFailedRef.current;
   const captureWarning =
     recording &&
     captureSource !== "browser" &&
@@ -220,7 +236,7 @@ export default function RecordingView({
       )}
       {embeddedHost() && !recording && (
         <p className="muted">
-          内嵌工作区可使用已有原生音轨模式；浏览器麦克风录音请打开宿主的“浏览器工作台”。
+          内嵌工作区请使用电脑声音或电脑声音加麦克风。
         </p>
       )}
       {state === "idle" &&
@@ -337,7 +353,7 @@ export default function RecordingView({
               {finishStage}
             </span>
           )}
-          {state === "failed" && (
+          {state === "failed" && !emptyNativeFailure && (
             <button
               className="primary"
               onClick={() => {
@@ -363,15 +379,23 @@ export default function RecordingView({
                   closeWithPreparation();
                 }}
               >
-                {state === "failed"
-                  ? "稍后恢复"
-                  : state === "finished"
-                    ? "返回会议资料库"
-                    : "返回"}
+                {emptyNativeFailure
+                  ? "返回录音设置"
+                  : state === "failed"
+                    ? "稍后恢复"
+                    : state === "finished"
+                      ? "返回会议资料库"
+                      : "返回"}
               </button>
             )}
         </div>
       </div>
+      {state === "failed" && (
+        <p className="capture-warning" role="alert">
+          {saveStatus || "录音未能继续，请查看运行详情。"}
+          {emptyNativeFailure && " · 本次未保存音频"}
+        </p>
+      )}
       <RecordingEndGuide guide={endGuide} />
       {state === "idle" && (
         <label className="recording-session-strip">
@@ -556,14 +580,6 @@ export default function RecordingView({
                 >
                   我的简记{notes.length ? ` · ${notes.length}` : ""}
                 </button>
-                {correctionSessionId && state !== "finished" && (
-                  <button
-                    aria-pressed={copilotOpen}
-                    onClick={() => setCopilotOpen(!copilotOpen)}
-                  >
-                    {copilotOpen ? "收起伴随时间线" : "伴随时间线"}
-                  </button>
-                )}
                 {recording && notesCollapsed && (
                   <button
                     className="workbench-restore-notes"
@@ -573,20 +589,6 @@ export default function RecordingView({
                   </button>
                 )}
               </nav>
-              {copilotOpen && correctionSessionId && state !== "finished" && (
-                <LiveCopilot
-                  key={correctionSessionId}
-                  recordingId={correctionSessionId}
-                  confirmed={displayDrafts}
-                  partial={partialDraft}
-                  elapsed={currentSeconds()}
-                  onLocate={(id) => {
-                    setCopilotOpen(false);
-                    setMobilePane("transcript");
-                    setJumpDraft({ id, nonce: Date.now() });
-                  }}
-                />
-              )}
               <div
                 className="recording-workspace"
                 data-mobile-pane={mobilePane}
@@ -616,9 +618,12 @@ export default function RecordingView({
                       mobilePane === "overview" &&
                       !subtitleCollapsed
                     }
+                    onConfigureModels={onModels}
                     onCollapseSubtitle={() => setSubtitleCollapsed(true)}
                     jump={jumpDraft}
                     drafts={displayDrafts}
+                    notes={notes}
+                    copilotNotes={timelineNotes.data}
                     recordingId={correctionSessionId}
                     sourceLanguage={brief.source_language || undefined}
                     profiles={environment?.analysis.profiles.filter(
@@ -653,6 +658,13 @@ export default function RecordingView({
                       ])
                     }
                   />
+                  {recording && correctionSessionId && (
+                    <LiveCopilot
+                      key={correctionSessionId}
+                      recordingId={correctionSessionId}
+                      elapsed={currentSeconds()}
+                    />
+                  )}
                 </section>
                 <section className="live-overview">
                   <LiveOverviewPanel
@@ -1192,6 +1204,8 @@ export default function RecordingView({
           briefReady={briefReady}
           briefSaved={briefSaved}
           captureSource={captureSource}
+          echoMode={echoMode}
+          setEchoMode={setEchoMode}
           checkCapture={checkCapture}
           checkingCapture={checkingCapture}
           completionMode={completionMode}
@@ -1203,8 +1217,6 @@ export default function RecordingView({
           engineLabel={engineLabel}
           engines={engines}
           environment={environment}
-          echoMode={echoMode}
-          setEchoMode={setEchoMode}
           flowReady={flowReady}
           meetings={meetings}
           minutesModel={minutesModel}

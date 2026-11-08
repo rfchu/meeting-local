@@ -2,6 +2,7 @@
 import json,time,threading,uuid
 from .live_results import plan_ranges,RATE
 from .recording_commands import control_view
+from .resource_policy import BROWSER_ACTIVITY_TIMEOUT
 
 
 def project(health,session,live,ranges,last_events,write=None):
@@ -9,7 +10,7 @@ def project(health,session,live,ranges,last_events,write=None):
     raw=health['state'];age=health['metadata_age_seconds']
     capture='stopped' if published else 'interrupted' if raw in ('failed','interrupted') else 'unknown' if raw=='unknown' else raw
     if not published and native and health['capture']['heartbeat_stale'] and health['native_running']:capture='unknown'
-    if not published and not native and age>90 and raw in ('recording','paused','starting'):capture='unknown'
+    if not published and not native and age>BROWSER_ACTIVITY_TIMEOUT and raw in ('recording','paused','starting'):capture='unknown'
     if capture not in ('starting','recording','paused','unknown','interrupted','stopped'):capture='unknown'
     audio=health['audio'];saved=audio['saved_bytes']>0
     storage='saved' if published and saved else 'missing' if published else 'partial' if audio['missing_chunk_count'] else 'writing' if saved and capture in ('recording','paused','starting') else 'available' if saved else 'waiting'

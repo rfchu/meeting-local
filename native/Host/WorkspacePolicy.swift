@@ -3,7 +3,7 @@ import Darwin
 
 struct WorkspacePolicy {
     let configuration: HostConfiguration
-    var binding: String { HostConfiguration.dataFingerprint(Data(("v1:" + HostConfiguration.fingerprint(configuration.projectRoot) + ":" + HostConfiguration.fingerprint(configuration.dataRoot)).utf8)) }
+    var binding: String { configuration.workspaceBinding }
     var storeIdentifier: UUID {
         let digest = HostConfiguration.dataFingerprint(Data((binding + ":" + String(configuration.port)).utf8))
         let value = String(digest.prefix(32)); let parts = [value.prefix(8), value.dropFirst(8).prefix(4), value.dropFirst(12).prefix(4), value.dropFirst(16).prefix(4), value.dropFirst(20).prefix(12)]

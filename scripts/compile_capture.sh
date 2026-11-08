@@ -3,14 +3,20 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 APP="${TINGJI_CAPTURE_COMPILE_APP:?Internal isolated build path required}"
 [[ "$APP" == */.tingji-capture-releases/*/TingjiCapture.app && ! -e "$APP" ]] || exit 2
+identifier=cn.seeknow.tingji.capture
+if [[ "${TINGJI_CAPTURE_STANDALONE_BUILD:-0}" == 1 ]]; then
+  identifier=cn.seeknow.tingji.capture.standalone
+elif [[ "${TINGJI_CAPTURE_PROBE_BUILD:-0}" == 1 ]]; then
+  identifier=cn.seeknow.tingji.capture.probe
+fi
 mkdir -p "$APP/Contents/MacOS" native/build/module-cache
 xcrun swiftc -swift-version 5 -O -target arm64-apple-macos15.0 -module-cache-path native/build/module-cache \
   native/AudioCapture/main.swift native/AudioCapture/Diagnostics.swift native/AudioCapture/Ownership.swift native/AudioCapture/ArtifactLease.swift -o "$APP/Contents/MacOS/TingjiCapture"
-cat > "$APP/Contents/Info.plist" <<'PLIST'
+cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
-<key>CFBundleIdentifier</key><string>cn.seeknow.tingji.capture</string>
+<key>CFBundleIdentifier</key><string>$identifier</string>
 <key>CFBundleName</key><string>听记采集器</string>
 <key>CFBundleExecutable</key><string>TingjiCapture</string>
 <key>CFBundlePackageType</key><string>APPL</string>
@@ -22,5 +28,5 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 </dict></plist>
 PLIST
 xattr -cr "$APP"
-codesign --force --sign - --identifier cn.seeknow.tingji.capture "$APP"
+codesign --force --sign - --identifier "$identifier" "$APP"
 echo "原生采集器已构建：$APP"

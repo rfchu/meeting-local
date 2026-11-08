@@ -66,3 +66,14 @@ test('Archived empty records remain available to restore but never create a reco
   const rows=mergeRecordingInventory([], [empty]);assert.equal(rows.length,1);
   assert.equal(recordingRecoveryCount(rows),0);
 });
+
+test('Local language preferences do not turn a permission failure into a pending recovery',()=>{
+  const failed={...fixture,source:'macos',state:'interrupted',chunk_count:0,duration:0,
+    health:{state:'failed',native_running:false,empty_session:true,audio:{saved_bytes:0},asr:{}}};
+  const local={...failed,updated:20,brief:{source_language:'auto',output_language:'zh',title:''}};
+  const rows=mergeRecordingInventory([local],[failed]);
+  assert.equal(rows.length,1);
+  assert.equal(recordingRecoveryCount(rows),0);
+  assert.equal(recordingRecoveryCount(mergeRecordingInventory(
+    [{...local,brief:{...local.brief,purpose:'待整理的会前准备'}}],[failed])),1);
+});

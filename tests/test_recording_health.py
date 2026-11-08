@@ -121,6 +121,7 @@ def test_api_diagnostics_download_and_inventory_are_read_only(tmp_path):
 def test_failed_empty_native_start_is_not_recoverable_and_reason_is_allowlisted(inventory):
     store,recordings,native,health=inventory
     session=recordings.create('audio/wav');rid=session['id'];session['source']='macos'
+    session['brief']={'source_language':'auto','output_language':'zh','title':''}
     recordings.write(recordings.folder(rid)/'session.json',session)
     recordings.write(recordings.folder(rid)/'capture.json',{'state':'failed','duration':0,'error':'请在系统设置 → 隐私与安全性 中允许听记采集器，PRIVATE-SENTINEL'})
     before=(recordings.folder(rid)/'session.json').read_bytes()

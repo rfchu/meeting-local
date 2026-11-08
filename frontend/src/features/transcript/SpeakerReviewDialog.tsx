@@ -1,6 +1,6 @@
 import { useModelChoice } from "../../preferences/useModelChoice";
 import { useEffect, useRef, useState } from "react";
-import { api } from "../../api";
+import { api, cloudConfirmation } from "../../api";
 import Modal from "../../components/Modal";
 import type {
   Artifact,
@@ -64,7 +64,7 @@ export default function SpeakerReviewDialog({
       await onSave();
       const fresh = await api.meeting(meeting.id);
       setSnapshot(fresh);
-      const result = await api.speakerReview(meeting.id, profile || undefined);
+      const result = await api.speakerReview(meeting.id, profile || undefined, cloudConfirmation(selected));
       const source = await api.revision(meeting.id, result.revision);
       setSnapshot({
         ...fresh,

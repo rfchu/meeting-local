@@ -52,7 +52,7 @@ final class WorkspaceController: NSObject, NSWindowDelegate, WKNavigationDelegat
         let host = NSButton(title: "返回宿主", target: self, action: #selector(backToHost)); host.bezelStyle = .rounded
         let back = NSButton(title: "后退", target: self, action: #selector(goBack)); back.bezelStyle = .rounded
         let forward = NSButton(title: "前进", target: self, action: #selector(goForward)); forward.bezelStyle = .rounded
-        let controls = NSStackView(views: [back,forward,reload,browser,host]); controls.spacing = 12; root.addArrangedSubview(controls)
+        let controls = NSStackView(views: configuration.portableRuntime == nil ? [back,forward,reload,browser,host] : [back,forward,reload,host]); controls.spacing = 12; root.addArrangedSubview(controls)
         notice.font = .systemFont(ofSize: 12); notice.textColor = .secondaryLabelColor; root.addArrangedSubview(notice)
         notice.widthAnchor.constraint(equalTo: root.widthAnchor).isActive = true
         let content = NSView(); root.addArrangedSubview(content); content.widthAnchor.constraint(equalTo: root.widthAnchor).isActive = true
@@ -72,11 +72,27 @@ final class WorkspaceController: NSObject, NSWindowDelegate, WKNavigationDelegat
             guard let self, !self.disposed else { return }
             guard let rules, error == nil else { self.preparing = false; self.shield.stringValue = "网络边界初始化失败，请明确重试载入。"; self.message("工作区未载入，可点击重新载入重试。"); return }
             self.webView.configuration.userContentController.add(rules)
-            let cookie = HTTPCookie(properties: [.name:"tingji_workspace_binding",.value:self.policy.binding,.domain:"127.0.0.1",.path:"/",HTTPCookiePropertyKey("HttpOnly"):"TRUE",HTTPCookiePropertyKey("SameSite"):"Strict"])!
-            self.webView.configuration.websiteDataStore.httpCookieStore.setCookie(cookie) { [weak self] in
+            let configuration = self.policy.configuration
+            var credentials = [("tingji_workspace_binding", self.policy.binding)]
+            if configuration.portableRuntime != nil {
+                guard let authorization = configuration.workspaceAuthorization else {
+                    self.preparing = false
+                    self.shield.stringValue = "工作空间授权不可用，请返回宿主重新打开。"
+                    return
+                }
+                credentials.append(("tingji_workspace_authorization", authorization))
+            }
+            let cookies = self.webView.configuration.websiteDataStore.httpCookieStore
+            let ready = DispatchGroup()
+            for (name, value) in credentials {
+                let cookie = HTTPCookie(properties: [.name:name,.value:value,.domain:"127.0.0.1",.path:"/",HTTPCookiePropertyKey("HttpOnly"):"TRUE",HTTPCookiePropertyKey("SameSite"):"Strict"])!
+                ready.enter()
+                cookies.setCookie(cookie) { ready.leave() }
+            }
+            ready.notify(queue: .main) { [weak self] in
                 guard let self, !self.disposed else { return }
                 self.preparing = false; self.prepared = true; self.updateConnection(self.valid)
-                if self.valid { self.webView.load(URLRequest(url: self.policy.configuration.workspaceURL)) }
+                if self.valid { self.webView.load(URLRequest(url: configuration.workspaceURL)) }
             }
         }
     }

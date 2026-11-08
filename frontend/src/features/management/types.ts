@@ -57,3 +57,29 @@ export interface RuntimeOverview {
   }[];
   job_counts: Record<string, number>;
 }
+
+export interface ModelImportStatus {
+  phase:
+    | "idle"
+    | "downloading"
+    | "copying"
+    | "validating"
+    | "ready"
+    | "cancelled"
+    | "failed";
+  version: string;
+  total_bytes: number;
+  copied_bytes: number;
+  activation_supported: boolean;
+  active_version?: string | null;
+  can_activate?: boolean;
+  activation_pending?: boolean;
+  activation_error?: string | null;
+  downloaded_bytes: number;
+  download_total_bytes: number | null;
+  available_bytes: number | null;
+  reused: boolean;
+  cancel_requested: boolean;
+  error_code: string | null;
+  error_path: string | null;
+}

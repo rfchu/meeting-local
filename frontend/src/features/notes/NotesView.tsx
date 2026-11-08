@@ -1,6 +1,6 @@
 import { useModelChoice } from "../../preferences/useModelChoice";
 import { useEffect, useState, useRef } from "react";
-import { api } from "../../api";
+import { api, cloudConfirmation } from "../../api";
 import type {
   Meeting,
   MeetingNote,
@@ -671,7 +671,7 @@ function ReviewPanel({
                 )
                   return;
                 void run(
-                  () => api.expandNote(meeting.id, note.id, profileId),
+                  () => api.expandNote(meeting.id, note.id, profileId, cloudConfirmation(selected)),
                   "扩写任务已提交",
                 );
               } catch (e) {

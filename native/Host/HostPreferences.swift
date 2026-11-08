@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 import Darwin
 
 struct HostPreferenceFailure: Error, LocalizedError {
@@ -21,7 +22,11 @@ final class HostPreferences {
         self.directory = URL(fileURLWithPath: HostConfiguration.canonical(directory.path))
     }
     static func resolveDirectory(environment: [String:String] = ProcessInfo.processInfo.environment, bundle: Bundle = .main) throws -> URL {
-        let path = environment["TINGJI_HOST_STATE_DIR"] ?? (bundle.object(forInfoDictionaryKey: "TingjiHostStateDirectory") as? String) ?? NSHomeDirectory() + "/Library/Application Support/cn.seeknow.tingji.host"
+        let standalone = bundle.object(forInfoDictionaryKey: "TingjiPortableRuntime") as? Bool == true
+        let domain = standalone ? "cn.seeknow.tingji.host.standalone" : "cn.seeknow.tingji.host"
+        let path = environment["TINGJI_HOST_STATE_DIR"]
+            ?? (bundle.object(forInfoDictionaryKey: "TingjiHostStateDirectory") as? String)
+            ?? NSHomeDirectory() + "/Library/Application Support/" + domain
         guard path.hasPrefix("/"), !path.contains("\0"), !path.contains("\n") else { throw HostFailure.invalidConfiguration }
         return URL(fileURLWithPath: path)
     }
@@ -31,10 +36,10 @@ final class HostPreferences {
         var info = stat()
         guard lstat(directory.path, &info) == 0, info.st_mode & S_IFMT == S_IFDIR, info.st_uid == getuid(), info.st_mode & 0o077 == 0 else { throw HostPreferenceFailure(message: "宿主配置目录必须是当前用户的私有目录。") }
     }
-    private func raw() throws -> Data? {
+    private func raw(at target: URL? = nil) throws -> Data? {
         var parent = stat()
         if lstat(directory.path, &parent) == 0 && (parent.st_mode & S_IFMT != S_IFDIR || parent.st_uid != getuid() || parent.st_mode & 0o077 != 0) { throw HostPreferenceFailure(message: "宿主配置目录不是当前用户的私有目录。") }
-        let fd = Darwin.open(file.path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK)
+        let fd = Darwin.open((target ?? file).path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK)
         if fd < 0 {
             if errno == ENOENT { return nil }
             throw HostPreferenceFailure(message: "无法安全读取宿主配置，请检查文件权限。")
@@ -75,6 +80,20 @@ final class HostPreferences {
             }
         }
         guard fsync(fd) == 0 else { throw HostPreferenceFailure(message: "配置写入尚未确认。") }
+    }
+    func workspaceKey(create: Bool = false) throws -> Data {
+        let target = directory.appendingPathComponent("workspace.key")
+        if let existing = try raw(at: target) {
+            guard existing.count == 32 else { throw HostFailure.invalidConfiguration }
+            return existing
+        }
+        guard create else { throw HostFailure.invalidConfiguration }
+        let key = SymmetricKey(size: .bits256).withUnsafeBytes { Data($0) }
+        let temporary = directory.appendingPathComponent(".workspace-" + UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        try writePrivate(key, to: temporary)
+        guard renamex_np(temporary.path, target.path, UInt32(RENAME_EXCL)) == 0 else { throw HostFailure.invalidConfiguration }
+        return key
     }
     func save(_ configuration: HostConfiguration, expectedToken: String?, preservePrevious: Bool = false) throws -> HostConfigurationLoad {
         guard let expectedToken else { throw HostPreferenceFailure(message: "现有配置无法安全读取，未覆盖；请先检查文件权限。") }

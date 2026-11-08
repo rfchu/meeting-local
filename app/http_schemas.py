@@ -5,7 +5,7 @@ from typing import Literal
 from pydantic import BaseModel, Field, model_validator
 from .minutes import MeetingMinutes
 from .minutes_composition import CompositionSettings
-from .auto_minutes import MinutesFollowupInput
+from .auto_minutes import MinutesFollowupInput, ProviderSelection
 
 class RecordingQualityReviewInput(BaseModel):
     status: Literal['pending','clear','gap','uncertain']
@@ -45,6 +45,8 @@ class JobInput(BaseModel):
 
 
 class AnalysisJobInput(BaseModel):
+    confirm_cloud: bool=False
+    expected_provider: ProviderSelection | None=None
     minutes_followup: dict | None=None
     profile_id: str | None=Field(default=None,max_length=100)
     model: str | None=Field(default=None,max_length=500)
@@ -277,6 +279,8 @@ class MinutesSaveInput(BaseModel):
 
 
 class MinutesPolishInput(BaseModel):
+    confirm_cloud: bool=False
+    expected_provider: ProviderSelection | None=None
     output_language: OutputLanguage | None=None
     profile_id: str | None=Field(default=None,max_length=100)
     model: str | None=Field(default=None,max_length=500)

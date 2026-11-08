@@ -37,6 +37,22 @@ struct HostConfiguration: Codable, Equatable {
     static func fingerprint(_ path: String) -> String { SHA256.hash(data: Data(canonical(path).utf8)).map { String(format: "%02x", $0) }.joined() }
     var workspaceURL: URL { URL(string: "http://127.0.0.1:\(port)/")! }
     var identityURL: URL { workspaceURL.appendingPathComponent("api/runtime/host") }
+    var portableRuntime: URL? {
+        let code = URL(fileURLWithPath: projectRoot)
+        let runtime = code.deletingLastPathComponent()
+        guard code.lastPathComponent == "code", runtime.lastPathComponent == "PortableRuntime" else { return nil }
+        return runtime
+    }
+    var workspaceBinding: String {
+        Self.dataFingerprint(Data(("v1:" + Self.fingerprint(projectRoot) + ":" + Self.fingerprint(dataRoot)).utf8))
+    }
+    func workspaceMAC(_ message: String) -> String? {
+        guard let preferences = try? HostPreferences(directory: URL(fileURLWithPath: dataRoot).deletingLastPathComponent()),
+              let key = try? preferences.workspaceKey() else { return nil }
+        return HMAC<SHA256>.authenticationCode(for: Data(message.utf8), using: SymmetricKey(data: key))
+            .map { String(format: "%02x", $0) }.joined()
+    }
+    var workspaceAuthorization: String? { workspaceMAC("request:" + workspaceBinding) }
     var pythonURL: URL { URL(fileURLWithPath: projectRoot).appendingPathComponent(".venv/bin/python") }
     var managerURL: URL { URL(fileURLWithPath: projectRoot).appendingPathComponent("scripts/manage_service.py") }
 

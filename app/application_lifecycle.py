@@ -21,6 +21,9 @@ def application_lifespan(services:ApplicationServices,start_worker:bool):
     async def lifespan(app):
         lifecycle.start()
         try:
+            boot_models = getattr(app.state, 'boot_models', None)
+            if boot_models:
+                await run_in_threadpool(boot_models)
             loop=asyncio.get_running_loop()
             worker.asr_lock=live_asr_lock
             worker.release_model=lambda:asyncio.run_coroutine_threadsafe(resident.close(),loop).result(timeout=10)

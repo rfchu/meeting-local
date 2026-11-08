@@ -19,9 +19,25 @@ final class ServiceClient: NSObject, URLSessionTaskDelegate, URLSessionDataDeleg
     }
     func close() { session.invalidateAndCancel() }
     func probe(_ configuration: HostConfiguration, completion: @escaping (ConnectionState) -> Void) {
-        get(configuration.identityURL) { data, code in
-            completion(code == 0 ? .unavailable : validateIdentity(data, statusCode: code, configuration: configuration))
+        var request = URLRequest(url: configuration.identityURL)
+        let challenge = configuration.portableRuntime == nil ? nil : Self.challenge()
+        request.setValue(challenge, forHTTPHeaderField: "X-Tingji-Challenge")
+        send(request) { data, code in
+            let state: ConnectionState = code == 0 ? .unavailable : validateIdentity(data, statusCode: code, configuration: configuration)
+            if state.canOpen, let challenge,
+               !Self.verifyProof(data, configuration: configuration, purpose: "host", challenge: challenge) {
+                completion(.incompatible)
+            } else { completion(state) }
         }
+    }
+    private static func challenge() -> String {
+        UUID().uuidString.lowercased().replacingOccurrences(of: "-", with: "")
+    }
+    private static func verifyProof(_ data: Data, configuration: HostConfiguration, purpose: String, challenge: String) -> Bool {
+        guard let reply = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              let proof = reply["proof"] as? String,
+              let expected = configuration.workspaceMAC(purpose + ":" + challenge) else { return false }
+        return proof == expected
     }
     func companion(_ configuration: HostConfiguration, mode: CompanionMode, recording: String?, original: Bool = false, follow: String? = nil, after: Int? = nil, completion: @escaping (CompanionSnapshot?) -> Void) {
         var url = URLComponents(url: configuration.workspaceURL.appendingPathComponent("api/runtime/companion"), resolvingAgainstBaseURL: false)!
@@ -31,8 +47,13 @@ final class ServiceClient: NSObject, URLSessionTaskDelegate, URLSessionDataDeleg
             url.queryItems?.append(URLQueryItem(name: "follow", value: follow))
             url.queryItems?.append(URLQueryItem(name: "after", value: String(after)))
         }
-        get(url.url!) { data, code in
-            completion(CompanionSnapshot.verified(data, code: code, configuration: configuration, recording: recording))
+        var request = URLRequest(url: url.url!)
+        let challenge = configuration.portableRuntime == nil ? nil : Self.challenge()
+        request.setValue(challenge, forHTTPHeaderField: "X-Tingji-Challenge")
+        authorized(request, configuration: configuration) { data, code in
+            if let challenge, !Self.verifyProof(data, configuration: configuration, purpose: "companion", challenge: challenge) {
+                completion(nil)
+            } else { completion(CompanionSnapshot.verified(data, code: code, configuration: configuration, recording: recording)) }
         }
     }
     func translateSubtitle(_ configuration: HostConfiguration, recording: String, reference: CompanionSnapshot.TranslationRequest,
@@ -43,11 +64,11 @@ final class ServiceClient: NSObject, URLSessionTaskDelegate, URLSessionDataDeleg
                           URLQueryItem(name: "profile_id", value: reference.profile_id)]
         var request = URLRequest(url: url.url!, timeoutInterval: 27)
         request.httpMethod = "POST"
-        send(request, deadline: 30) { _, code in completion(code) }
+        authorized(request, configuration: configuration, deadline: 30) { _, code in completion(code) }
     }
 
     func diagnostics(_ configuration: HostConfiguration, completion: @escaping (HostDiagnostics?) -> Void) {
-        get(configuration.workspaceURL.appendingPathComponent("api/runtime/host-diagnostics")) { data, code in
+        authorized(URLRequest(url: configuration.workspaceURL.appendingPathComponent("api/runtime/host-diagnostics")), configuration: configuration) { data, code in
             guard code == 200, let report = try? JSONDecoder().decode(HostDiagnostics.self, from: data),
                   let identity = try? JSONEncoder().encode(report.host),
                   validateIdentity(identity, statusCode: code, configuration: configuration).canOpen else {
@@ -70,15 +91,23 @@ final class ServiceClient: NSObject, URLSessionTaskDelegate, URLSessionDataDeleg
             "client_id": clientID
         ]
         request.httpBody = try? JSONSerialization.data(withJSONObject: payload)
-        send(request) { _, code in completion(code == 201 || code == 200) }
+        authorized(request, configuration: configuration) { _, code in completion(code == 201 || code == 200) }
     }
-    private func get(_ url: URL, completion: @escaping (Data, Int) -> Void) {
-        var request = URLRequest(url: url)
-        request.cachePolicy = .reloadIgnoringLocalAndRemoteCacheData
-        request.setValue("application/json", forHTTPHeaderField: "Accept")
-        send(request, completion: completion)
+    private func authorized(_ request: URLRequest, configuration: HostConfiguration, deadline: TimeInterval = 4, completion: @escaping (Data, Int) -> Void) {
+        guard configuration.portableRuntime != nil else { send(request, deadline: deadline, completion: completion); return }
+        probe(configuration) { [weak self] state in
+            guard let self, state.canOpen, let token = configuration.workspaceAuthorization else {
+                completion(Data(), 0); return
+            }
+            var authenticated = request
+            authenticated.setValue(token, forHTTPHeaderField: "X-Tingji-Authorization")
+            self.send(authenticated, deadline: deadline, completion: completion)
+        }
     }
     private func send(_ request: URLRequest, deadline: TimeInterval = 4, completion: @escaping (Data, Int) -> Void) {
+        var request = request
+        request.cachePolicy = .reloadIgnoringLocalAndRemoteCacheData
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
         let task = session.dataTask(with: request)
         lock.lock(); replies[task.taskIdentifier] = (Data(), 0, completion); lock.unlock()
         task.resume()
@@ -235,41 +264,79 @@ struct CompanionObservation {
     }
 }
 
-// Starts only the existing guarded service manager. There is deliberately no stop/restart/capture command.
+// Start and restart both use the same guarded local service manager.
 struct ServiceStartPlan {
     let executable: URL
     let arguments: [String]
     let directory: URL
     let environment: [String:String]
-    init(_ configuration: HostConfiguration) throws {
+    init(_ configuration: HostConfiguration, restartPID: Int? = nil) throws {
         let fm = FileManager.default
         guard fm.isExecutableFile(atPath: configuration.pythonURL.path), fm.fileExists(atPath: configuration.managerURL.path), HostConfiguration.canonical(configuration.managerURL.path) == configuration.managerURL.path else { throw HostFailure.invalidConfiguration }
         executable = configuration.pythonURL
-        arguments = [configuration.managerURL.path, "start", "--detached"]
+        if let restartPID {
+            guard restartPID > 1 else { throw HostFailure.invalidConfiguration }
+            arguments = [configuration.managerURL.path, "restart", "--expected-pid", String(restartPID), "--json-errors"]
+        } else {
+            arguments = [configuration.managerURL.path, "start", "--detached"]
+        }
         directory = URL(fileURLWithPath: configuration.projectRoot)
         // Finder launches do not inherit shell setup. Pin paths; do not pass inherited Python/loader overrides.
-        environment = ["PATH":"/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin", "HOME":NSHomeDirectory(),
+        var serviceEnvironment = ["PATH":"/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin", "HOME":NSHomeDirectory(),
                        "PORT":String(configuration.port), "MEETING_DATA":configuration.dataRoot, "MEETING_BACKUPS":configuration.backupsRoot,
                        "PYDANTIC_DISABLE_PLUGINS":"__all__"]
+        if let runtime = configuration.portableRuntime {
+            serviceEnvironment["TINGJI_PORTABLE_SERVICE"] = "1"
+            serviceEnvironment["TINGJI_APP_VERSION"] = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
+            serviceEnvironment["TINGJI_CAPTURE_APP"] = runtime.appendingPathComponent("capture/TingjiCapture.app").path
+            serviceEnvironment["TINGJI_CAPTURE_DELIVERY_ROOT"] = configuration.dataRoot + "/capture-delivery"
+            serviceEnvironment["MEETING_MODELS"] = configuration.dataRoot + "/models"
+        }
+        environment = serviceEnvironment
     }
+}
+
+struct ServiceRestartResult: Decodable {
+    let ready: Bool?
+    let pid: Int?
+    let recoverable: Int?
+    let blockers: [String]?
 }
 
 final class ServiceStarter {
     func start(_ configuration: HostConfiguration, completion: @escaping (Bool) -> Void) {
+        run(configuration, restartPID: nil) { success, _ in completion(success) }
+    }
+
+    func restart(_ configuration: HostConfiguration, pid: Int, completion: @escaping (ServiceRestartResult?) -> Void) {
+        run(configuration, restartPID: pid) { _, result in completion(result) }
+    }
+
+    private func run(_ configuration: HostConfiguration, restartPID: Int?,
+                     completion: @escaping (Bool, ServiceRestartResult?) -> Void) {
         DispatchQueue.global(qos: .userInitiated).async {
             do {
-                let plan = try ServiceStartPlan(configuration)
+                let plan = try ServiceStartPlan(configuration, restartPID: restartPID)
                 let process = Process(); process.executableURL = plan.executable; process.arguments = plan.arguments
                 process.currentDirectoryURL = plan.directory; process.environment = plan.environment
-                // Manager output can contain local paths. Keep it out of UI, logs and unbounded pipes.
+                let output = Pipe()
                 process.standardInput = FileHandle.nullDevice
-                process.standardOutput = FileHandle.nullDevice; process.standardError = FileHandle.nullDevice
+                process.standardOutput = restartPID == nil ? FileHandle.nullDevice : output
+                process.standardError = FileHandle.nullDevice
                 try process.run()
-                let deadline = Date().addingTimeInterval(40)
+                let deadline = Date().addingTimeInterval(restartPID == nil ? 40 : 150)
                 while process.isRunning && Date() < deadline { Thread.sleep(forTimeInterval: 0.1) }
-                if process.isRunning { process.terminate(); completion(false); return }
-                completion(process.terminationStatus == 0)
-            } catch { completion(false) }
+                if process.isRunning { process.terminate(); completion(false, nil); return }
+                // Restart emits one small, structured reply. Discard arbitrary error text.
+                let result: ServiceRestartResult?
+                if restartPID != nil {
+                    let data = (try? output.fileHandleForReading.read(upToCount: 16_384)) ?? Data()
+                    result = try? JSONDecoder().decode(ServiceRestartResult.self, from: data)
+                } else {
+                    result = nil
+                }
+                completion(process.terminationStatus == 0, result)
+            } catch { completion(false, nil) }
         }
     }
 }

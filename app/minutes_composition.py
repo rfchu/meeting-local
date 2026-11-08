@@ -13,7 +13,15 @@ class CompositionSettings(BaseModel):
     audience:Literal['external','internal']='external'
     method:Literal['ai','analysis','current']='ai'
 
+class ProviderSelection(BaseModel):
+    id:str=Field(max_length=100)
+    base_url:str=Field(max_length=1000)
+    provider_type:str=Field(pattern='^(local|cloud)$')
+    model:str=Field(max_length=500)
+
 class ComposeInput(CompositionSettings):
+    confirm_cloud:bool=False
+    expected_provider:ProviderSelection|None=None
     expected_analysis_id:str|None=Field(default=None,max_length=100)
     also_analyze:bool=False
     profile_id:str|None=Field(default=None,max_length=100)

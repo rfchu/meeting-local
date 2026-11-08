@@ -5,6 +5,7 @@
 | 安装后如何录音、校对、交付和检索 | [使用指南](USER_GUIDE.md) |
 | 项目当前进度与后续方向 | [项目路线图](PROJECT_ROADMAP.md) |
 | 产品范围、流程和验收要求 | [产品需求](specs/PRD-meeting-workflow.md) |
+| 独立 macOS App、模型包与发行验收 | [独立发行能力地图及模块规格](specs/MAP-standalone-distribution.md) · [技术方案](planning/standalone-release-plan.md) · [任务清单](planning/standalone-release-tasks.md) |
 | 活跃工作、模块依赖和验收状态 | [实施计划](planning/plan.md) · [任务清单](planning/todo.md) |
 | 架构、构建和回归测试 | [开发与验证](engineering/DEVELOPMENT.md) |
 | 目录、备份恢复、桌面升级和回退 | [本机维护](engineering/WORKSPACE.md) |

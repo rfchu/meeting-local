@@ -86,7 +86,10 @@ export function emptyRecording(session: RecordingSession): boolean {
     session.native_audio_saved ||
     session.chunk_count ||
     session.notes.length ||
-    Object.values(session.brief || {}).some(Boolean)
+    Object.entries(session.brief || {}).some(
+      ([key, value]) =>
+        key !== "source_language" && key !== "output_language" && !!value,
+    )
   )
     return false;
   if (h.empty_session !== undefined) return h.empty_session;

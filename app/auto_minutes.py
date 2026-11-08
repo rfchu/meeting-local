@@ -8,15 +8,9 @@ from .db import encode
 from .analysis import LMStudioProvider,OpenAICompatibleProvider,AIMinutesResult
 from .minutes import validate_minutes_citations,MINUTES_VERSION
 from .minutes_templates import MinutesTemplate
-from .minutes_composition import CompositionSettings,semantic_template,build_from_ai
+from .minutes_composition import CompositionSettings,ProviderSelection,semantic_template,build_from_ai
 from .minutes_generation import MinutesGeneration
 from . import meeting_flow,minutes_versions
-
-class ProviderSelection(BaseModel):
-    id:str=Field(max_length=100)
-    base_url:str=Field(max_length=1000)
-    provider_type:str=Field(pattern='^(local|cloud)$')
-    model:str=Field(max_length=500)
 
 class MinutesFollowupInput(BaseModel):
     profile_id:str|None=Field(default=None,max_length=100)

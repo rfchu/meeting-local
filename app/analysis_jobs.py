@@ -5,6 +5,15 @@ from .db import uid, encode
 from .analysis import OpenAICompatibleProvider, analysis_chunk_chars, TEMPLATE_VERSION
 from .http_schemas import AnalysisJobInput
 
+def require_cloud_confirmation(profile, body, model):
+    if not profile or profile['provider_type'] != 'cloud':
+        return
+    destination = {key: profile[key] for key in ('id', 'provider_type', 'base_url')}
+    destination['model'] = model
+    if not body.confirm_cloud or not body.expected_provider or body.expected_provider.model_dump() != destination:
+        raise ValueError('请重新确认本次发送的资料、云端地址和模型')
+
+
 class AnalysisJobs:
     def __init__(self,store,meetings,providers):self.store=store;self.meetings=meetings;self.providers=providers
     def submit(self,mid:str,body:AnalysisJobInput):
@@ -15,6 +24,7 @@ class AnalysisJobs:
         try:
             if profile:
                 provider=OpenAICompatibleProvider(profile);model=provider.resolve_model(body.model)
+                require_cloud_confirmation(profile,body,model)
                 provider_snapshot={'id':profile['id'],'name':profile['name'],'provider_type':profile['provider_type'],'base_url':profile['base_url'],
                     'context_window':profile['context_window'],'analysis_chunk_mode':profile['analysis_chunk_mode']}
             else:
@@ -27,6 +37,7 @@ class AnalysisJobs:
             context_window=int(profile['context_window']) if profile else 32768
             chunk_mode=profile['analysis_chunk_mode'] if profile else 'auto';custom_chars=int(profile['analysis_chunk_chars']) if profile else 0
             config={'revision':row['revision'],'profile_id':profile['id'] if profile else None,'provider':provider_snapshot,'model':model,
+                'cloud_confirmed':bool(profile and profile['provider_type']=='cloud' and body.confirm_cloud),
                 'template_version':TEMPLATE_VERSION,'context_window':context_window,'analysis_chunk_mode':chunk_mode,
                 'max_chars':analysis_chunk_chars(context_window,chunk_mode,custom_chars)}
             if body.minutes_followup:config['minutes_followup']=body.minutes_followup

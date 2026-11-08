@@ -1,4 +1,5 @@
 """Minutes HTTP routes; shared services are supplied by the composition root."""
+from ..analysis_jobs import require_cloud_confirmation
 from typing import Literal
 from ..speaker_labels import known_speakers
 from ..minutes_templates import AudienceTemplateUpdate, audience_template, save_audience_template
@@ -139,18 +140,18 @@ def register_routes(app,services:ApplicationServices):
             if body.expected_analysis_id and (not analysis or analysis['id']!=body.expected_analysis_id):
                 raise HTTPException(409,'当前文字稿的分析已变化，请返回深入分析核对后再成稿')
             if not analysis:
-                plan=enqueue_analysis(mid,AnalysisJobInput(profile_id=body.profile_id,model=body.model,minutes_followup={'settings':settings.model_dump(),'parent_minutes_id':body.source_minutes_id,'template':template.model_dump()}))
+                plan=enqueue_analysis(mid,AnalysisJobInput(profile_id=body.profile_id,model=body.model,confirm_cloud=body.confirm_cloud,expected_provider=body.expected_provider,minutes_followup={'settings':settings.model_dump(),'parent_minutes_id':body.source_minutes_id,'template':template.model_dump()}))
                 return {'job_id':plan['id']}
             try:aid=publish_analysis(store,mid,row['revision'],MeetingAnalysis.model_validate(json.loads(analysis['payload'])),analysis['id'],settings,body.source_minutes_id,template=template)
             except ValueError as error:raise HTTPException(409,str(error))
             return {'artifact':public_artifact(store.one('SELECT * FROM artifacts WHERE id=?',(aid,)))}
         if settings.method=='current' and not body.source_minutes_id:raise HTTPException(409,'请先选择要整理的纪要版本')
-        result=generate_ai_minutes_sync(mid,AIMinutesGenerateInput(profile_id=body.profile_id,model=body.model,composition=settings,source_minutes_id=body.source_minutes_id))
+        result=generate_ai_minutes_sync(mid,AIMinutesGenerateInput(profile_id=body.profile_id,model=body.model,confirm_cloud=body.confirm_cloud,expected_provider=body.expected_provider,composition=settings,source_minutes_id=body.source_minutes_id))
         response={'artifact':result}
         if body.also_analyze and settings.method=='ai' and template.id!='online-interview' and not store.one("SELECT id FROM artifacts WHERE meeting_id=? AND revision=? AND kind='meeting_analysis'",(mid,result['revision'])):
             try:
                 if meeting(mid)['revision']!=result['revision']:raise HTTPException(409,'原文版本已变化')
-                response['analysis_job_id']=enqueue_analysis(mid,AnalysisJobInput(profile_id=body.profile_id,model=body.model))['id']
+                response['analysis_job_id']=enqueue_analysis(mid,AnalysisJobInput(profile_id=body.profile_id,model=body.model,confirm_cloud=body.confirm_cloud,expected_provider=body.expected_provider))['id']
             except HTTPException as error:response['warning']='纪要已保存；额外分析未启动：'+str(error.detail)
         return response
 
@@ -219,6 +220,7 @@ def register_routes(app,services:ApplicationServices):
         try:
             if profile:
                 provider=OpenAICompatibleProvider(profile);model=provider.resolve_model(body.model)
+                require_cloud_confirmation(profile,body,model)
                 provider_name=profile['name'];provider_type=profile['provider_type']
             else:
                 provider=LMStudioProvider();model=provider.resolve_model(body.model)
@@ -292,6 +294,7 @@ def register_routes(app,services:ApplicationServices):
         try:
             if profile:
                 provider=OpenAICompatibleProvider(profile);model=provider.resolve_model(body.model)
+                require_cloud_confirmation(profile,body,model)
                 provider_name=profile['name'];provider_type=profile['provider_type']
             else:
                 provider=LMStudioProvider();model=provider.resolve_model(body.model)

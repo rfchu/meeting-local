@@ -544,6 +544,8 @@ export function useRecordingController({
     const session = entry.recording;
     try {
       const status = await api.nativeStatus(session.id);
+      if (targetRecordingId && !status.ownership?.control_required)
+        return toast("原工作台正在控制本场录音，请回到原工作台。");
       if (status.ownership?.control_required) {
         if (!status.ownership.can_recover_control)
           return toast(
@@ -585,9 +587,9 @@ export function useRecordingController({
     setResponsiveMode(entry.config?.responsive ?? false);
     setContextEnabled(entry.config?.context_enabled ?? false);
     setPrefixEnabled(entry.config?.prefix_enabled !== false);
+    setEchoMode(entry.config?.echo_mode ?? "standard");
     setRecognitionTerms(entry.config?.terms || "");
     accruedRef.current = session.duration;
-    setEchoMode(entry.config?.echo_mode ?? "standard");
     activeSinceRef.current = performance.now();
     draftEnabledRef.current = !!entry.config;
     stateRef.current = "requesting";
@@ -678,7 +680,18 @@ export function useRecordingController({
   const checkCapture = async () => {
     setCheckingCapture(true);
     try {
-      setNativeCapability(await api.nativeCapability());
+      const capability = await api.nativeCapability();
+      setNativeCapability(capability);
+      if (
+        stateRef.current === "idle" &&
+        browserCaptureAllowed() &&
+        !capability.available &&
+        !targetRecordingId
+      ) {
+        setCaptureSource((source) =>
+          source === "browser" ? source : "browser",
+        );
+      }
     } catch (error) {
       toast((error as Error).message);
     } finally {
@@ -847,7 +860,8 @@ export function useRecordingController({
         ) {
           stateRef.current = "failed";
           setState("failed");
-          toast(status.error || "采集已停止，可以恢复已有录音");
+          setSaveStatus(status.error || "采集已停止，请核对已保存音轨");
+          toast(status.error || "采集已停止，请核对已保存音轨");
         }
       },
       failure: (error) => {
@@ -1712,6 +1726,7 @@ export function useRecordingController({
     recognitionTerms,
     recordOnly,
     recording,
+    echoMode,
     responsiveMode,
     resume,
     retrySync,
@@ -1726,7 +1741,6 @@ export function useRecordingController({
     savedMeetingId,
     sessionRef,
     setAutoProcess,
-    echoMode,
     setBrief,
     setCaptureSource,
     setCompletionMode,
@@ -1735,6 +1749,7 @@ export function useRecordingController({
     setCorrectionProfileId,
     setCorrectionReviewOpen,
     setDraftEngine,
+    setEchoMode,
     setHistoryOpen,
     setInspectorOpen,
     setJumpDraft,
@@ -1749,7 +1764,6 @@ export function useRecordingController({
     setPrefixEnabled,
     setRecognitionTerms,
     setResponsiveMode,
-    setEchoMode,
     setSettingsOpen,
     setSettingsTab,
     setSilenceReminder,

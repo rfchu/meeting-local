@@ -57,6 +57,13 @@ def test_http_contract_matches_pre_split_v22(tmp_path):
     assert schema['paths'].pop('/api/meetings/{mid}/handoff/source-reviews')
     assert schema['components']['schemas'].pop('SourceReviewInput')
     assert schema['paths'].pop('/api/runtime/resources')
+    assert set(schema['paths'].pop('/api/runtime/model-import')) == {'get', 'post', 'delete'}
+    assert schema['components']['schemas'].pop('DirectoryRequest')
+    assert set(schema['paths'].pop('/api/runtime/model-import/archive')) == {'post'}
+    assert schema['components']['schemas'].pop('ArchiveRequest')
+    assert set(schema['paths'].pop('/api/runtime/model-import/download')) == {'post'}
+    assert schema['components']['schemas'].pop('DownloadRequest')
+    assert set(schema['paths'].pop('/api/runtime/model-import/activate')) == {'post'}
     assert schema['paths'].pop('/api/meetings/{mid}/minutes/jobs')
     assert schema['components']['schemas'].pop('MinutesTaskInput')
     assert set(schema['paths'].pop('/api/recordings/{rid}/notes/shorthand'))=={'get','post'}
@@ -74,6 +81,9 @@ def test_http_contract_matches_pre_split_v22(tmp_path):
     assert schema['components']['schemas']['InterviewQA']['properties'].pop('question_evidence')
     assert schema['components']['schemas'].pop('InterviewSpeakerRoles')
     assert schema['components']['schemas']['ComposeInput']['properties'].pop('expected_analysis_id')
+    for contract in ('AnalysisJobInput', 'ComposeInput', 'MinutesPolishInput', 'AIMinutesGenerateInput'):
+        for name in ('confirm_cloud', 'expected_provider'):
+            assert schema['components']['schemas'][contract]['properties'].pop(name)
     payload=json.dumps(schema,sort_keys=True,separators=(',',':'),ensure_ascii=False)
     # Captured from the running v22 service before splitting: 116 paths, 135 operations.
     assert hashlib.sha256(payload.encode()).hexdigest()=='fac4d2387540dd6ea2f8f29205390b870e6d7a8695f1f743831ce1f2ec026b90'

@@ -1,6 +1,6 @@
 from .languages import (AUTO_LANGUAGE_ERROR, EXPERIMENTAL_TRANSCRIPTION_LANGUAGES,
                         QWEN_UNSUPPORTED_LANGUAGE_EXIT, UnsupportedAutoLanguage, configure_transcription_asr)
-from .resource_policy import sync_live_demand
+from .resource_policy import active_live_sessions,sync_live_demand
 from .job_checkpoints import JobCheckpoints,file_digest,validate_segments,ResourceInterrupted,model_files
 import fcntl, hashlib, json, math, os, subprocess, threading, time
 from pathlib import Path
@@ -72,9 +72,8 @@ class Worker:
         self.check(jid)
         self.store.execute('UPDATE jobs SET stage=?,progress=? WHERE id=?',(stage,progress,jid))
     def next_job(self):
-        live=bool(self.store.one("SELECT 1 FROM live_sessions WHERE status IN ('running','paused','draining') LIMIT 1"))
+        live=sync_live_demand(self.resources,self.store) if self.resources else next(active_live_sessions(self.store),None) is not None
         if self.resources:
-            sync_live_demand(self.resources,self.store)
             owners=[r['id'] for r in self.store.all("SELECT id FROM jobs WHERE state='queued' AND kind='retrieval_index' ORDER BY created,rowid LIMIT 128")] if live else []
             total=self.store.one("SELECT count(*) AS n FROM jobs WHERE state='queued' AND kind='retrieval_index'")['n'] if live else 0
             self.resources.set_index_deferred(owners,total)
@@ -202,6 +201,8 @@ class Worker:
         if profile:
             snapshot=config.get('provider',{})
             profile.update({key:snapshot[key] for key in ('provider_type','base_url') if key in snapshot})
+            if profile['provider_type']=='cloud' and not config.get('cloud_confirmed'):
+                raise RuntimeError('缺少云端发送确认，请重新提交任务')
         provider=OpenAICompatibleProvider(profile) if profile else LMStudioProvider()
         work=self.store.directory(mid)/jid;work.mkdir(exist_ok=True)
         segments=config['segments'];self.update(jid,'整理简记与原文依据',.1)
@@ -226,6 +227,8 @@ class Worker:
             if not profile:raise RuntimeError('模型配置已删除，无法继续任务')
             snapshot=config.get('provider') or {}
             profile.update({key:snapshot[key] for key in ('provider_type','base_url') if key in snapshot})
+            if profile['provider_type']=='cloud' and not config.get('cloud_confirmed'):
+                raise RuntimeError('缺少云端发送确认，请重新提交任务')
             provider=OpenAICompatibleProvider(profile)
         else:
             provider=LMStudioProvider()

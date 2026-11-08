@@ -34,7 +34,7 @@ import {
 } from "./features/notes/recordingPreferences";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { api, download } from "./api";
+import { api, cloudConfirmation, download } from "./api";
 import type {
   Meeting,
   Artifact,
@@ -178,7 +178,14 @@ export default function App() {
     [recordingOpen, setRecordingOpen] = useState(false);
   const [taskFocus, setTaskFocus] = useState<TaskFocus | undefined>();
   const [managementPage, setManagementPage] = useState<ManagementPage | null>(
-    null,
+    () => {
+      const fragment = window.location.hash;
+      return fragment === "#management/tasks"
+        ? "tasks"
+        : fragment === "#management/recovery"
+          ? "recovery"
+          : null;
+    },
   );
   const recoveryQuery = useQuery({
     queryKey: ["recording-recoveries"],
@@ -737,13 +744,17 @@ export default function App() {
   };
   const generateAnalysis = async () => {
     if (!meeting || !analysisModel) return toast("请先配置分析模型");
+    const profiles = envQuery.data?.analysis.profiles || [];
+    const profile = profiles.find((item) => item.id === analysisModel);
+    if (profile?.provider_type === "cloud" && !window.confirm(
+      `本场文字稿将发送至 ${profile.name}（${profile.base_url}）生成会议分析。是否继续？`,
+    )) return;
     try {
       await saveTranscript();
-      const profiles = envQuery.data?.analysis.profiles || [];
       await api.analyze(
         meeting.id,
         profiles.length
-          ? { profile_id: analysisModel }
+          ? { profile_id: analysisModel, ...cloudConfirmation(profile) }
           : { model: analysisModel },
       );
       setWorkspace("analysis");
@@ -1531,7 +1542,7 @@ export default function App() {
                     onGenerate={() => void generateAnalysis()}
                     onCompose={() => void startMinutes(true)}
                     composing={generating}
-                    onConfigure={() => setManagementPage("defaults")}
+                    onConfigure={() => setManagementPage("models")}
                     onJobAction={(id, action) => void jobAction(id, action)}
                     onSeek={(time) => seekRef.current?.(time)}
                     transcriptDirty={transcriptDirty}
@@ -1564,7 +1575,7 @@ export default function App() {
                       <NotesView
                         key={meeting.id}
                         inlineReview
-                        onConfigureModel={() => setManagementPage("defaults")}
+                        onConfigureModel={() => setManagementPage("models")}
                         focusNoteId={noteSourceId}
                         onNoteFocused={() => setNoteSourceId(undefined)}
                         onLocate={(time) => {
@@ -1667,7 +1678,7 @@ export default function App() {
                           void compareMinutes(left, right)
                         }
                         onExport={(format) => void exportMinutes(format)}
-                        onConfigureModel={() => setManagementPage("defaults")}
+                        onConfigureModel={() => setManagementPage("models")}
                         onCitations={setShowCitations}
                         onGenerate={() => void startMinutes()}
                         onDraft={(value) => {

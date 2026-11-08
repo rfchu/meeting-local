@@ -253,3 +253,24 @@
   gap: 10px;
   text-align: start;
 }
+
+.live-transcript-copilot {
+  flex: 0 0 auto;
+}
+
+.live-transcript-copilot .speculative-chip-container {
+  position: static;
+  margin-block: 4px;
+}
+
+.live-transcript-shorthand {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.live-transcript-shorthand .quick-input {
+  flex: 1 1 180px;
+  min-width: 0;
+}

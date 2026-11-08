@@ -18,6 +18,13 @@ def test_existing_service_never_starts_duplicate_or_rewrites_config(tmp_path,mon
     assert not service.plist.exists()
 
 
+def test_portable_status_does_not_inspect_the_development_launch_agent(tmp_path,monkeypatch):
+    monkeypatch.setenv('TINGJI_PORTABLE_SERVICE','1')
+    service=manager(tmp_path,monkeypatch)
+    monkeypatch.setattr(service,'call',lambda *_:pytest.fail('portable runtime queried development launchd'))
+    assert service.status()=={'loaded':False,'running':False,'port':service.port}
+
+
 def test_other_listener_is_preserved(tmp_path,monkeypatch):
     service=manager(tmp_path,monkeypatch)
     monkeypatch.setattr(service,'status',lambda:{'loaded':False,'running':False})
@@ -92,3 +99,58 @@ def test_uncertain_writer_blocks_normal_service_stop(tmp_path,monkeypatch):
     service=manager(tmp_path,monkeypatch)
     monkeypatch.setattr('app.capture_ownership.inspect',lambda root:{'lease':'unknown'})
     assert service.busy()
+
+
+def test_maintenance_uses_capture_content_and_audio_instead_of_session_mtime(tmp_path, monkeypatch):
+    import json
+    import os
+    from app.host_bridge import maintenance_report
+
+    service = manager(tmp_path, monkeypatch)
+    folder = service.data / 'recordings' / 'old'
+    folder.mkdir(parents=True)
+    (folder / 'session.json').write_text(json.dumps({'state': 'recording', 'updated': 100}))
+    assert maintenance_report(service.data, now=1000) == {'blockers': [], 'recoverable': 1}
+    audio = folder / '00000000.part'
+    audio.write_bytes(b'audio')
+    os.utime(audio, (999, 999))
+    assert maintenance_report(service.data, now=1000)['blockers'] == ['capture_active']
+    assert audio.read_bytes() == b'audio'
+
+
+@pytest.mark.parametrize('backend', ['detached', 'launchd'])
+def test_restart_preserves_backend_and_waits_for_new_identity(tmp_path, monkeypatch, backend):
+    service = manager(tmp_path, monkeypatch)
+    calls = []
+    states = iter([
+        {'loaded': True, 'ready': True, 'pid': 123, 'backend': backend},
+        {'loaded': False},
+        {'loaded': True, 'ready': False, 'pid': 234, 'backend': backend},
+        {'loaded': True, 'ready': True, 'pid': 234, 'backend': backend},
+    ])
+    monkeypatch.setattr(service, 'status', lambda: next(states))
+    monkeypatch.setattr(service, 'occupied', lambda: False)
+    monkeypatch.setattr(service, 'stop', lambda **args: calls.append(args))
+    monkeypatch.setattr(service, 'start', lambda **args: calls.append(args) or {'pid': 234})
+    monkeypatch.setattr('scripts.manage_service.time.sleep', lambda _: None)
+    assert service.restart(expected_pid=123)['pid'] == 234
+    assert calls == [{'expected_pid': 123}, {'detached': backend == 'detached'}]
+
+
+def test_restart_reports_blockers_before_stopping(tmp_path, monkeypatch):
+    from app.db import Store
+    from app.recordings import RecordingStore
+    from scripts.manage_service import RestartBlocked
+
+    service = manager(tmp_path, monkeypatch)
+    RecordingStore(Store(service.data)).create('audio/webm')
+    monkeypatch.setattr(service, 'status', lambda: {
+        'loaded': True, 'ready': True, 'pid': 123, 'backend': 'detached',
+    })
+    monkeypatch.setattr(service, 'stop', lambda **_: pytest.fail('should not stop'))
+    with pytest.raises(RestartBlocked) as error:
+        service.restart(expected_pid=123)
+    assert error.value.reasons == ['capture_active']
+    with pytest.raises(RestartBlocked) as error:
+        service.restart(expected_pid=999)
+    assert error.value.reasons == ['service_unverified']

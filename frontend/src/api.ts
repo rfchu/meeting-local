@@ -16,6 +16,7 @@ import type {
   SourceLanguage,
   TranscriptionLanguage,
 } from "./types";
+import type { ModelImportStatus } from "./features/management/types";
 import type { RuntimeTasks } from "./features/management/TasksPanel";
 import type { RuntimeOverview } from "./features/management/RuntimeManagement";
 import type { OverviewStatus } from "./features/overview/types";
@@ -173,6 +174,17 @@ type AudiencePreviewInput = {
   template_version?: number;
 };
 
+export function cloudConfirmation(profile?: LLMConfig) {
+  if (profile?.provider_type !== "cloud") return {};
+  const { id, base_url, provider_type, model } = profile;
+  return { confirm_cloud: true, expected_provider: { id, base_url, provider_type, model } };
+}
+
+type AnalysisRequest = {
+  profile_id?: string;
+  model?: string;
+} & ReturnType<typeof cloudConfirmation>;
+
 export const api = {
   handoffSources: (mid: string, artifactId?: string, offset = 0) =>
     request<HandoffSources>(
@@ -223,6 +235,18 @@ export const api = {
       json("POST", { expected_seq: seq }),
     ),
   runtimeOverview: () => request<RuntimeOverview>("/runtime/overview"),
+  modelImportStatus: () =>
+    request<ModelImportStatus>("/runtime/model-import"),
+  importModelDirectory: (directory: string) =>
+    request<ModelImportStatus>("/runtime/model-import", json("POST", { directory })),
+  importModelArchive: (archive: string) =>
+    request<ModelImportStatus>("/runtime/model-import/archive", json("POST", { archive })),
+  downloadModelPack: (url: string) =>
+    request<ModelImportStatus>("/runtime/model-import/download", json("POST", { url })),
+  activateModelImport: () =>
+    request<ModelImportStatus>("/runtime/model-import/activate", json("POST")),
+  cancelModelImport: () =>
+    request<ModelImportStatus>("/runtime/model-import", json("DELETE")),
   serviceLifecycle: () =>
     request<{
       available: boolean;
@@ -1015,10 +1039,10 @@ export const api = {
   },
   rename: (id: string, title: string) =>
     request(`/meetings/${id}`, json("PATCH", { title })),
-  speakerReview: (id: string, profileId?: string) =>
+  speakerReview: (id: string, profileId?: string, consent = cloudConfirmation()) =>
     request<Artifact<SpeakerReviewResult>>(
       `/meetings/${id}/speaker-reviews`,
-      json("POST", { profile_id: profileId }),
+      json("POST", { profile_id: profileId, ...consent }),
     ),
   applySpeakerReview: (
     id: string,
@@ -1108,10 +1132,10 @@ export const api = {
     todoId: string,
     body: { status: "pending" | "done"; owner: string; due_date: string },
   ) => request(`/meetings/${id}/note-todos/${todoId}`, json("PUT", body)),
-  expandNote: (id: string, noteId: string, profileId?: string) =>
+  expandNote: (id: string, noteId: string, profileId?: string, consent = cloudConfirmation()) =>
     request<{ id: string }>(
       `/meetings/${id}/notes/${noteId}/expand`,
-      json("POST", { profile_id: profileId || null }),
+      json("POST", { profile_id: profileId || null, ...consent }),
     ),
   acceptNoteExpansion: (
     id: string,
@@ -1125,7 +1149,7 @@ export const api = {
     ),
   deleteNote: (id: string, noteId: string) =>
     request(`/meetings/${id}/notes/${noteId}`, { method: "DELETE" }),
-  analyze: (id: string, body: { profile_id?: string; model?: string }) =>
+  analyze: (id: string, body: AnalysisRequest) =>
     request<{ id: string }>(
       `/meetings/${id}/analysis-jobs`,
       json("POST", body),
