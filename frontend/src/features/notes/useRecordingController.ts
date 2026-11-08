@@ -1,3 +1,4 @@
+import { useQueryClient } from "@tanstack/react-query";
 import { browserCaptureAllowed } from "../../preferences/nativeHost";
 import { reconcileNativePhase } from "./recordingCoordinator";
 import { useNativeCaptureStatus } from "./useNativeCaptureStatus";
@@ -397,6 +398,7 @@ export function useRecordingController({
     (captureSource === "macos-both" ||
       draftEngine === "whisper" ||
       streamEnabled);
+  const queryClient = useQueryClient();
   const backendLive = useLiveSession(
     correctionSessionId,
     managedMode && ["recording", "paused"].includes(state),
@@ -460,6 +462,14 @@ export function useRecordingController({
                 : "达到 25 秒上限，后续片段将关联阅读"
               : "本段已确认并保存",
         );
+      } else if (
+        event.type === "note_created" ||
+        event.type === "note_synthesized" ||
+        event.type === "candidate_accepted"
+      ) {
+        void queryClient.invalidateQueries({
+          queryKey: ["copilot-notes", correctionSessionId],
+        });
       } else if (event.type === "status") setDraftStatus(event.message);
     },
     setDraftStatus,

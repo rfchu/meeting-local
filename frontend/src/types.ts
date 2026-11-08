@@ -3,7 +3,7 @@ export type SourceLanguage = "auto" | "zh" | "en" | "ja";
 export type TranscriptionLanguage = SourceLanguage;
 export type OutputLanguage = "zh" | "en";
 export type Workspace =
-  "prepare" | "transcript" | "notes" | "analysis" | "minutes";
+  "prepare" | "transcript" | "notes" | "analysis" | "minutes" | "copilot";
 export type JobState =
   "queued" | "running" | "completed" | "failed" | "cancelled";
 export type MinutesStyle = "formal" | "brief" | "internal" | "ai";
@@ -127,6 +127,19 @@ export interface MeetingNoteInput {
   note_type: MeetingNoteType;
   raw_text: string;
 }
+export interface SpeculativeCandidate {
+  candidate_id: string;
+  kind: "todo" | "decision";
+  title: string;
+  content: string;
+  owner?: string;
+  due_date?: string;
+  confidence: number;
+  speaker?: string;
+  timestamp: number;
+  anchor_segments?: string[];
+}
+
 export interface MeetingNote extends MeetingNoteInput {
   id: string;
   meeting_id: string;
@@ -136,7 +149,20 @@ export interface MeetingNote extends MeetingNoteInput {
   expansion?: Artifact<NoteExpansion> | null;
   expanded_text: string;
   accepted_text: string;
-  status: "raw" | "expanded" | "accepted" | "ignored";
+  synthesized_text?: string;
+  shorthand_quote?: string;
+  shorthand_track?: SourceTrack | "";
+  anchor_start?: number;
+  anchor_end?: number;
+  speaker_hint?: string;
+  status:
+    | "raw"
+    | "expanded"
+    | "accepted"
+    | "ignored"
+    | "synthesizing"
+    | "ready"
+    | "failed";
   source_segment_ids: string[];
   created: string;
   updated: string;
@@ -204,6 +230,21 @@ export interface LiveCorrection {
   edits: { original: string; replacement: string; reason: string }[];
   state: "suggested" | "accepted" | "rejected" | "unchanged";
 }
+export type CopilotNote = Pick<
+  MeetingNote,
+  | "id"
+  | "raw_text"
+  | "captured_at"
+  | "note_type"
+  | "status"
+  | "synthesized_text"
+  | "anchor_start"
+  | "anchor_end"
+  | "speaker_hint"
+  | "shorthand_quote"
+  | "shorthand_track"
+> & { owner?: string; due_date?: string };
+
 export interface LiveDraftSegment {
   possible_echo?: boolean;
   tracks?: LiveDraftSegment[];

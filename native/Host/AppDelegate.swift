@@ -1,4 +1,5 @@
 import AppKit
+import Carbon.HIToolbox
 
 final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDelegate {
     private var configuration: HostConfiguration
@@ -30,6 +31,8 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, 
     private var startupDeadline: Date?
     private var configurationGeneration = 0
     private var timer: Timer?
+    private var companionHotkey: EventHotKeyRef?
+    private var companionHotkeyHandler: EventHandlerRef?
     private var state = ConnectionState.checking
     private var window: NSWindow!
     private let status = NSTextField(labelWithString: "正在核对本机服务")
@@ -43,7 +46,7 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, 
         self.configuration = loaded.configuration; self.defaults = defaults; self.loaded = loaded; self.preferences = preferences; super.init()
     }
     func applicationDidFinishLaunching(_ notification: Notification) {
-        buildMenu(); buildWindow(); buildStatusItem(); probe()
+        buildMenu(); buildWindow(); buildStatusItem(); probe(); setupHotkey()
         activationObserver = DistributedNotificationCenter.default().addObserver(forName: HostInstanceLock.activationName(preferences: preferences), object: nil, queue: .main) { [weak self] _ in self?.showWindow() }
         timer = Timer(timeInterval: 5, repeats: true) { [weak self] _ in self?.probe() }
         if let timer { RunLoop.main.add(timer, forMode: .common) }
@@ -59,6 +62,8 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, 
     }
     func applicationWillTerminate(_ notification: Notification) {
         timer?.invalidate(); settings?.close(); workspace?.dispose(); companion?.close(); client.close()
+        if let companionHotkey { UnregisterEventHotKey(companionHotkey) }
+        if let companionHotkeyHandler { RemoveEventHandler(companionHotkeyHandler) }
         if let activationObserver { DistributedNotificationCenter.default().removeObserver(activationObserver) }
         if let statusItem { NSStatusBar.system.removeStatusItem(statusItem) }
         // Closing this UI never sends a stop, restart or recording command to the service.
@@ -229,6 +234,41 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, 
         if companion == nil { companion = CompanionController(configuration: configuration, client: client) }
         companion?.returnToRecording = { [weak self] id in self?.openVerifiedWorkspace(recording: id) }
         companion?.show()
+    }
+    @objc private func toggleCompanion() {
+        guard !loaded.problem else { return }
+        if companion == nil { companion = CompanionController(configuration: configuration, client: client) }
+        companion?.returnToRecording = { [weak self] id in self?.openVerifiedWorkspace(recording: id) }
+        companion?.toggle()
+    }
+    private func setupHotkey() {
+        let identifier = EventHotKeyID(signature: 0x544A484B, id: 1) // TJHK
+        var spec = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyReleased))
+        let target = GetApplicationEventTarget()
+        let install = InstallEventHandler(target, { _, event, context in
+            guard let event, let context else { return OSStatus(eventNotHandledErr) }
+            var key = EventHotKeyID()
+            let result = GetEventParameter(event, EventParamName(kEventParamDirectObject),
+                                           EventParamType(typeEventHotKeyID), nil,
+                                           MemoryLayout<EventHotKeyID>.size, nil, &key)
+            guard result == noErr, key.signature == 0x544A484B, key.id == 1 else {
+                return OSStatus(eventNotHandledErr)
+            }
+            let delegate = Unmanaged<HostAppDelegate>.fromOpaque(context).takeUnretainedValue()
+            delegate.toggleCompanion()
+            return noErr
+        }, 1, &spec, Unmanaged.passUnretained(self).toOpaque(), &companionHotkeyHandler)
+        guard install == noErr else {
+            NSLog("伴随窗口快捷键处理器安装失败（%d）", install)
+            return
+        }
+        let registered = RegisterEventHotKey(UInt32(kVK_ANSI_N), UInt32(controlKey | optionKey),
+                                             identifier, target, 0, &companionHotkey)
+        if registered != noErr {
+            if let companionHotkeyHandler { RemoveEventHandler(companionHotkeyHandler) }
+            companionHotkeyHandler = nil
+            NSLog("伴随窗口快捷键注册失败（%d），可从宿主菜单打开", registered)
+        }
     }
     @objc private func openWorkspace() { openVerifiedWorkspace(recording: nil) }
     private func openVerifiedWorkspace(recording: String?) {

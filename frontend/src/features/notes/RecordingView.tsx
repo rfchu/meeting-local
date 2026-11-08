@@ -18,6 +18,7 @@ import RecordingHealthPanel from "./RecordingHealthPanel";
 import RecordingCompletionPanel from "./RecordingCompletionPanel";
 import RecordingEndGuide from "./RecordingEndGuide";
 import LiveDraftList from "./LiveDraftList";
+import { LiveCopilot } from "../copilot/LiveCopilot";
 import type { RecordingViewModel } from "./useRecordingController";
 
 export default function RecordingView({
@@ -156,6 +157,7 @@ export default function RecordingView({
   termsOpen,
   toast,
 }: RecordingViewModel) {
+  const [copilotOpen, setCopilotOpen] = useState(false);
   const [notesCollapsed, setNotesCollapsed] = useState(false);
   const [subtitleCollapsed, setSubtitleCollapsed] = useState(false);
   const [subtitleTarget, setSubtitleTarget] = useState<HTMLDivElement | null>(
@@ -552,6 +554,14 @@ export default function RecordingView({
                 >
                   我的简记{notes.length ? ` · ${notes.length}` : ""}
                 </button>
+                {correctionSessionId && state !== "finished" && (
+                  <button
+                    aria-pressed={copilotOpen}
+                    onClick={() => setCopilotOpen(!copilotOpen)}
+                  >
+                    {copilotOpen ? "收起伴随时间线" : "伴随时间线"}
+                  </button>
+                )}
                 {recording && notesCollapsed && (
                   <button
                     className="workbench-restore-notes"
@@ -561,6 +571,20 @@ export default function RecordingView({
                   </button>
                 )}
               </nav>
+              {copilotOpen && correctionSessionId && state !== "finished" && (
+                <LiveCopilot
+                  key={correctionSessionId}
+                  recordingId={correctionSessionId}
+                  confirmed={displayDrafts}
+                  partial={partialDraft}
+                  elapsed={currentSeconds()}
+                  onLocate={(id) => {
+                    setCopilotOpen(false);
+                    setMobilePane("transcript");
+                    setJumpDraft({ id, nonce: Date.now() });
+                  }}
+                />
+              )}
               <div
                 className="recording-workspace"
                 data-mobile-pane={mobilePane}

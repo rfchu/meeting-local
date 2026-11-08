@@ -63,8 +63,128 @@ class RecordingStore:
             value=self.read(rid)
             if self.store.one('SELECT id FROM meetings WHERE id=?',(rid,)):return value
             if brief is not None:value['brief']=brief
-            value.update(notes=notes,duration=duration,chunk_count=chunk_count,updated=time.time())
+            server_notes=[note for note in value['notes'] if 'status' in note]
+            value.update(notes=notes+server_notes,duration=duration,chunk_count=chunk_count,updated=time.time())
             self.write(self.folder(rid)/'session.json',value);return value
+
+    def recover_shorthand(self):
+        """Keep the original note usable after an interrupted inference."""
+        with self.lock:
+            self.store.execute("UPDATE meeting_notes SET status='failed' WHERE status='synthesizing'")
+            for session in self.list():
+                if not any(note.get('status') == 'synthesizing' for note in session['notes']):
+                    continue
+                value = self.read(session['id'])
+                for note in value['notes']:
+                    if note.get('status') == 'synthesizing':
+                        note['status'] = 'failed'
+                self.write(self.folder(session['id']) / 'session.json', value)
+
+    def dismiss_candidate(self, rid, candidate_id):
+        with self.lock:
+            session = self.read(rid)
+            dismissed = session.setdefault('dismissed_candidates', [])
+            if candidate_id not in dismissed:
+                dismissed.append(candidate_id)
+                self.write(self.folder(rid) / 'session.json', session)
+
+    def add_note(self, rid, note):
+        with self.lock:
+            value = self.read(rid)
+            client_id = note.get('client_id')
+            published = self.store.one('SELECT id FROM meetings WHERE id=?', (rid,))
+            if client_id:
+                existing = (self.store.one('SELECT * FROM meeting_notes WHERE meeting_id=? AND client_id=?', (rid, client_id))
+                            if published else next((row for row in value['notes'] if row.get('client_id') == client_id), None))
+                if existing:
+                    if existing['raw_text'] != note['raw_text']:
+                        raise ValueError('速记请求编号已用于其他内容')
+                    return existing
+            nid = note.get('id') or uid()
+            now = time.time()
+            entry = {
+                'id': nid,
+                'captured_at': float(note.get('captured_at', 0)),
+                'raw_text': str(note.get('raw_text', '')).strip(),
+                'note_type': note.get('note_type', 'note'),
+                'note_scope': note.get('note_scope', 'personal'),
+                'is_marker': bool(note.get('is_marker', False)),
+                'client_id': note.get('client_id', ''),
+                'overview_focus': bool(note.get('overview_focus', False)),
+                'status': note.get('status', 'raw'),
+                'synthesized_text': note.get('synthesized_text', ''),
+                'anchor_start': note.get('anchor_start'),
+                'anchor_end': note.get('anchor_end'),
+                'speaker_hint': note.get('speaker_hint', ''),
+                'shorthand_quote': '',
+                'shorthand_track': '',
+                'copilot': True,
+                'candidate_id': note.get('candidate_id', ''),
+                'owner': note.get('owner', ''),
+                'due_date': note.get('due_date', ''),
+                'created': now,
+                'updated': now,
+            }
+            if published:
+                with self.store.connect() as db:
+                    db.execute('BEGIN IMMEDIATE')
+                    from .notes import insert_note
+                    insert_note(db, rid, entry)
+                return entry
+
+            notes = value.get('notes', [])
+            notes.append(entry)
+            value['notes'] = notes
+            value['updated'] = now
+            self.write(self.folder(rid) / 'session.json', value)
+            return entry
+
+    def update_note(self, rid, nid, **updates):
+        with self.lock:
+            now = time.time()
+            if self.store.one('SELECT id FROM meetings WHERE id=?', (rid,)):
+                with self.store.connect() as db:
+                    db.execute('BEGIN IMMEDIATE')
+                    from .notes import ensure_note_columns
+                    ensure_note_columns(db)
+                    allowed = {
+                        'raw_text', 'synthesized_text', 'status',
+                        'anchor_start', 'anchor_end', 'speaker_hint', 'shorthand_quote', 'shorthand_track',
+                        'note_type', 'note_scope', 'overview_focus'
+                    }
+                    fields_to_set = {k: v for k, v in updates.items() if k in allowed}
+                    if fields_to_set:
+                        set_clause = ', '.join(f'{k}=?' for k in fields_to_set)
+                        db.execute(
+                            f'UPDATE meeting_notes SET {set_clause}, updated=CURRENT_TIMESTAMP WHERE id=? AND meeting_id=?',
+                            (*fields_to_set.values(), nid, rid)
+                        )
+                    row = db.execute('SELECT * FROM meeting_notes WHERE id=? AND meeting_id=?', (nid, rid)).fetchone()
+                    return dict(row) if row else None
+
+            value = self.read(rid)
+            notes = value.get('notes', [])
+            target = None
+            for item in notes:
+                if item.get('id') == nid:
+                    item.update(updates)
+                    item['updated'] = now
+                    target = item
+                    break
+            if target is None:
+                raise KeyError(f'Note {nid} not found in recording {rid}')
+            value['updated'] = now
+            self.write(self.folder(rid) / 'session.json', value)
+            return target
+
+    def get_note(self, rid, nid):
+        if self.store.one('SELECT id FROM meetings WHERE id=?', (rid,)):
+            return self.store.one('SELECT * FROM meeting_notes WHERE id=? AND meeting_id=?', (nid, rid))
+        value = self.read(rid)
+        for item in value.get('notes', []):
+            if item.get('id') == nid:
+                return item
+        return None
 
     def chunk(self,rid,index,payload):
         with self.lock:

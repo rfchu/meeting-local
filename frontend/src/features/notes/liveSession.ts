@@ -58,6 +58,15 @@ export type SessionEvent =
         skipped_seconds: number;
       };
     }
+  | {
+      type:
+        | "note_created"
+        | "note_synthesized"
+        | "candidate_accepted"
+        | "candidate_detected"
+        | "candidate_dismissed";
+      seq: number;
+    }
   | { type: "status"; seq: number; message: string }
   | { type: "heartbeat" | "ended"; seq: number };
 
@@ -110,7 +119,18 @@ export async function watchLiveSession(
       if (event.seq <= cursor) return false;
       if (event.seq !== cursor + 1)
         throw new Error("实时事件缺失，正在重新同步");
-      if (!["partial", "final", "status"].includes(event.type))
+      if (
+        ![
+          "partial",
+          "final",
+          "status",
+          "note_created",
+          "note_synthesized",
+          "candidate_accepted",
+          "candidate_detected",
+          "candidate_dismissed",
+        ].includes(event.type)
+      )
         throw new Error("未知实时事件");
     }
     if (

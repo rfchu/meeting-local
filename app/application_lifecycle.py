@@ -27,6 +27,7 @@ def application_lifespan(services:ApplicationServices,start_worker:bool):
             if start_worker: worker.start()
             resident.start_monitor()
             store.execute("UPDATE live_asr_ranges SET state='failed',error='服务重启，识别未完成；快速完成会补识别该范围' WHERE state='running'")
+            await run_in_threadpool(services.recordings.recover_shorthand)
             await run_in_threadpool(native_capture.reconcile_interrupted)
             await live_sessions.resume()
             native_capture.start_monitor()

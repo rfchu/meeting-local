@@ -94,3 +94,27 @@ def test_host_diagnostics_separates_running_backend_from_disk_and_detects_active
         response = client.post('/api/recordings', json={'mime_type': 'audio/webm'})
         assert response.status_code == 201
         assert client.get(path).json()['busy'] is True
+
+
+def test_companion_exposes_only_current_native_track_levels(tmp_path, monkeypatch):
+    import time
+    from app.companion import snapshot
+
+    app = create_app(tmp_path, start_worker=False)
+    services = app.state.services
+    rid = services.recordings.create('audio/webm')['id']
+    monkeypatch.setattr(services.recording_runtime, 'read', lambda _: {
+        'recording_id': rid, 'identity': {'meeting_id': None}, 'source': 'native',
+        'phase': 'recording', 'storage': {'state': 'writing'},
+        'asr': {'state': 'running'}, 'capture': {'timeline_seconds': 62},
+    })
+    path = services.recordings.folder(rid) / 'capture.json'
+    report = {'state': 'recording', 'updated': time.time(), 'system_levels': [.1] * 30,
+              'microphone_levels': [.8, .3], 'buffer_age': {'system': .1, 'microphone': 2}}
+    services.recordings.write(path, report)
+    view = snapshot(services, 'status', rid)
+    assert view['duration_seconds'] == 62
+    assert view['system_levels'] == [.1] * 24
+    assert view['microphone_levels'] == [0, 0]
+    services.recordings.write(path, {**report, 'updated': time.time() - 60})
+    assert 'system_levels' not in snapshot(services, 'status', rid)

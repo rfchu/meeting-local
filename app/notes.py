@@ -5,10 +5,69 @@ from .db import uid,encode
 from .note_expansion import nearby_segments
 from .minutes import MeetingMinutes,MinutesItem,validate_minutes_citations
 
-def insert_note(db,mid,note):
-    nid=uid()
-    db.execute('INSERT INTO meeting_notes(id,meeting_id,captured_at,note_type,raw_text,note_scope,is_marker,client_id,overview_focus) VALUES(?,?,?,?,?,?,?,?,?)',
-        (nid,mid,note['captured_at'],note['note_type'],note['raw_text'].strip(),note.get('note_scope','personal'),int(note.get('is_marker',False)),note.get('client_id',''),int(note.get('overview_focus',False))))
+def ensure_note_columns(db):
+    """Ensure optional shorthand columns exist in meeting_notes table."""
+    cols = {row['name'] for row in db.execute('PRAGMA table_info(meeting_notes)')}
+    if 'synthesized_text' not in cols:
+        db.execute("ALTER TABLE meeting_notes ADD COLUMN synthesized_text TEXT NOT NULL DEFAULT ''")
+    if 'anchor_start' not in cols:
+        db.execute("ALTER TABLE meeting_notes ADD COLUMN anchor_start REAL")
+    if 'anchor_end' not in cols:
+        db.execute("ALTER TABLE meeting_notes ADD COLUMN anchor_end REAL")
+    if 'shorthand_quote' not in cols:
+        db.execute("ALTER TABLE meeting_notes ADD COLUMN shorthand_quote TEXT NOT NULL DEFAULT ''")
+    if 'shorthand_track' not in cols:
+        db.execute("ALTER TABLE meeting_notes ADD COLUMN shorthand_track TEXT NOT NULL DEFAULT ''")
+    if 'speaker_hint' not in cols:
+        db.execute("ALTER TABLE meeting_notes ADD COLUMN speaker_hint TEXT NOT NULL DEFAULT ''")
+
+
+def insert_note(db, mid, note):
+    ensure_note_columns(db)
+    nid = note.get('id') or uid()
+    status = note.get('status', 'raw')
+    note_type = {'shorthand':'note', 'todo':'action'}.get(note.get('note_type'), note.get('note_type', 'note'))
+    synthesized_text = note.get('synthesized_text', '')
+    anchor_start = note.get('anchor_start')
+    anchor_end = note.get('anchor_end')
+    speaker_hint = note.get('speaker_hint', '')
+
+    db.execute(
+        '''INSERT INTO meeting_notes(
+            id, meeting_id, captured_at, note_type, raw_text, note_scope,
+            is_marker, client_id, overview_focus, status,
+            synthesized_text, anchor_start, anchor_end, speaker_hint, shorthand_quote, shorthand_track
+        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+        (
+            nid,
+            mid,
+            note['captured_at'],
+            note_type,
+            note['raw_text'].strip(),
+            note.get('note_scope', 'personal'),
+            int(note.get('is_marker', False)),
+            note.get('client_id', ''),
+            int(note.get('overview_focus', False)),
+            status,
+            synthesized_text,
+            anchor_start,
+            anchor_end,
+            speaker_hint,
+            note.get("shorthand_quote", ""),
+            note.get("shorthand_track", ""),
+        ),
+    )
+    if note.get('candidate_id') and note.get('note_type') == 'action':
+        row = db.execute('SELECT * FROM meeting_notes WHERE id=?', (nid,)).fetchone()
+        revision = db.execute('SELECT revision FROM meetings WHERE id=?', (mid,)).fetchone()['revision']
+        todo_id = hashlib.sha256(encode([mid, note['candidate_id']]).encode()).hexdigest()
+        db.execute(
+            """INSERT INTO note_todos(id,meeting_id,note_id,content,owner,due_date,
+               revision,note_fingerprint,source_segment_ids,note_scope)
+               VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO NOTHING""",
+            (todo_id, mid, nid, row['raw_text'], note.get('owner', ''), note.get('due_date', ''),
+             revision, fingerprint(row), '[]', 'meeting'),
+        )
     return nid
 
 def fingerprint(note):

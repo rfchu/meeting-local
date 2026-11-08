@@ -265,6 +265,8 @@ def register_routes(app,services:ApplicationServices):
             if not text and not marker:raise HTTPException(422,'请补充内容或保留时间标记')
             if any([text!=old['raw_text'],body.note_type!=old['note_type'],scope!=old['note_scope'],marker!=bool(old['is_marker']),position!=old['captured_at']]):
                 db.execute("UPDATE meeting_notes SET raw_text=?,note_type=?,note_scope=?,is_marker=?,captured_at=?,expanded_text='',accepted_text='',source_segment_ids='[]',status='raw',expansion_revision=0,updated=CURRENT_TIMESTAMP WHERE id=?",(text,body.note_type,scope,int(marker),position,nid))
+                if 'shorthand_quote' in old.keys():
+                    db.execute("UPDATE meeting_notes SET synthesized_text='',anchor_start=NULL,anchor_end=NULL,speaker_hint='',shorthand_quote='',shorthand_track='' WHERE id=?", (nid,))
         return {'ok':True}
 
 

@@ -1,4 +1,6 @@
 """Small, read-only projection for the native companion window."""
+import json
+import math
 import time
 
 from .chinese_record import saved_translation, segment_language, translation_file
@@ -33,6 +35,22 @@ def snapshot(services, mode, rid=None):
     rid = value['recording_id']
     result.update(recording_id=rid, meeting_id=value['identity']['meeting_id'], source=value['source'],
                   phase=value['phase'], storage=value['storage']['state'], asr=value['asr']['state'])
+    result['duration_seconds'] = value['capture']['timeline_seconds']
+    if value['source'] == 'native' and value['phase'] == 'recording':
+        try:
+            report = json.loads((services.recordings.folder(rid)/'capture.json').read_text())
+            if report.get('state') == 'recording' and abs(time.time() - float(report['updated'])) <= 4:
+                for track in ('system', 'microphone'):
+                    levels = report.get(track + '_levels', [])
+                    if isinstance(levels, list) and levels:
+                        age = report.get('buffer_age', {}).get(track)
+                        result[track + '_levels'] = [
+                            min(1.0, max(0.0, level)) if type(level) in (int, float)
+                            and math.isfinite(level) and isinstance(age, (int, float)) and age <= 1 else 0.0
+                            for level in levels[-24:]
+                        ]
+        except (OSError, ValueError, TypeError, KeyError):
+            pass
     if mode == 'highlights':
         items = [item for item in services.live_overview.read(rid)['items']
                  if not item['stale'] and item['decision'] != 'dismissed']

@@ -1203,6 +1203,56 @@ export const api = {
     }>("/llm-configs/test", json("POST", body)),
   deleteConfig: (id: string) =>
     request(`/llm-configs/${id}`, { method: "DELETE" }),
+  shorthandNotes: (rid: string) =>
+    request<import("./types").CopilotNote[]>(`/recordings/${rid}/notes/shorthand`),
+  postShorthand: (
+    rid: string,
+    body: {
+      raw_text: string;
+      captured_at?: number;
+      synthesize?: boolean;
+      speaker_hint?: string;
+      client_id?: string;
+    },
+  ) =>
+    request<{
+      id: string;
+      raw_text: string;
+      status: string;
+      captured_at: number;
+      speaker_hint?: string;
+      synthesized_text?: string;
+    }>(`/recordings/${rid}/notes/shorthand`, json("POST", body)),
+  candidates: (rid: string) =>
+    request<{
+      candidates: Array<{
+        candidate_id: string;
+        kind: "todo" | "decision";
+        title: string;
+        content: string;
+        owner?: string;
+        due_date?: string;
+        confidence: number;
+        speaker?: string;
+        timestamp: number;
+        anchor_segments?: string[];
+      }>;
+      accepted_count: number;
+      dismissed_count: number;
+    }>(`/recordings/${rid}/candidates`),
+  acceptCandidate: (rid: string, cid: string) =>
+    request<{
+      ok: boolean;
+      candidate_id: string;
+      status: string;
+      note?: any;
+    }>(`/recordings/${rid}/candidates/${cid}/accept`, { method: "POST" }),
+  rejectCandidate: (rid: string, cid: string) =>
+    request<{
+      ok: boolean;
+      candidate_id: string;
+      status: string;
+    }>(`/recordings/${rid}/candidates/${cid}/reject`, { method: "POST" }),
 };
 
 export const downloadUrl = (path: string) => `/api${path}`;

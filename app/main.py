@@ -51,6 +51,7 @@ from .routes.retrieval import register_routes as retrieval_routes
 from .routes.recordings import register_routes as recording_routes
 from .routes.meetings import register_routes as meeting_routes
 from .routes.minutes import register_routes as minutes_routes
+from .routes.copilot import register_routes as copilot_routes
 from .http_schemas import (RecordingQualityReviewInput,Segment,RevisionInput,JobInput,AnalysisJobInput,SpeakerReviewApplyInput,LLMConfigInput,RenameInput,MeetingNoteInput,MeetingNotesBatchInput,RetrievalConfigInput,SearchInput,SearchResolveInput,IndexBuildInput,QAPrepareInput,QAGenerateInput,NoteAcceptInput,NoteUseInput,TodoUpdate,MeetingNoteUpdate,MeetingBriefInput,AttentionDecisionInput,ActionTrackInput,DeliveryInput,RecordingInput,RecordingMetadata,CaptureStateInput,RecordingFinish,NativeDraftInput,LiveSessionInput,LiveSessionState,LiveCorrectionInput,LiveCorrectionDecision,KeepAwakeInput,ReviewCheckpointInput,NativeRecordingInput,NativeCommandInput,MinutesGenerateInput,MinutesSaveInput,MinutesPolishInput,AIMinutesGenerateInput)
 
 BASE=Path(__file__).resolve().parents[1]
@@ -123,7 +124,7 @@ def _create_app(data_dir=None,start_worker=True):
     register_recording_commands(app,recording_commands)
     register_overview(app,live_overview)
     register_terms(app,store,recordings)
-    for register in (runtime_routes,retrieval_routes,recording_routes,meeting_routes,minutes_routes):
+    for register in (runtime_routes,retrieval_routes,recording_routes,meeting_routes,minutes_routes,copilot_routes):
         register(app,services)
     app.mount('/',StaticFiles(directory=BASE/'app/static',html=True),name='ui')
     return app

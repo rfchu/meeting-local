@@ -62,11 +62,13 @@ import Workflow from "./components/Workflow";
 import type { TaskFocus } from "./types";
 import { handoffWorkspace } from "./components/handoff";
 import Player from "./components/Player";
+import { AppModals } from "./components/AppModals";
 import { MinutesPreview, RenameDialog } from "./components/Dialogs";
 import TranscriptView from "./features/transcript/TranscriptView";
 import AnalysisView from "./features/analysis/AnalysisView";
 import MinutesView from "./features/minutes/MinutesView";
 import NotesView from "./features/notes/NotesView";
+import { UnifiedTimeline } from "./features/copilot/UnifiedTimeline";
 import CompanionRecordingStatus, {
   companionRecording,
 } from "./features/notes/CompanionRecordingStatus";
@@ -1387,6 +1389,7 @@ export default function App() {
                   <div className="tabs">
                     {(
                       [
+                        ["copilot", "伴随时间线"],
                         ["prepare", "会议准备"],
                         [
                           "notes",
@@ -1456,6 +1459,13 @@ export default function App() {
                     toast={toast}
                   />
                 </div>
+                {workspace === "copilot" && (
+                  <UnifiedTimeline
+                    meeting={meeting}
+                    activeSegment={activeSegment}
+                    onSeek={(time, track) => seekRef.current?.(time, track)}
+                  />
+                )}
                 {workspace === "transcript" && (
                   <ChineseMeetingRecord
                     activeSegment={activeSegment}
@@ -1762,205 +1772,183 @@ export default function App() {
           </section>
         )}
       </main>
-      {searchOpen && (
-        <SearchDialog
-          meetings={listQuery.data || []}
-          onManageIndex={() => setManagementPage("index")}
-          onConfigure={() => {
-            setSearchOpen(false);
-            setManagementPage("models");
-          }}
-          onClose={() => setSearchOpen(false)}
-          onOpen={async (hit) => {
-            const current = await api.resolveSearch(hit);
-            const opened = await openMeeting(current.meeting_id);
-            if (!opened) throw new Error("会议未能打开，请重试");
-            await api.resolveSearch(hit);
-            if (current.source_segment_ids.length) setWorkspace("transcript");
-            setSearchOpen(false);
-            setSearchTarget(current);
-          }}
-        />
-      )}
-      {toastText && (
-        <div id="toast" role="status">
-          {toastText}
-        </div>
-      )}
-      {renameOpen && meeting && (
-        <RenameDialog
-          title={meeting.title}
-          onClose={() => setRenameOpen(false)}
-          onSave={async (title) => {
-            await api.rename(meeting.id, title);
-            setMeeting((old) => (old ? { ...old, title } : old));
-            setRenameOpen(false);
-            await client.invalidateQueries({ queryKey: ["meetings"] });
-            toast("会议名称已更新");
-          }}
-        />
-      )}
-      {managementPage && (
-        <RuntimeManagement
-          recoveryCount={recordingRecoveryCount(recoveryQuery.data || [])}
-          recoveryEngine={engine === "qwen" ? "qwen" : "whisper"}
-          onRecoveryComplete={async (id, options) => {
-            await completeRecording(id, options);
-            setManagementPage(null);
-            void client.invalidateQueries({
-              queryKey: ["recording-recoveries"],
-            });
-          }}
-          onRecording={() => {
-            setManagementPage(null);
-            setRecordingOpen(true);
-          }}
-          onSearch={() => {
-            setManagementPage(null);
-            setSearchOpen(true);
-          }}
-          onOpenMeeting={(id) => {
-            if (recordingOpen) {
-              toast("请先返回录音现场；结束录音后可打开其他会议。");
-              return;
-            }
-            setManagementPage(null);
-            setSearchOpen(false);
-            void openMeeting(id);
-          }}
-          page={managementPage}
-          taskFocus={taskFocus}
-          onPage={(page) => {
-            setTaskFocus(undefined);
-            setManagementPage(page);
-          }}
-          onClose={() => {
-            setTaskFocus(undefined);
-            setManagementPage(null);
-          }}
-          onChanged={() =>
-            void client.invalidateQueries({ queryKey: ["environment"] })
+      <AppModals
+        toastText={toastText}
+        searchOpen={searchOpen}
+        meetings={listQuery.data || []}
+        onSearchClose={() => setSearchOpen(false)}
+        onSearchHit={async (hit) => {
+          const current = await api.resolveSearch(hit);
+          const opened = await openMeeting(current.meeting_id);
+          if (!opened) throw new Error("会议未能打开，请重试");
+          await api.resolveSearch(hit);
+          if (current.source_segment_ids.length) setWorkspace("transcript");
+          setSearchOpen(false);
+          setSearchTarget(current);
+        }}
+        onManageIndex={() => setManagementPage("index")}
+        onConfigureSearch={() => {
+          setSearchOpen(false);
+          setManagementPage("models");
+        }}
+        renameOpen={renameOpen}
+        meeting={meeting}
+        onRenameClose={() => setRenameOpen(false)}
+        onRenameSave={async (title) => {
+          await api.rename(meeting!.id, title);
+          setMeeting((old) => (old ? { ...old, title } : old));
+          setRenameOpen(false);
+          await client.invalidateQueries({ queryKey: ["meetings"] });
+          toast("会议名称已更新");
+        }}
+        managementPage={managementPage}
+        recoveryCount={recordingRecoveryCount(recoveryQuery.data || [])}
+        recoveryEngine={engine === "qwen" ? "qwen" : "whisper"}
+        taskFocus={taskFocus}
+        onManagementClose={() => {
+          setTaskFocus(undefined);
+          setManagementPage(null);
+        }}
+        onManagementPageChange={(page) => {
+          setTaskFocus(undefined);
+          setManagementPage(page);
+        }}
+        onRecoveryComplete={async (id, options) => {
+          await completeRecording(id, options);
+          setManagementPage(null);
+          void client.invalidateQueries({
+            queryKey: ["recording-recoveries"],
+          });
+        }}
+        onRecordingFromManagement={() => {
+          setManagementPage(null);
+          setRecordingOpen(true);
+        }}
+        onSearchFromManagement={() => {
+          setManagementPage(null);
+          setSearchOpen(true);
+        }}
+        onOpenMeetingFromManagement={(id) => {
+          if (recordingOpen) {
+            toast("请先返回录音现场；结束录音后可打开其他会议。");
+            return;
           }
-          toast={toast}
-        />
-      )}
-      {compareIds &&
-        meeting &&
-        (() => {
-          const left = meeting.artifacts.find((a) => a.id === compareIds[0]) as
-            Artifact<MeetingMinutes> | undefined;
-          const right = meeting.artifacts.find(
-            (a) => a.id === compareIds[1],
-          ) as Artifact<MeetingMinutes> | undefined;
-          return left && right ? (
-            <MinutesCompare
-              key={left.id + right.id}
-              left={left}
-              right={right}
-              onSaveSelection={
-                left.id === meeting.active_minutes_id &&
-                !left.stale &&
-                left.payload.template_id === right.payload.template_id &&
-                left.payload.template_version ===
-                  right.payload.template_version &&
-                left.payload.template_version >= 2 &&
-                (left.payload.output_language || "zh") ===
-                  (right.payload.output_language || "zh") &&
-                !left.payload.interview &&
-                !right.payload.interview
-                  ? async (document) => {
-                      await saveMinutes();
-                      const base = left.provenance.source_analysis_id;
-                      const draft = await api.saveMinutes(
-                        meeting.id,
-                        typeof base === "string" ? base : null,
-                        document,
-                        left.id,
-                        right.id,
-                      );
-                      const fresh = await api.meeting(meeting.id);
-                      if (meetingRef.current?.id !== meeting.id) return;
-                      setMeeting(fresh);
-                      displayMinutes(draft);
-                      setCompareIds(null);
-                      toast("已保存为待采用草稿");
-                    }
-                  : undefined
-              }
-              onClose={() => setCompareIds(null)}
-              onAdopt={() => void adoptMinutes(right.id)}
-              blockedReason={minutesAdoptionBlockReason(
+          setManagementPage(null);
+          setSearchOpen(false);
+          void openMeeting(id);
+        }}
+        onEnvironmentChanged={() =>
+          void client.invalidateQueries({ queryKey: ["environment"] })
+        }
+        compareIds={compareIds}
+        onCompareClose={() => setCompareIds(null)}
+        onSaveCompareSelection={
+          compareIds && meeting
+            ? (() => {
+                const left = meeting.artifacts.find(
+                  (a) => a.id === compareIds[0],
+                ) as Artifact<MeetingMinutes> | undefined;
+                const right = meeting.artifacts.find(
+                  (a) => a.id === compareIds[1],
+                ) as Artifact<MeetingMinutes> | undefined;
+                if (
+                  left &&
+                  right &&
+                  left.id === meeting.active_minutes_id &&
+                  !left.stale &&
+                  left.payload.template_id === right.payload.template_id &&
+                  left.payload.template_version ===
+                    right.payload.template_version &&
+                  left.payload.template_version >= 2 &&
+                  (left.payload.output_language || "zh") ===
+                    (right.payload.output_language || "zh") &&
+                  !left.payload.interview &&
+                  !right.payload.interview
+                ) {
+                  return async (document: MeetingMinutes) => {
+                    await saveMinutes();
+                    const base = left.provenance.source_analysis_id;
+                    const draft = await api.saveMinutes(
+                      meeting.id,
+                      typeof base === "string" ? base : null,
+                      document,
+                      left.id,
+                      right.id,
+                    );
+                    const fresh = await api.meeting(meeting.id);
+                    if (meetingRef.current?.id !== meeting.id) return;
+                    setMeeting(fresh);
+                    displayMinutes(draft);
+                    setCompareIds(null);
+                    toast("已保存为待采用草稿");
+                  };
+                }
+                return undefined;
+              })()
+            : undefined
+        }
+        onAdoptCompareMinutes={() => {
+          if (compareIds) void adoptMinutes(compareIds[1]);
+        }}
+        compareBlockedReason={
+          compareIds && meeting
+            ? minutesAdoptionBlockReason(
                 meeting,
-                right,
+                meeting.artifacts.find(
+                  (a) => a.id === compareIds[1],
+                ) as Artifact<MeetingMinutes>,
                 transcriptDirty,
-              )}
-            />
-          ) : null;
-        })()}
-      {previewOpen && minutesDraft && (
-        <MinutesPreview
-          meetingId={meeting!.id}
-          artifactId={selectedMinutesId}
-          includeCitations={showCitations}
-          onClose={() => setPreviewOpen(false)}
-          onExport={(format) => void exportMinutes(format)}
-        />
-      )}
-      {followupsOpen && (
-        <FollowupsDialog
-          onClose={() => setFollowupsOpen(false)}
-          onOpen={async (id) => {
-            await openMeeting(id);
-            setWorkspace("minutes");
-          }}
-        />
-      )}
-      {recordingOpen && (
-        <RecordingDialog
-          targetRecordingId={targetRecordingId}
-          environment={environment}
-          minutesModel={minutesModel}
-          onMinutesModel={setMinutesModel}
-          flowReady={environment?.meeting_flow_ready === true}
-          meetings={listQuery.data || []}
-          engineLabel={engineLabel(engine)}
-          engines={environment?.engines || []}
-          onClose={() => {
-            setRecordingOpen(false);
-            setTargetRecordingId(undefined);
-            void client.invalidateQueries({
-              queryKey: ["recording-recoveries"],
-            });
-          }}
-          onComplete={completeRecording}
-          onModels={() => setManagementPage("models")}
-          toast={toast}
-        />
-      )}
-      {companionId && (
-        <CompanionRecordingStatus
-          key={companionId}
-          id={companionId}
-          onClose={closeCompanionStatus}
-          onNativeRecording={
-            !recordingOpen && !managementPage
-              ? (id) => {
-                  closeCompanionStatus();
-                  setTargetRecordingId(id);
-                  setRecordingOpen(true);
-                }
-              : undefined
-          }
-          onMeeting={
-            !recordingOpen && !managementPage
-              ? (id) => {
-                  closeCompanionStatus();
-                  void openMeeting(id);
-                }
-              : undefined
-          }
-        />
-      )}
+              )
+            : undefined
+        }
+        previewOpen={previewOpen}
+        minutesDraft={minutesDraft}
+        selectedMinutesId={selectedMinutesId}
+        showCitations={showCitations}
+        onPreviewClose={() => setPreviewOpen(false)}
+        onExportMinutes={(format) => void exportMinutes(format)}
+        followupsOpen={followupsOpen}
+        onFollowupsClose={() => setFollowupsOpen(false)}
+        onOpenFollowupMeeting={async (id) => {
+          await openMeeting(id);
+          setWorkspace("minutes");
+        }}
+        recordingOpen={recordingOpen}
+        targetRecordingId={targetRecordingId}
+        environment={environment}
+        minutesModel={minutesModel}
+        onMinutesModelChange={setMinutesModel}
+        engineLabel={engineLabel(engine)}
+        onRecordingClose={() => {
+          setRecordingOpen(false);
+          setTargetRecordingId(undefined);
+          void client.invalidateQueries({
+            queryKey: ["recording-recoveries"],
+          });
+        }}
+        onRecordingComplete={completeRecording}
+        onRecordingModels={() => setManagementPage("models")}
+        companionId={companionId}
+        onCloseCompanion={closeCompanionStatus}
+        onCompanionNativeRecording={
+          !recordingOpen && !managementPage
+            ? (id) => {
+                closeCompanionStatus();
+                setTargetRecordingId(id);
+                setRecordingOpen(true);
+              }
+            : undefined
+        }
+        onCompanionMeeting={
+          !recordingOpen && !managementPage
+            ? (id) => {
+                closeCompanionStatus();
+                void openMeeting(id);
+              }
+            : undefined
+        }
+        toast={toast}
+      />
     </>
   );
 }

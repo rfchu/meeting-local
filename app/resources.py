@@ -6,8 +6,8 @@ from contextlib import contextmanager
 
 CAPACITIES={'legacy_inference':1,'asr':1,'local_llm':1,'cloud_llm':1,'embedding':1}
 LABELS={'legacy_inference':'共享推理通道','asr':'语音识别','local_llm':'本地 LLM','cloud_llm':'云端 LLM 请求','embedding':'向量计算'}
-WORKLOADS={'live_asr','transcription','analysis','minutes','note_expansion','terminology','index','qa','semantic_search','embedding_config','live_overview','live_correction','live_translation','meeting_translation','speaker_review','legacy'}
-PRIORITIES={name:(0 if name=='live_asr' else 10 if name in ('live_overview','live_correction','live_translation') else 20 if name in ('semantic_search','embedding_config','speaker_review') else 40 if name=='index' else 30) for name in WORKLOADS}
+WORKLOADS={'live_asr','transcription','analysis','minutes','note_expansion','terminology','index','qa','semantic_search','embedding_config','live_overview','live_correction','live_translation','meeting_translation','speaker_review','live_shorthand','legacy'}
+PRIORITIES={name:(0 if name=='live_asr' else 10 if name in ('live_overview','live_correction','live_translation') else 20 if name in ('semantic_search','embedding_config','speaker_review','live_shorthand') else 40 if name=='index' else 30) for name in WORKLOADS}
 REASONS={key+'_busy':'等待'+label+'资源' for key,label in LABELS.items()}|{'realtime_index_yield':'实时识别期间暂缓索引，录音结束后继续','closed':'资源协调器已关闭','realtime_priority':'会中识别优先，等待实时识别暂停或结束','priority_queue':'等待更高优先级或较早的资源请求'}
 
 class ResourceBusy(ValueError):pass
@@ -36,7 +36,7 @@ class ResourceScheduler:
 
     def should_yield(self,workload,requirements):
         with self.condition:
-            return bool(self.live_owners and workload not in ('live_asr','live_overview','live_correction','live_translation') and
+            return bool(self.live_owners and workload not in ('live_asr','live_overview','live_correction','live_translation','live_shorthand') and
                         ('legacy_inference' in requirements or 'local_llm' in requirements))
 
     def _reason(self,claim):

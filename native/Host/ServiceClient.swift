@@ -42,6 +42,23 @@ final class ServiceClient: NSObject, URLSessionTaskDelegate, URLSessionDataDeleg
             completion(report)
         }
     }
+    func postShorthand(_ configuration: HostConfiguration, recording: String, text: String, synthesize: Bool, clientID: String, completion: @escaping (Bool) -> Void) {
+        let url = configuration.workspaceURL.appendingPathComponent("api/recordings/\(recording)/notes/shorthand")
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.cachePolicy = .reloadIgnoringLocalAndRemoteCacheData
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        let payload: [String: Any] = [
+            "raw_text": text,
+            "synthesize": synthesize,
+            "client_id": clientID
+        ]
+        request.httpBody = try? JSONSerialization.data(withJSONObject: payload)
+        let task = session.dataTask(with: request)
+        lock.lock(); replies[task.taskIdentifier] = (Data(), 0, { _, code in completion(code == 201 || code == 200) }); lock.unlock()
+        task.resume()
+    }
     private func get(_ url: URL, completion: @escaping (Data, Int) -> Void) {
         var request = URLRequest(url: url)
         request.cachePolicy = .reloadIgnoringLocalAndRemoteCacheData
@@ -134,6 +151,9 @@ struct CompanionSnapshot: Decodable {
     let storage: String?
     let asr: String?
     let lines: [String]
+    let duration_seconds: Double?
+    let system_levels: [Double]?
+    let microphone_levels: [Double]?
 
     static func verified(_ data: Data, code: Int, configuration: HostConfiguration, recording: String?) -> Self? {
         guard code == 200, let envelope = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],

@@ -102,8 +102,10 @@ def request_compatible(url,headers,payload):
             if error.code!=400:raise
     raise last
 
-def native_minutes_requester():
+def native_minutes_requester(request_fn=None, fallback=None):
     """Native LM Studio can disable reasoning; unsupported servers retain compatibility."""
+    request_fn=request_fn or request_once
+    fallback=fallback or request_compatible
     supported=True
     def request(url,headers,payload):
         nonlocal supported
@@ -116,14 +118,14 @@ def native_minutes_requester():
                     'input':'\n'.join(m['content'] for m in payload['messages'] if m['role']!='system'),
                     'temperature':payload.get('temperature',0),'max_output_tokens':payload.get('max_tokens',12288),
                     'reasoning':'off','store':False,'integrations':[]}
-            try:response=request_once(root+'/api/v1/chat',headers,native)
+            try:response=request_fn(root+'/api/v1/chat',headers,native)
             except urllib.error.HTTPError as error:
                 if error.code not in (400,404,405,422):raise
                 supported=False
             else:
                 content='\n'.join(item.get('content','') for item in response.get('output',[]) if item.get('type')=='message')
                 return {'choices':[{'finish_reason':'stop','message':{'content':content}}]}
-        return request_compatible(url,headers,payload)
+        return fallback(url,headers,payload)
     return request
 
 

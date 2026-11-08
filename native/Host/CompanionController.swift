@@ -1,10 +1,68 @@
 import AppKit
 
+final class ShorthandTextField: NSTextField, NSTextFieldDelegate {
+    var onSubmit: ((String, Bool) -> Void)?
+    var submitting = false
+    var onEscape: (() -> Void)?
+
+    private func submit(_ text: String, synthesize: Bool) -> Bool {
+        if submitting { return true }
+        let clean = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !clean.isEmpty else { return false }
+        onSubmit?(clean, synthesize)
+        return true
+    }
+
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        let editor = currentEditor() as? NSTextView
+        if editor?.hasMarkedText() == true { return super.performKeyEquivalent(with: event) }
+        if (event.keyCode == 36 || event.keyCode == 76) && event.modifierFlags.contains(.command) {
+            return submit(editor?.string ?? stringValue, synthesize: true)
+        }
+        return super.performKeyEquivalent(with: event)
+    }
+
+    func control(_ control: NSControl, textView: NSTextView, doCommandBy command: Selector) -> Bool {
+        guard !textView.hasMarkedText() else { return false }
+        if command == #selector(NSResponder.insertNewline(_:)) {
+            return submit(textView.string, synthesize: NSApp.currentEvent?.modifierFlags.contains(.command) == true)
+        }
+        if command == #selector(NSResponder.cancelOperation(_:)) {
+            onEscape?()
+            return true
+        }
+        return false
+    }
+}
+
+private final class CompanionMeter: NSView {
+    var samples: [Double] = [] { didSet { needsDisplay = true } }
+    var color: NSColor = .systemBlue
+    override var intrinsicContentSize: NSSize { NSSize(width: 88, height: 16) }
+
+    override func draw(_ dirtyRect: NSRect) {
+        color.setFill()
+        let step = bounds.width / 24
+        for (index, sample) in samples.suffix(24).enumerated() {
+            let height = max(2, min(bounds.height, sqrt(sample) * bounds.height * 3))
+            NSBezierPath(roundedRect: NSRect(x: CGFloat(index) * step, y: (bounds.height - height) / 2,
+                                            width: max(1, step - 1), height: height),
+                         xRadius: 1, yRadius: 1).fill()
+        }
+    }
+}
+
 final class CompanionController: NSObject, NSWindowDelegate {
     private let panel: NSPanel
     private let status = NSImageView()
     private let content = NSTextField(wrappingLabelWithString: "")
     private let translation = NSTextField(wrappingLabelWithString: "")
+    private let elapsed = NSTextField(labelWithString: "")
+    private let systemMeter = CompanionMeter()
+    private let microphoneMeter = CompanionMeter()
+    private let inputField = ShorthandTextField()
+    private var pendingRequest: (recording: String, text: String, synthesize: Bool, id: String)?
+    private let inputFeedback = NSTextField(labelWithString: "")
     private let modes = NSSegmentedControl(labels: CompanionMode.allCases.map(\.title), trackingMode: .selectOne, target: nil, action: nil)
     private let client: ServiceClient
     private let returnButton = NSButton()
@@ -19,14 +77,14 @@ final class CompanionController: NSObject, NSWindowDelegate {
 
     init(configuration: HostConfiguration, client: ServiceClient) {
         self.configuration = configuration; self.client = client
-        panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 370, height: 100),
+        panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 380, height: 140),
                         styleMask: [.titled, .closable, .utilityWindow, .nonactivatingPanel], backing: .buffered, defer: false)
         super.init()
-        panel.title = "听记 · 伴随窗口"
+        panel.title = "听记 · 伴随轻岛 (⌃⌥N)"
         panel.isReleasedWhenClosed = false; panel.delegate = self
         panel.level = .floating; panel.hidesOnDeactivate = false; panel.becomesKeyOnlyIfNeeded = true
         panel.sharingType = .none
-        panel.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary]
+        panel.collectionBehavior = [.canJoinAllSpaces, .canJoinAllApplications, .fullScreenAuxiliary, .ignoresCycle]
         modes.target = self; modes.action = #selector(changeMode)
         setStatus("正在查看录音状态…", symbol: "ellipsis.circle")
         content.font = .systemFont(ofSize: 13)
@@ -34,6 +92,45 @@ final class CompanionController: NSObject, NSWindowDelegate {
         translation.font = .systemFont(ofSize: 12)
         translation.textColor = .secondaryLabelColor
         translation.maximumNumberOfLines = 5
+
+        inputField.placeholderString = "速记 (Enter 纯文本, ⌘+Enter 智能扩充)..."
+        inputField.font = .systemFont(ofSize: 12)
+        inputField.delegate = inputField
+        inputFeedback.font = .systemFont(ofSize: 11)
+        inputFeedback.textColor = .secondaryLabelColor
+
+        inputField.onSubmit = { [weak self] text, synthesize in
+            guard let self else { return }
+            guard let rid = self.observation.active(at: Date())?.recording_id else {
+                self.inputFeedback.stringValue = "请先开启或连接录音"
+                return
+            }
+            if self.pendingRequest?.recording != rid || self.pendingRequest?.text != text || self.pendingRequest?.synthesize != synthesize {
+                self.pendingRequest = (rid, text, synthesize, UUID().uuidString)
+            }
+            guard let request = self.pendingRequest else { return }
+            self.inputField.submitting = true
+            self.inputFeedback.stringValue = "正在保存速记…"
+            self.client.postShorthand(self.configuration, recording: rid, text: text, synthesize: synthesize, clientID: request.id) { [weak self] ok in
+                DispatchQueue.main.async {
+                    guard let self else { return }
+                    self.inputField.submitting = false
+                    if ok {
+                        if (self.inputField.currentEditor()?.string ?? self.inputField.stringValue).trimmingCharacters(in: .whitespacesAndNewlines) == text {
+                            self.inputField.currentEditor()?.string = ""
+                            self.inputField.stringValue = ""
+                        }
+                        self.pendingRequest = nil
+                    }
+                    self.inputFeedback.stringValue = ok ? (synthesize ? "已提交扩充" : "已记录") : "提交失败，原文保留，可按回车重试"
+
+                }
+            }
+        }
+        inputField.onEscape = { [weak self] in
+            self?.close()
+        }
+
         returnButton.target = self; returnButton.action = #selector(openRecording)
         returnButton.image = NSImage(systemSymbolName: "arrow.up.right.square", accessibilityDescription: "返回本场")
         returnButton.setAccessibilityLabel("返回本场")
@@ -48,26 +145,44 @@ final class CompanionController: NSObject, NSWindowDelegate {
         status.heightAnchor.constraint(equalToConstant: 18).isActive = true
         returnButton.widthAnchor.constraint(equalToConstant: 28).isActive = true
         returnButton.heightAnchor.constraint(equalToConstant: 28).isActive = true
-        let stack = NSStackView(views: [header, content, translation])
-        stack.orientation = .vertical; stack.alignment = .leading; stack.spacing = 8
+        elapsed.font = .monospacedDigitSystemFont(ofSize: 11, weight: .regular)
+        systemMeter.setAccessibilityElement(true)
+        systemMeter.setAccessibilityLabel("电脑声音")
+        microphoneMeter.setAccessibilityElement(true)
+        microphoneMeter.setAccessibilityLabel("麦克风")
+        microphoneMeter.color = .systemGreen
+        let signals = NSStackView(views: [elapsed, systemMeter, microphoneMeter])
+        signals.spacing = 8
+        let stack = NSStackView(views: [header, signals, content, translation, inputField, inputFeedback])
+        stack.orientation = .vertical; stack.alignment = .leading; stack.spacing = 6
         stack.translatesAutoresizingMaskIntoConstraints = false
         let view = NSView(); panel.contentView = view; view.addSubview(stack)
         NSLayoutConstraint.activate([
-            stack.topAnchor.constraint(equalTo: view.topAnchor, constant: 12),
-            stack.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 14),
-            stack.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -14),
-            stack.bottomAnchor.constraint(equalTo: view.bottomAnchor, constant: -12),
+            stack.topAnchor.constraint(equalTo: view.topAnchor, constant: 10),
+            stack.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 12),
+            stack.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -12),
+            stack.bottomAnchor.constraint(equalTo: view.bottomAnchor, constant: -10),
             header.widthAnchor.constraint(equalTo: stack.widthAnchor),
             content.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            translation.widthAnchor.constraint(equalTo: stack.widthAnchor)
+            translation.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            inputField.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            inputFeedback.widthAnchor.constraint(equalTo: stack.widthAnchor)
         ])
+    }
+
+    func toggle() {
+        if panel.isVisible {
+            close()
+        } else {
+            show()
+        }
     }
 
     func show() {
         guard !panel.isVisible else { panel.orderFrontRegardless(); return }
         recording = nil; observation = CompanionObservation(); returnButton.isHidden = true; modes.selectedSegment = 0
         setStatus("正在查看录音状态…", symbol: "ellipsis.circle")
-        clearContent()
+        clearContent(); updateSignals(nil)
         panel.setContentSize(NSSize(width: 370, height: 78))
         if let screen = NSScreen.screens.first(where: { $0.frame.contains(NSEvent.mouseLocation) }) ?? NSScreen.main {
             let frame = screen.visibleFrame
@@ -115,6 +230,7 @@ final class CompanionController: NSObject, NSWindowDelegate {
             message += " · 最近核对 " + time
         }
         setStatus(message, symbol: "exclamationmark.circle", color: .systemOrange)
+        updateSignals(nil)
         clearContent(); returnButton.isHidden = true
         resize()
     }
@@ -133,6 +249,7 @@ final class CompanionController: NSObject, NSWindowDelegate {
         let color: NSColor = symbol == "record.circle.fill" ? .systemRed :
             symbol == "exclamationmark.circle" ? .systemOrange : .secondaryLabelColor
         setStatus(message, symbol: symbol, color: color)
+        updateSignals(snapshot)
         clearContent()
         if snapshot.recording_id != nil {
             switch mode {
@@ -150,6 +267,20 @@ final class CompanionController: NSObject, NSWindowDelegate {
         resize()
     }
 
+    private func updateSignals(_ snapshot: CompanionSnapshot?) {
+        let active = snapshot.map { ["recording", "paused"].contains($0.phase) } ?? false
+        let seconds = snapshot?.duration_seconds ?? 0
+        elapsed.isHidden = !active
+        if active, seconds.isFinite, seconds >= 0, seconds < 1000000 {
+            let total = Int(seconds)
+            elapsed.stringValue = String(format: "%02d:%02d", total / 60, total % 60)
+        } else { elapsed.stringValue = "" }
+        systemMeter.samples = snapshot?.system_levels ?? []
+        microphoneMeter.samples = snapshot?.microphone_levels ?? []
+        systemMeter.isHidden = systemMeter.samples.isEmpty
+        microphoneMeter.isHidden = microphoneMeter.samples.isEmpty
+    }
+
     private func setStatus(_ message: String, symbol: String, color: NSColor = .secondaryLabelColor) {
         status.image = NSImage(systemSymbolName: symbol, accessibilityDescription: message)
         status.contentTintColor = color
@@ -165,7 +296,7 @@ final class CompanionController: NSObject, NSWindowDelegate {
     private func resize() {
         content.isHidden = content.stringValue.isEmpty
         translation.isHidden = translation.stringValue.isEmpty
-        let width: CGFloat = 370
+        let width: CGFloat = 380
         let textHeight = [content, translation].reduce(CGFloat.zero) { total, field in
             guard !field.isHidden else { return total }
             let size = field.cell?.cellSize(forBounds: NSRect(x: 0, y: 0, width: width - 28, height: 1000)) ?? .zero
@@ -173,7 +304,9 @@ final class CompanionController: NSObject, NSWindowDelegate {
             return total + min(size.height, lineHeight * CGFloat(field.maximumNumberOfLines)) + 8
         }
         let frame = panel.frame
-        panel.setContentSize(NSSize(width: width, height: 52 + textHeight))
+        let signalExtra: CGFloat = elapsed.isHidden ? 0 : 22
+        let inputExtra: CGFloat = inputFeedback.stringValue.isEmpty ? 48 : 66
+        panel.setContentSize(NSSize(width: width, height: 48 + textHeight + inputExtra + signalExtra))
         let visible = panel.screen?.visibleFrame
         let top = visible.map { max(frame.maxY, $0.minY + panel.frame.height) } ?? frame.maxY
         panel.setFrameTopLeftPoint(NSPoint(x: frame.minX, y: top))

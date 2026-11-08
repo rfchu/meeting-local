@@ -402,19 +402,20 @@ class NativeCapture:
                 with output.open('rb') as stream:os.fsync(stream.fileno())
                 tracks.append(output.name)
             with wave.open(str(target/'original'),'rb') as wav:duration=wav.getnframes()/wav.getframerate()
-            session=self.recordings.read(rid);filename='线上会议-'+time.strftime('%Y%m%d-%H%M%S',time.localtime(session['created']))+'.wav'
-            RecordingStore.write(target/'asset.json',{'filename':filename,'source':'macos','tracks':tracks,'sample_rate':16000})
-            with self.store.connect() as db:
-                db.execute('BEGIN IMMEDIATE')
-                if not db.execute('SELECT id FROM meetings WHERE id=?',(rid,)).fetchone():
-                    db.execute('INSERT INTO meetings(id,title,filename,duration) VALUES(?,?,?,?)',(rid,Path(filename).stem,filename,duration))
-                    from .meeting_flow import publish_preparation
-                    publish_preparation(db,rid,session.get('brief'))
-                    from .db import uid
-                    for note in session['notes']:
-                        from .notes import insert_note
-                        insert_note(db,rid,note)
-            session.update(state='completed',duration=duration);RecordingStore.write(folder/'session.json',session)
+            with self.recordings.lock:
+                session=self.recordings.read(rid);filename='线上会议-'+time.strftime('%Y%m%d-%H%M%S',time.localtime(session['created']))+'.wav'
+                RecordingStore.write(target/'asset.json',{'filename':filename,'source':'macos','tracks':tracks,'sample_rate':16000})
+                with self.store.connect() as db:
+                    db.execute('BEGIN IMMEDIATE')
+                    if not db.execute('SELECT id FROM meetings WHERE id=?',(rid,)).fetchone():
+                        db.execute('INSERT INTO meetings(id,title,filename,duration) VALUES(?,?,?,?)',(rid,Path(filename).stem,filename,duration))
+                        from .meeting_flow import publish_preparation
+                        publish_preparation(db,rid,session.get('brief'))
+                        from .db import uid
+                        for note in session['notes']:
+                            from .notes import insert_note
+                            insert_note(db,rid,note)
+                session.update(state='completed',duration=duration);RecordingStore.write(folder/'session.json',session)
             self.recordings.event('storage.completed',rid,duration_seconds=duration,saved_bytes=(target/'original').stat().st_size)
             for source in sources:source.unlink(missing_ok=True)
             return rid
