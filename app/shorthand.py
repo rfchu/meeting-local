@@ -49,7 +49,7 @@ SYSTEM_INSTRUCTION = """/no_think
 1. 严禁捏造未经讨论的事实、人名或截止时间。
 2. 保留用户的意图，如果上下文明确支持，提取出具体的结论、决策或行动项。
 3. 如果上下文提及较少，以用户原意为主，不要过度脑补。
-4. 引用必须逐字取自同一条已确认片段。标注 provisional 的片段仅供理解，不可引用。
+4. 引用必须逐字取自同一条已确认片段，anchor_start 和 anchor_end 复制该片段的时间。标注 provisional 的片段仅供理解，不可引用。
 5. 返回格式必须是严格的 JSON 对象，包含 summary, details, speakers, anchor_start, anchor_end, evidence_quote。
 """
 
@@ -213,10 +213,17 @@ class ShorthandSynthesizer:
                 raise ValueError("扩写内容格式无效")
             if not isinstance(quote, str) or not quote.strip():
                 raise ValueError("扩写缺少原文引用")
-            evidence = next((segment for segment in context_segments
-                             if not segment.get("provisional") and quote.strip() in segment["text"]), None)
-            if evidence is None:
+            matching = [segment for segment in context_segments
+                        if not segment.get("provisional") and quote.strip() in segment["text"]]
+            if not matching:
                 raise ValueError("扩写引用与已确认原文不符")
+            if len(matching) > 1:
+                matching = [segment for segment in matching
+                            if (round(segment["start"], 2), round(segment["end"], 2))
+                            == (parsed.get("anchor_start"), parsed.get("anchor_end"))]
+                if len(matching) != 1:
+                    raise ValueError("扩写引用匹配多条原文，无法确认音轨")
+            evidence = matching[0]
             speaker = evidence.get("speaker") or evidence.get("source_track")
             anchor_start, anchor_end = evidence["start"], evidence["end"]
             synthesized_text = f"【{summary.strip()}】{details.strip()}"

@@ -64,7 +64,9 @@ class RecordingStore:
             if self.store.one('SELECT id FROM meetings WHERE id=?',(rid,)):return value
             if brief is not None:value['brief']=brief
             server_notes=[note for note in value['notes'] if 'status' in note]
-            value.update(notes=notes+server_notes,duration=duration,chunk_count=chunk_count,updated=time.time())
+            server_ids={note['client_id'] for note in server_notes if note.get('client_id')}
+            browser_notes=[note for note in notes if note.get('client_id') not in server_ids]
+            value.update(notes=browser_notes+server_notes,duration=duration,chunk_count=chunk_count,updated=time.time())
             self.write(self.folder(rid)/'session.json',value);return value
 
     def recover_shorthand(self):
@@ -91,16 +93,28 @@ class RecordingStore:
     def add_note(self, rid, note):
         with self.lock:
             value = self.read(rid)
-            client_id = note.get('client_id')
+            client_id = note.get('client_id') or ''
             published = self.store.one('SELECT id FROM meetings WHERE id=?', (rid,))
+            if value['state'] == 'completed' and not published:
+                raise ValueError('会议已删除，不能保存速记')
+            nid = note.get('id') or uid()
+            stored_client_id = client_id
+            if published and not client_id.startswith('candidate:'):
+                stored_client_id = 'copilot:' + hashlib.sha256((client_id or nid).encode()).hexdigest()
             if client_id:
-                existing = (self.store.one('SELECT * FROM meeting_notes WHERE meeting_id=? AND client_id=?', (rid, client_id))
-                            if published else next((row for row in value['notes'] if row.get('client_id') == client_id), None))
+                if published:
+                    existing = self.store.one(
+                        'SELECT * FROM meeting_notes WHERE meeting_id=? AND client_id IN (?,?) '
+                        'ORDER BY (client_id=?) DESC LIMIT 1',
+                        (rid, stored_client_id, client_id, stored_client_id),
+                    )
+                else:
+                    existing = next((row for row in value['notes']
+                                     if 'status' in row and row.get('client_id') == client_id), None)
                 if existing:
                     if existing['raw_text'] != note['raw_text']:
                         raise ValueError('速记请求编号已用于其他内容')
                     return existing
-            nid = note.get('id') or uid()
             now = time.time()
             entry = {
                 'id': nid,
@@ -109,7 +123,7 @@ class RecordingStore:
                 'note_type': note.get('note_type', 'note'),
                 'note_scope': note.get('note_scope', 'personal'),
                 'is_marker': bool(note.get('is_marker', False)),
-                'client_id': note.get('client_id', ''),
+                'client_id': stored_client_id,
                 'overview_focus': bool(note.get('overview_focus', False)),
                 'status': note.get('status', 'raw'),
                 'synthesized_text': note.get('synthesized_text', ''),
@@ -193,7 +207,11 @@ class RecordingStore:
             published = {row['id']: row for row in self.store.all(
                 'SELECT * FROM meeting_notes WHERE meeting_id=?', (rid,)
             )}
-            return [{**note, **published[note['id']]} for note in notes if note['id'] in published]
+            session_ids = {note['id'] for note in notes}
+            result = [{**note, **published[note['id']]} for note in notes if note['id'] in published]
+            result.extend(row for row in published.values()
+                          if row['id'] not in session_ids and row['client_id'].startswith(('copilot:', 'candidate:')))
+            return sorted(result, key=lambda note: note['captured_at'])
 
     def get_note(self, rid, nid):
         if self.store.one('SELECT id FROM meetings WHERE id=?', (rid,)):

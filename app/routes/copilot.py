@@ -67,7 +67,7 @@ def register_routes(app, services: ApplicationServices):
     @app.post("/api/recordings/{rid}/notes/shorthand", status_code=201)
     async def create_shorthand_note(rid: str, body: ShorthandInput):
         clean_text = body.raw_text.strip()
-        if body.client_id.startswith("candidate:"):
+        if body.client_id.startswith(("candidate:", "copilot:")):
             raise HTTPException(422, "速记请求编号无效")
         if not clean_text:
             raise HTTPException(422, "速记内容不能为空")
@@ -252,18 +252,21 @@ def register_routes(app, services: ApplicationServices):
             if saved:
                 return {"ok": True, "candidate_id": cid, "status": "accepted", "note": saved}
             raise HTTPException(404, "候选意图不存在或已处理")
-        created_note = recordings.add_note(rid, {
-            "raw_text": cand.content,
-            "captured_at": cand.timestamp,
-            "note_type": "action" if cand.kind == "todo" else "decision",
-            "note_scope": "meeting",
-            "speaker_hint": cand.speaker,
-            "shorthand_track": cand.source_track,
-            "owner": cand.owner,
-            "due_date": cand.due_date,
-            "candidate_id": cid,
-            "client_id": f"candidate:{cid}",
-        })
+        try:
+            created_note = recordings.add_note(rid, {
+                "raw_text": cand.content,
+                "captured_at": cand.timestamp,
+                "note_type": "action" if cand.kind == "todo" else "decision",
+                "note_scope": "meeting",
+                "speaker_hint": cand.speaker,
+                "shorthand_track": cand.source_track,
+                "owner": cand.owner,
+                "due_date": cand.due_date,
+                "candidate_id": cid,
+                "client_id": f"candidate:{cid}",
+            })
+        except ValueError as error:
+            raise HTTPException(409, str(error)) from error
         session_cache["active"].pop(cid, None)
         session_cache["accepted"][cid] = created_note
 

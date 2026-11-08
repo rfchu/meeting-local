@@ -1,6 +1,6 @@
 import test from 'node:test';import assert from 'node:assert/strict';import {build} from 'esbuild';
 const compiled=await build({entryPoints:[new URL('../src/features/overview/notes.ts',import.meta.url).pathname],bundle:true,format:'esm',write:false});
-const {ensureNoteIds,toggleOverviewFocus,draftSourceId}=await import('data:text/javascript;base64,'+Buffer.from(compiled.outputFiles[0].text).toString('base64'));
+const {ensureNoteIds,toggleOverviewFocus,draftSourceId,browserOwnedNotes}=await import('data:text/javascript;base64,'+Buffer.from(compiled.outputFiles[0].text).toString('base64'));
 const personal={captured_at:12,note_type:'question',note_scope:'personal',raw_text:'确认截止时间'};
 test('Note IDs survive adding, deleting, focus changes and session serialization without rewriting raw notes',()=>{
  let count=0;const create=()=>`note-${++count}`,input=[personal],before=structuredClone(input);
@@ -18,4 +18,11 @@ test('Live source identities include zero indices and never fabricate IDs for pr
  assert.equal(draftSourceId({live_range_id:'range',live_segment_index:0}),'range:0');
  assert.equal(draftSourceId({live_range_id:'range',live_segment_index:1}),'range:1');
  assert.equal(draftSourceId({text:'临时尾部'}),null);
+});
+
+
+test('recording recovery does not mirror server shorthand into browser metadata', () => {
+  const local = { raw_text: '本地简记', client_id: 'local' };
+  const remote = { raw_text: '轻岛速记', client_id: 'remote', status: 'ready' };
+  assert.deepEqual(browserOwnedNotes([local, remote]), [local]);
 });

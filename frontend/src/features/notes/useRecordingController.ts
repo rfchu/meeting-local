@@ -3,7 +3,7 @@ import { browserCaptureAllowed } from "../../preferences/nativeHost";
 import { reconcileNativePhase } from "./recordingCoordinator";
 import { useNativeCaptureStatus } from "./useNativeCaptureStatus";
 import { useModelChoice } from "../../preferences/useModelChoice";
-import { ensureNoteIds } from "../overview/notes";
+import { browserOwnedNotes, ensureNoteIds } from "../overview/notes";
 import { recordingPlan, type Readiness } from "../onboarding/readiness";
 import type { SessionSnapshot } from "./liveSession";
 import { useLiveSession } from "./useLiveSession";
@@ -564,8 +564,9 @@ export function useRecordingController({
       return toast((error as Error).message);
     }
     sessionRef.current = session;
-    notesRef.current = session.notes || [];
-    setNotes(session.notes || []);
+    const localNotes = browserOwnedNotes(session.notes || []);
+    notesRef.current = localNotes;
+    setNotes(localNotes);
     setBrief({
       ...(session.brief || emptyBrief),
       source_language:
@@ -946,7 +947,7 @@ export function useRecordingController({
     if (!session) return null;
     session.duration = currentSeconds();
     session.updated = Date.now() / 1000;
-    session.notes = [...notesRef.current];
+    session.notes = browserOwnedNotes(notesRef.current);
     session.brief = briefRef.current;
     return structuredClone(session);
   };

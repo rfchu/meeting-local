@@ -126,3 +126,28 @@ def test_cancelled_waiter_keeps_model_lease_until_http_returns(monkeypatch):
 
     asyncio.run(check())
     assert scheduler.admission_reason("live_shorthand", {"local_llm": 1}) == ""
+
+
+@pytest.mark.parametrize("same_window", [False, True])
+def test_duplicate_quote_only_resolves_to_a_unique_evidence_window(same_window):
+    import asyncio
+
+    async def model(*_):
+        return {
+            "summary": "确认周五交付", "details": "",
+            "evidence_quote": "周五交付", "anchor_start": 10, "anchor_end": 12,
+        }
+
+    segments = [
+        {"text": "周五交付", "source_track": "system",
+         "start": 10 if same_window else 4, "end": 12 if same_window else 6},
+        {"text": "周五交付", "source_track": "microphone", "start": 10, "end": 12},
+    ]
+    result = asyncio.run(ShorthandSynthesizer(llm_call=model).synthesize("交付", 10, segments))
+    if same_window:
+        assert result["status"] == "failed"
+        assert result["synthesized_text"] == "交付"
+        assert not result["evidence_quote"]
+    else:
+        assert result["status"] == "ready"
+        assert result["source_track"] == "microphone"

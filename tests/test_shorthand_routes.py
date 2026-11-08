@@ -162,3 +162,26 @@ def test_published_note_edit_wins_over_pending_expansion(test_client):
     assert published["raw_text"] == "用户校对后的原文"
     assert published["status"] == "raw"
     assert published["synthesized_text"] == ""
+
+
+def test_reattachment_and_late_post_keep_one_visible_copy(test_client):
+    rid = create_mock_recording(test_client)
+    recording = f"/api/recordings/{rid}"
+    path = recording + "/notes/shorthand"
+    first_input = {"raw_text": "恢复录音前的轻岛速记", "client_id": "first"}
+    first = test_client.post(path, json=first_input).json()
+    mirrored = {key: first[key] for key in ("raw_text", "client_id", "captured_at")}
+    assert test_client.put(recording + "/metadata", json={
+        "duration": 5, "chunk_count": 1, "notes": [mirrored, {"raw_text": "浏览器简记"}],
+    }).status_code == 200
+    service = test_client.app.state.services.recordings
+    service.chunk(rid, 0, b"test audio")
+    service.finish(rid, 1)
+
+    assert test_client.post(path, json=first_input).json()["id"] == first["id"]
+    late_input = {"raw_text": "发布交接后到达的速记", "client_id": "late", "captured_at": 5}
+    late = test_client.post(path, json=late_input).json()
+    assert test_client.post(path, json=late_input).json()["id"] == late["id"]
+    assert {n["id"] for n in test_client.get(path).json()} == {first["id"], late["id"]}
+    notes = test_client.get(f"/api/meetings/{rid}").json()["notes"]
+    assert sorted(n["raw_text"] for n in notes) == sorted([first["raw_text"], late["raw_text"], "浏览器简记"])

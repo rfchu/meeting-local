@@ -16,3 +16,10 @@ export function draftSourceId(part: LiveDraftSegment): string | null {
     ? `${part.live_range_id}:${part.live_segment_index}`
     : null;
 }
+
+/** Server-owned notes remain in the companion timeline during recording recovery. */
+export function browserOwnedNotes(
+  notes: MeetingNoteInput[],
+): MeetingNoteInput[] {
+  return notes.filter((note) => !("status" in note));
+}
