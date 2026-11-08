@@ -277,11 +277,7 @@ final class CompanionController: NSObject, NSWindowDelegate {
                 let drafts = snapshot.drafts ?? []
                 let bilingual = subtitleMode.selectedSegment == 1
                 if drafts.isEmpty || bilingual && snapshot.lines.count > 1 {
-                    if let confirmed = snapshot.lines.first {
-                        content.stringValue = drafts.isEmpty ? confirmed : "已确认 · " + confirmed
-                    } else {
-                        content.stringValue = "等待实时文字"
-                    }
+                    content.stringValue = snapshot.lines.first ?? "等待实时文字"
                 }
                 if bilingual, let line = snapshot.lines.dropFirst().first {
                     translation.stringValue = line
@@ -304,8 +300,6 @@ final class CompanionController: NSObject, NSWindowDelegate {
         let revisable: [NSAttributedString.Key: Any] = [.foregroundColor: NSColor.secondaryLabelColor]
         for draft in drafts {
             if text.length > 0 { text.append(NSAttributedString(string: "\n")) }
-            let label = draft.source_track == "system" ? "线上" : draft.source_track == "microphone" ? "现场" : "实时"
-            text.append(NSAttributedString(string: label + " · ", attributes: revisable))
             if draft.text.hasPrefix(draft.stable_text) {
                 text.append(NSAttributedString(string: draft.stable_text, attributes: stable))
                 text.append(NSAttributedString(string: String(draft.text.dropFirst(draft.stable_text.count)), attributes: revisable))
