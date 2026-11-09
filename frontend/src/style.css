@@ -345,6 +345,134 @@ h1 {
   color: var(--text-heading, #0f172a);
   border-color: var(--text-heading, #0f172a);
 }
+.meeting-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.meeting-header-actions select {
+  min-height: 32px;
+  padding: 4px 8px;
+  font-size: 12px;
+  border: 1px solid var(--line, #e2e8f0);
+  border-radius: 6px;
+  background: #fff;
+  cursor: pointer;
+}
+.meeting-more-menu {
+  position: relative;
+}
+.meeting-more-menu > summary {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 6px;
+  border: 1px solid var(--line, #e2e8f0);
+  background: #fff;
+  cursor: pointer;
+  list-style: none;
+  font-size: 16px;
+  font-weight: bold;
+  letter-spacing: 1px;
+  color: var(--muted, #64748b);
+  user-select: none;
+}
+.meeting-more-menu > summary::-webkit-details-marker {
+  display: none;
+}
+.meeting-more-menu > summary:hover {
+  background: var(--bg-hover, #f8fafc);
+  color: var(--text-heading, #0f172a);
+}
+.more-menu-dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  min-width: 150px;
+  background: #fff;
+  border: 1px solid var(--line, #e2e8f0);
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
+  padding: 4px;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+}
+.more-menu-dropdown button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 7px 10px;
+  border: 0;
+  background: transparent;
+  border-radius: 4px;
+  font-size: 12px;
+  color: var(--text-heading, #0f172a);
+  cursor: pointer;
+}
+.more-menu-dropdown button:hover {
+  background: var(--bg-hover, #f1f5f9);
+}
+.more-menu-dropdown button.danger-text {
+  color: #dc2626;
+}
+.more-menu-dropdown button.danger-text:hover {
+  background: #fef2f2;
+}
+
+.untranscribed-setup-card {
+  margin-bottom: 20px;
+  padding: 16px 20px;
+  background: var(--bg-card, #fff);
+  border: 1px solid var(--line, #e2e8f0);
+  border-radius: 12px;
+}
+.untranscribed-setup-header {
+  margin-bottom: 12px;
+}
+.untranscribed-setup-header strong {
+  display: block;
+  font-size: 14px;
+  margin-bottom: 2px;
+}
+.untranscribed-setup-header p {
+  margin: 0;
+  font-size: 12px;
+  color: var(--muted, #64748b);
+}
+
+.retranscribe-dialog {
+  max-width: 520px;
+}
+.retranscribe-dialog .retranscribe-header h3 {
+  margin: 0 0 6px;
+  font-size: 16px;
+}
+.retranscribe-dialog .retranscribe-header p {
+  margin: 0;
+  font-size: 13px;
+  color: var(--muted, #64748b);
+}
+.retranscribe-dialog .retranscribe-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin: 18px 0;
+}
+.retranscribe-dialog .diarization-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.retranscribe-dialog .retranscribe-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 18px;
+}
 .action-row {
   display: flex;
   gap: 10px;

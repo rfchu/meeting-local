@@ -63,6 +63,7 @@ import type { TaskFocus } from "./types";
 import { handoffWorkspace } from "./components/handoff";
 import Player from "./components/Player";
 import { AppModals } from "./components/AppModals";
+import Modal from "./components/Modal";
 import { MinutesPreview, RenameDialog } from "./components/Dialogs";
 import TranscriptView from "./features/transcript/TranscriptView";
 import AnalysisView from "./features/analysis/AnalysisView";
@@ -133,6 +134,7 @@ export default function App({ browserWorkspace = false }: { browserWorkspace?: b
     return () => window.clearInterval(timer);
   }, [browserWorkspace]);
   const [actionsFocus, setActionsFocus] = useState(false);
+  const [retranscribeOpen, setRetranscribeOpen] = useState(false);
   const [deliveryFocus, setDeliveryFocus] = useState(false);
   const [overviewFocus, setOverviewFocus] = useState(false);
   const [overviewSourceId, setOverviewSourceId] = useState<string>();
@@ -1051,7 +1053,9 @@ export default function App({ browserWorkspace = false }: { browserWorkspace?: b
                 <h1>{meeting.title}</h1>
                 <div className="meeting-meta-strip">
                   <span>{meeting.created.slice(0, 16).replace("T", " ")}</span>
-                  {meeting.duration ? <span>· 时长 {clock(meeting.duration)}</span> : null}
+                  {meeting.duration ? (
+                    <span>· 时长 {clock(meeting.duration)}</span>
+                  ) : null}
                   {meeting.revision ? (
                     <span className="meeting-meta-pill">
                       {transcriptionJob
@@ -1072,36 +1076,102 @@ export default function App({ browserWorkspace = false }: { browserWorkspace?: b
                   </span>
                 </div>
               </div>
-              <button
-                className="text-btn danger"
-                onClick={async () => {
-                  if (
-                    !confirm(
-                      "删除此会议的录音、所有文稿版本和分析结果？此操作无法撤销。",
+              <div className="meeting-header-actions">
+                <button onClick={() => setRenameOpen(true)}>重命名</button>
+                <OverviewArchiveButton
+                  openRequested={overviewFocus}
+                  focusItemId={overviewSourceId}
+                  onOpened={() => setOverviewFocus(false)}
+                  key={meeting.id}
+                  meeting={meeting}
+                  onSeek={(evidence) => {
+                    const source = meeting.segments.find(
+                      (segment) =>
+                        (segment.source_track ?? null) ===
+                          (evidence.source_track ?? null) &&
+                        segment.start <= evidence.start &&
+                        segment.end > evidence.start &&
+                        segment.text.includes(evidence.quote),
+                    );
+                    if (
+                      !source &&
+                      evidence.source_track &&
+                      evidence.range_id &&
+                      evidence.segment_index != null
                     )
-                  )
-                    return;
-                  try {
-                    await api.remove(meeting.id);
-                    rememberMeeting("", browserMeetingStorage());
-                    setMeeting(null);
-                    await client.invalidateQueries({ queryKey: ["meetings"] });
-                  } catch (error) {
-                    toast((error as Error).message);
-                  }
-                }}
-              >
-                删除会议
-              </button>
+                      return false;
+                    setWorkspace("transcript");
+                    if (source) setRestoredSegment(source.id);
+                    seekRef.current?.(
+                      source?.start ?? evidence.start,
+                      evidence.source_track,
+                    );
+                    return true;
+                  }}
+                />
+                <select
+                  value=""
+                  aria-label="导出格式"
+                  onChange={async (e) => {
+                    const format = e.target.value;
+                    if (!format) return;
+                    await saveTranscript();
+                    download(`/meetings/${meeting.id}/export/${format}`);
+                  }}
+                >
+                  <option value="">导出文字稿 ↓</option>
+                  <option value="txt">纯文本 TXT</option>
+                  <option value="md">Markdown</option>
+                  <option value="srt">字幕 SRT</option>
+                  <option value="json">结构化 JSON</option>
+                </select>
+                <details className="meeting-more-menu">
+                  <summary aria-label="更多操作">···</summary>
+                  <div className="more-menu-dropdown">
+                    {meeting.revision > 0 && (
+                      <button
+                        onClick={(e) => {
+                          e.currentTarget.closest("details")!.open = false;
+                          setRetranscribeOpen(true);
+                        }}
+                      >
+                        重新转写设置…
+                      </button>
+                    )}
+                    <button
+                      className="danger-text"
+                      onClick={async (e) => {
+                        e.currentTarget.closest("details")!.open = false;
+                        if (
+                          !confirm(
+                            "删除此会议的录音、所有文稿版本和分析结果？此操作无法撤销。",
+                          )
+                        )
+                          return;
+                        try {
+                          await api.remove(meeting.id);
+                          rememberMeeting("", browserMeetingStorage());
+                          setMeeting(null);
+                          await client.invalidateQueries({
+                            queryKey: ["meetings"],
+                          });
+                        } catch (error) {
+                          toast((error as Error).message);
+                        }
+                      }}
+                    >
+                      删除会议
+                    </button>
+                  </div>
+                </details>
+              </div>
             </div>
-            <div className="action-row">
-              <details
-                className="transcription-options"
-                open={!meeting.revision}
-              >
-                <summary>
-                  {meeting.revision ? "重新转写与识别设置" : "转写设置"}
-                </summary>
+            {!meeting.revision && (
+              <div className="untranscribed-setup-card">
+                <div className="untranscribed-setup-header">
+                  <strong>设置转写参数</strong>
+                  <p>本次录音尚未生成文字稿，请选择原文语言与识别引擎后开始。</p>
+                </div>
                 <div className="transcription-options-body">
                   <label>
                     原文语言{" "}
@@ -1151,8 +1221,7 @@ export default function App({ browserWorkspace = false }: { browserWorkspace?: b
                   </label>
                   {experimentalTranscription ? (
                     <p className="muted">
-                      使用本机千问生成独立原文草稿，按约 30
-                      秒音频块回听。姓名、数字和外语插句请人工核对。
+                      使用本机千问生成独立原文草稿，按约 30 秒音频块回听。姓名、数字和外语插句请人工核对。
                       {!engineReady && " 请先安装本机千问模型。"}
                     </p>
                   ) : (
@@ -1185,61 +1254,117 @@ export default function App({ browserWorkspace = false }: { browserWorkspace?: b
                   >
                     {experimentalTranscription
                       ? "生成多语种草稿"
-                      : meeting.revision
-                        ? "重新转写"
-                        : "开始转写"}
+                      : "开始转写"}
                   </button>
                 </div>
-              </details>
-              <button onClick={() => setRenameOpen(true)}>重命名</button>
-              <OverviewArchiveButton
-                openRequested={overviewFocus}
-                focusItemId={overviewSourceId}
-                onOpened={() => setOverviewFocus(false)}
-                key={meeting.id}
-                meeting={meeting}
-                onSeek={(evidence) => {
-                  const source = meeting.segments.find(
-                    (segment) =>
-                      (segment.source_track ?? null) ===
-                        (evidence.source_track ?? null) &&
-                      segment.start <= evidence.start &&
-                      segment.end > evidence.start &&
-                      segment.text.includes(evidence.quote),
-                  );
-                  if (
-                    !source &&
-                    evidence.source_track &&
-                    evidence.range_id &&
-                    evidence.segment_index != null
-                  )
-                    return false;
-                  setWorkspace("transcript");
-                  if (source) setRestoredSegment(source.id);
-                  seekRef.current?.(
-                    source?.start ?? evidence.start,
-                    evidence.source_track,
-                  );
-                  return true;
-                }}
-              />
-              <select
-                value=""
-                aria-label="导出格式"
-                onChange={async (e) => {
-                  const format = e.target.value;
-                  if (!format) return;
-                  await saveTranscript();
-                  download(`/meetings/${meeting.id}/export/${format}`);
-                }}
+              </div>
+            )}
+            {retranscribeOpen && (
+              <Modal
+                ariaLabel="重新转写与识别设置"
+                className="retranscribe-dialog"
+                onClose={() => setRetranscribeOpen(false)}
               >
-                <option value="">导出文字稿 ↓</option>
-                <option value="txt">纯文本 TXT</option>
-                <option value="md">Markdown</option>
-                <option value="srt">字幕 SRT</option>
-                <option value="json">结构化 JSON</option>
-              </select>
-            </div>
+                <div className="retranscribe-header">
+                  <h3>重新转写与识别设置</h3>
+                  <p>
+                    重新转写将生成新的文稿版本。当前校对稿将完整保留在历史版本中。
+                  </p>
+                </div>
+                <div className="retranscribe-form">
+                  <label>
+                    原文语言
+                    <select
+                      aria-label="转写原文语言"
+                      value={transcriptionLanguage}
+                      disabled={transcriptionRunning}
+                      onChange={(event) =>
+                        setTranscriptionLanguage(
+                          event.target.value as typeof transcriptionLanguage,
+                        )
+                      }
+                    >
+                      <option value="auto">自动识别（中英）</option>
+                      <option value="zh">中文</option>
+                      <option value="en">英文</option>
+                      <option value="ja">日语</option>
+                    </select>
+                  </label>
+                  <label className="engine-field">
+                    识别引擎
+                    <select
+                      value={transcriptionEngine}
+                      disabled={
+                        transcriptionRunning || experimentalTranscription
+                      }
+                      onChange={(e) => setEngine(e.target.value)}
+                    >
+                      {environment?.engines.map((item) => (
+                        <option
+                          value={item.id}
+                          disabled={!item.ready}
+                          key={item.id}
+                        >
+                          {item.label}
+                          {item.ready ? "" : " · 待安装"}
+                        </option>
+                      )) || (
+                        <>
+                          <option value="whisper">
+                            Whisper large-v3-turbo
+                          </option>
+                          <option value="qwen">千问 Qwen3-ASR-1.7B</option>
+                        </>
+                      )}
+                    </select>
+                  </label>
+                  {experimentalTranscription ? (
+                    <p className="muted">
+                      使用本机千问生成独立原文草稿，按约 30 秒音频块回听。
+                    </p>
+                  ) : (
+                    <div className="diarization-row">
+                      <label className="check">
+                        <input
+                          type="checkbox"
+                          checked={diarization}
+                          disabled={!environment?.diarization_ready}
+                          onChange={(e) => setDiarization(e.target.checked)}
+                        />{" "}
+                        自动区分发言人
+                      </label>
+                      <select
+                        value={numSpeakers}
+                        onChange={(e) => setNumSpeakers(Number(e.target.value))}
+                      >
+                        {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((value) => (
+                          <option value={value} key={value}>
+                            {value ? `${value} 位发言人` : "人数自动估计"}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+                </div>
+                <div className="retranscribe-actions">
+                  <button onClick={() => setRetranscribeOpen(false)}>
+                    取消
+                  </button>
+                  <button
+                    className="primary"
+                    disabled={transcriptionRunning || !engineReady}
+                    onClick={async () => {
+                      setRetranscribeOpen(false);
+                      await startTranscription();
+                    }}
+                  >
+                    {experimentalTranscription
+                      ? "生成多语种草稿"
+                      : "确认重新转写"}
+                  </button>
+                </div>
+              </Modal>
+            )}
             {transcriptionJob &&
               (transcriptionRunning ||
                 ["failed", "cancelled"].includes(transcriptionJob.state)) && (
