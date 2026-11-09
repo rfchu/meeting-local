@@ -17,6 +17,7 @@ import RecordingCompletionPanel from "./RecordingCompletionPanel";
 import RecordingEndGuide from "./RecordingEndGuide";
 import LiveDraftList from "./LiveDraftList";
 import { LiveCopilot } from "../copilot/LiveCopilot";
+import RecordingSetupView from "./RecordingSetupView";
 import type { RecordingViewModel } from "./useRecordingController";
 
 export default function RecordingView({
@@ -209,6 +210,57 @@ export default function RecordingView({
   const controlRequired =
     sessionRef.current?.source === "macos" &&
     !!nativeOwnership?.control_required;
+  if (state === "idle" && !targetRecordingId) {
+    return (
+      <Modal
+        id="recordingWorkbench"
+        className="recording-workbench setup-mode"
+        ariaLabel="会议准备与预设"
+        onClose={closeWithPreparation}
+      >
+        {termsOpen && (
+          <TermDialog
+            scope={sessionRef.current?.id || "library"}
+            onClose={() => setTermsOpen(false)}
+          />
+        )}
+        <RecordingSetupView
+          brief={brief}
+          setBrief={setBrief}
+          briefSaved={briefSaved}
+          briefReady={briefReady}
+          meetings={meetings}
+          captureSource={captureSource}
+          setCaptureSource={setCaptureSource}
+          nativeCapability={nativeCapability}
+          draftEngine={draftEngine}
+          setDraftEngine={setDraftEngine}
+          engineName={engineName}
+          postGoal={postGoal}
+          setPostGoal={setPostGoal}
+          completionMode={completionMode}
+          setCompletionMode={setCompletionMode}
+          autoProcess={autoProcess}
+          setAutoProcess={setAutoProcess}
+          preflight={preflight}
+          engines={engines}
+          microphoneLevels={microphoneLevels}
+          systemLevels={systemLevels}
+          readinessOpen={readinessOpen}
+          setReadinessOpen={setReadinessOpen}
+          acceptReadiness={acceptReadiness}
+          onModels={onModels}
+          termsOpen={termsOpen}
+          setTermsOpen={setTermsOpen}
+          runningSessions={runningSessions}
+          attachRunning={attachRunning}
+          onStart={() => void start()}
+          onClose={closeWithPreparation}
+        />
+      </Modal>
+    );
+  }
+
   return (
     <Modal
       id="recordingWorkbench"
@@ -231,25 +283,16 @@ export default function RecordingView({
           onClose={() => setTermsOpen(false)}
         />
       )}
-      {state === "idle" &&
-        captureSource !== "browser" &&
-        nativeCapability?.ownership &&
-        nativeCapability.ownership.lease !== "free" && (
-          <p className="muted" role="status">
-            原生采集所有权待核对，请在“采集与识别”中重新检查；不会自动接管或重复录音。
-          </p>
-        )}
       <div className="workbench-topbar">
         <div>
-          <div className="eyebrow">本机会议采集</div>
-          <h2>{brief.title || "录音与会议简记"}</h2>
-          <button
-            hidden={recording}
-            className="text-btn"
-            onClick={() => setTermsOpen(true)}
-          >
-            {sessionRef.current ? "会议术语" : "个人术语库"}
-          </button>
+          <div className="eyebrow">
+            {recording
+              ? "🔴 实时录音中"
+              : state === "paused"
+                ? "⏸️ 录音已暂停"
+                : "本机会议采集"}
+          </div>
+          <h2>{brief.title || "本次会议"}</h2>
         </div>
         <div
           className={`recording-clock${recording && (captureSource === "browser" || (!captureHealth?.stalled && !nativeUnavailable)) ? " active" : ""}`}
@@ -390,96 +433,6 @@ export default function RecordingView({
         </p>
       )}
       <RecordingEndGuide guide={endGuide} />
-      {state === "idle" && (
-        <div className="workbench-preflight-strip">
-          <label className="preflight-source-strip">
-            <span className="preflight-label">音源</span>
-            <select
-              value={captureSource}
-              onChange={(event) =>
-                setCaptureSource(event.target.value as typeof captureSource)
-              }
-            >
-              <option
-                value="macos-system"
-                disabled={!nativeCapability?.available}
-              >
-                线上会议 · 电脑声音
-              </option>
-              <option value="macos-both" disabled={!nativeCapability?.available}>
-                混合会议 · 电脑声音 + 麦克风
-              </option>
-              <option value="macos-microphone" disabled={!nativeCapability?.available || !nativeCapability.microphone_only_supported}>
-                现场会议 · 仅麦克风
-              </option>
-              {browserCaptureAllowed() && <option value="browser">现场会议 · 浏览器麦克风</option>}
-            </select>
-          </label>
-          <button
-            type="button"
-            className="preflight-pill-btn"
-            onClick={() => {
-              setSettingsTab("recording");
-              setSettingsOpen(true);
-            }}
-            title="点击配置识别引擎与语言"
-          >
-            🎙️ {engineName} · {({ auto: "中英自动", zh: "中文", en: "英文", ja: "日语" } as const)[brief.source_language || "auto"]}
-          </button>
-          <button
-            type="button"
-            className="preflight-pill-btn"
-            onClick={() => {
-              setSettingsTab("outcome");
-              setSettingsOpen(true);
-            }}
-            title="点击配置整理与交付目标"
-          >
-            📋 {completionMode === "none" ? "仅保存录音" : postGoal === "minutes" ? "文字稿＋AI 纪要" : "生成文字稿"}
-          </button>
-          {flowReady && (
-            <button
-              type="button"
-              className="preflight-pill-btn"
-              onClick={() => {
-                setSettingsTab("preparation");
-                setSettingsOpen(true);
-              }}
-              title="设置会议主题与参会人"
-            >
-              ✍️ {brief.title ? `主题: ${brief.title}` : "会议背景…"}
-            </button>
-          )}
-          <button
-            type="button"
-            className={`preflight-readiness-btn ${readinessOpen ? "active" : ""}`}
-            onClick={() => setReadinessOpen(!readinessOpen)}
-            title="查看存储、音轨与模型自检详情"
-          >
-            环境自检 {readinessOpen ? "▲" : "▼"}
-          </button>
-        </div>
-      )}
-      {state === "idle" && readinessOpen && (
-        <RecordingReadiness
-          nativeCapability={nativeCapability}
-          source={captureSource}
-          engine={draftEngine}
-          onReadiness={acceptReadiness}
-          onConfigure={() => {
-            setSettingsTab("recording");
-            setSettingsOpen(true);
-          }}
-          onModels={onModels}
-        />
-      )}
-      {state === "idle" &&
-        captureSource !== "browser" &&
-        !nativeCapability?.available && (
-          <p className="capture-warning">
-            上次选择的原生音源暂不可用，改用浏览器麦克风后即可开始。
-          </p>
-        )}
       {state !== "idle" && !recording && (
         <div className="recording-session-strip" aria-label="当前录音方案">
           <strong>{brief.title || "本次会议"}</strong>
