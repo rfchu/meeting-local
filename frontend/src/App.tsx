@@ -1056,9 +1056,7 @@ export default function App({ browserWorkspace = false }: { browserWorkspace?: b
                       <option value="auto">自动识别（中英）</option>
                       <option value="zh">中文</option>
                       <option value="en">英文</option>
-                      <optgroup label="更多语言">
-                        <option value="ja">日语（Beta）</option>
-                      </optgroup>
+                      <option value="ja">日语</option>
                     </select>
                   </label>
                   <label className="engine-field">
@@ -1124,7 +1122,7 @@ export default function App({ browserWorkspace = false }: { browserWorkspace?: b
                     onClick={() => void startTranscription()}
                   >
                     {experimentalTranscription
-                      ? "生成日语草稿"
+                      ? "生成多语种草稿"
                       : meeting.revision
                         ? "重新转写"
                         : "开始转写"}
@@ -1213,7 +1211,7 @@ export default function App({ browserWorkspace = false }: { browserWorkspace?: b
             {candidateArtifacts.map((item) => (
               <section className="transcription-recovery" key={item.id}>
                 {item.provenance.experimental === true && (
-                  <strong>日语 · 实验性原文草稿</strong>
+                  <strong>多语种 · 实验性原文草稿</strong>
                 )}
                 {item.provenance.incomplete === true &&
                   item.provenance.experimental !== true && (
@@ -1291,13 +1289,13 @@ export default function App({ browserWorkspace = false }: { browserWorkspace?: b
                         .join("\n\n");
                       const url = URL.createObjectURL(
                         new Blob(
-                          ["日语实验性原文草稿（按音频块定位）\n\n", text],
+                          ["多语种实验性原文草稿（按音频块定位）\n\n", text],
                           { type: "text/plain;charset=utf-8" },
                         ),
                       );
                       const link = document.createElement("a");
                       link.href = url;
-                      link.download = "日语实验草稿.txt";
+                      link.download = "实验草稿.txt";
                       link.click();
                       window.setTimeout(() => URL.revokeObjectURL(url), 30_000);
                       return;
@@ -1332,7 +1330,7 @@ export default function App({ browserWorkspace = false }: { browserWorkspace?: b
                   {item.provenance.incomplete
                     ? "导出未完成恢复稿"
                     : item.provenance.experimental
-                      ? "导出日语草稿"
+                      ? "导出原文草稿"
                       : "查看候选稿"}
                 </button>
               </section>

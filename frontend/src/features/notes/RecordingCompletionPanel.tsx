@@ -8,7 +8,6 @@ export default function RecordingCompletionPanel({
   savedEngine,
   handoffError,
   recordOnly,
-  japaneseBeta,
   completing,
   completionMode,
   postGoal,
@@ -21,7 +20,6 @@ export default function RecordingCompletionPanel({
   savedEngine: "whisper" | "qwen";
   handoffError: string;
   recordOnly: boolean;
-  japaneseBeta: boolean;
   completing: boolean;
   completionMode: CompletionMode;
   postGoal: "transcript" | "minutes";
@@ -51,21 +49,19 @@ export default function RecordingCompletionPanel({
         className="primary"
         disabled={completing}
         onClick={() =>
-          void (recordOnly || japaneseBeta
+          void (recordOnly
             ? onOpen()
             : onProcess(completionMode))
         }
       >
-        {recordOnly || japaneseBeta ? "打开已保存的会议" : "进入会后整理"}
+        {recordOnly ? "打开已保存的会议" : "进入会后整理"}
       </button>
       {handoffError && !recordOnly && (
         <button disabled={completing} onClick={() => void onOpen()}>
           先打开已保存的会议
         </button>
       )}
-      {japaneseBeta ? (
-        <p>已保留原音与简记。打开会议后可生成日语草稿并核对双语记录。</p>
-      ) : recordOnly ? (
+      {recordOnly ? (
         <p>本次未启用实时识别。原音与简记已保存，配置模型后可继续转写。</p>
       ) : (
         <p>
@@ -82,45 +78,43 @@ export default function RecordingCompletionPanel({
           原音与关注点已经保存。
         </p>
       )}
-      {!japaneseBeta && (
-        <details>
-          <summary>调整文字稿处理方式</summary>
-          <div className="finish-options">
-            {(
-              [
-                {
-                  mode: "quick",
-                  title: "快速完成",
-                  description: `复用 ${savedEngine === "qwen" ? "千问" : "Whisper"} 实时结果，补齐缺段与尾段；不区分发言人。`,
-                },
-                {
-                  mode: "full",
-                  title: "精细处理",
-                  description: `使用 ${engineLabel} 重识别、时间对齐，按会议设置区分发言人。`,
-                },
-                {
-                  mode: "none",
-                  title: "先整理关注点",
-                  description: "保留录音和简记，稍后在会议中启动转写。",
-                },
-              ] as const
-            ).map((choice) => (
-              <button
-                key={choice.mode}
-                className={completionMode === choice.mode ? "selected" : ""}
-                disabled={completing}
-                onClick={() => void onProcess(choice.mode)}
-              >
-                <strong>
-                  {choice.title}
-                  {completionMode === choice.mode ? " · 上次选择" : ""}
-                </strong>
-                <span>{choice.description}</span>
-              </button>
-            ))}
-          </div>
-        </details>
-      )}
+      <details>
+        <summary>调整文字稿处理方式</summary>
+        <div className="finish-options">
+          {(
+            [
+              {
+                mode: "quick",
+                title: "快速完成",
+                description: `复用 ${savedEngine === "qwen" ? "千问" : "Whisper"} 实时结果，补齐缺段与尾段；不区分发言人。`,
+              },
+              {
+                mode: "full",
+                title: "精细处理",
+                description: `使用 ${engineLabel} 重识别、时间对齐，按会议设置区分发言人。`,
+              },
+              {
+                mode: "none",
+                title: "先整理关注点",
+                description: "保留录音和简记，稍后在会议中启动转写。",
+              },
+            ] as const
+          ).map((choice) => (
+            <button
+              key={choice.mode}
+              className={completionMode === choice.mode ? "selected" : ""}
+              disabled={completing}
+              onClick={() => void onProcess(choice.mode)}
+            >
+              <strong>
+                {choice.title}
+                {completionMode === choice.mode ? " · 上次选择" : ""}
+              </strong>
+              <span>{choice.description}</span>
+            </button>
+          ))}
+        </div>
+      </details>
       {completing && <p role="status">正在确认会后任务并打开会议…</p>}
     </section>
   );

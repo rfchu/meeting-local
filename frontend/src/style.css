@@ -3298,6 +3298,73 @@ button.note-options-trigger {
 .recording-config-panel .config-source-field {
   grid-template-columns: minmax(0, 1fr);
 }
+.capture-scenario-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 10px;
+  margin-bottom: 18px;
+}
+.scenario-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  text-align: left;
+  padding: 12px 14px;
+  border-radius: 10px;
+  border: 1.5px solid var(--line, #e2e8f0);
+  background: var(--bg-card, #ffffff);
+  cursor: pointer;
+  transition: all 0.15s ease-in-out;
+  color: inherit;
+}
+.scenario-card:hover:not(:disabled) {
+  border-color: var(--primary, #2563eb);
+  background: var(--bg-hover, #f8fafc);
+}
+.scenario-card.selected {
+  border-color: var(--primary, #2563eb);
+  background: #eff6ff;
+  box-shadow: 0 0 0 1px var(--primary, #2563eb);
+}
+.scenario-card:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.scenario-card-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  margin-bottom: 6px;
+}
+.scenario-icon {
+  font-size: 16px;
+}
+.scenario-card strong {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-heading, #0f172a);
+}
+.scenario-badge {
+  margin-left: auto;
+  font-size: 11px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.05);
+  color: var(--muted, #64748b);
+  white-space: nowrap;
+}
+.scenario-card.selected .scenario-badge {
+  background: rgba(37, 99, 235, 0.12);
+  color: var(--primary, #2563eb);
+  font-weight: 500;
+}
+.scenario-desc {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--muted, #64748b);
+}
 .config-silence-reminder {
   display: flex;
   align-items: center;

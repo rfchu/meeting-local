@@ -269,114 +269,170 @@ export default function RecordingSettingsDialog({
       {settingsTab === "recording" && (
         <section>
           <div className="config-section-heading">
-            <h3>采集设置</h3>
-            <p>选择录音音源。双轨录音可单独设定回声处理。</p>
+            <h3>会议场景与录音来源</h3>
+            <p>根据参会形式选择最适合的收音方案。</p>
           </div>
-          <fieldset disabled={state !== "idle"} className="config-fields config-source-field">
-            <label>
-              录音来源
-              <select
-                aria-label="录音来源"
-                value={captureSource}
-                onChange={(e) =>
-                  setCaptureSource(e.target.value as typeof captureSource)
-                }
-              >
-                {browserCaptureAllowed() && <option value="browser">浏览器麦克风</option>}
-                <option value="macos-microphone" disabled={!nativeCapability?.available || !nativeCapability.microphone_only_supported}>
-                  现场会议 · 仅麦克风
-                </option>
-                <option
-                  value="macos-both"
-                  disabled={!nativeCapability?.available}
-                >
-                  macOS 电脑声音 + 麦克风
-                </option>
-                <option
-                  value="macos-system"
-                  disabled={!nativeCapability?.available}
-                >
-                  macOS 仅电脑声音
-                </option>
-              </select>
-            </label>
-          </fieldset>
-          <fieldset disabled={state !== "idle"} className="config-fields config-audio-preference">
-            <label className="config-echo-field">
-              双轨回声消除
-              <select
-                value={echoMode}
-                onChange={(event) =>
-                  setEchoMode(
-                    event.target.value === "aec3" ? "aec3" : "standard",
-                  )
-                }
-              >
-                <option value="standard">标准处理</option>
-                <option value="aec3">WebRTC AEC3（实验）</option>
-              </select>
-              <small>
-                {captureSource === "macos-both"
-                  ? "本次双轨录音将使用此设置。"
-                  : "下次选择电脑声音 + 麦克风时生效。"}
-                {echoMode === "aec3" && " AEC3 不可用时自动使用标准处理。"}
-              </small>
-            </label>
-          </fieldset>
-          <label className="config-silence-reminder">
-            <input
-              type="checkbox"
-              checked={silenceReminder}
-              onChange={(event) => setSilenceReminder(event.target.checked)}
-            />
-            持续安静约 5 分钟时提醒
-          </label>
-          {captureSource === "macos-microphone" && (
-            <p className="native-capture-hint">仅使用麦克风权限，录制当前输入设备的声音。</p>
-          )}
-          {(captureSource === "macos-system" || captureSource === "macos-both") && (
-            <p className="native-capture-hint">
-              首次使用需允许
-              macOS“屏幕与系统音频录制”权限，联合采集还需麦克风权限。仅保存音频，不保存屏幕画面。建议戴耳机，避免麦克风重复收录扬声器声音。所选引擎生成实时草稿，停止后生成正式文字稿。
-            </p>
-          )}
-          {state === "idle" && (
-            <div className="capture-preflight">
-              <span>
-                原生采集器：
-                {nativeCapability?.available ? "已就绪" : "未就绪"} ·
-                系统音频权限：
-                {nativeCapability?.screen_permission ? "已授权" : "待授权"} ·
-                麦克风权限：
-                {nativeCapability?.microphone_permission ? "已授权" : "待授权"}
-              </span>
+          <div className="capture-scenario-grid" role="radiogroup" aria-label="录音场景">
+            <button
+              type="button"
+              role="radio"
+              aria-checked={captureSource === "macos-both"}
+              disabled={state !== "idle" || !nativeCapability?.available}
+              className={`scenario-card ${captureSource === "macos-both" ? "selected" : ""}`}
+              onClick={() => setCaptureSource("macos-both")}
+            >
+              <div className="scenario-card-header">
+                <span className="scenario-icon">🖥️</span>
+                <strong>线上会议</strong>
+                <span className="scenario-badge">电脑声音 + 麦克风</span>
+              </div>
+              <p className="scenario-desc">
+                录制远程参会人声音及本机发言（双轨分离，建议佩戴耳机）
+              </p>
+            </button>
+
+            <button
+              type="button"
+              role="radio"
+              aria-checked={captureSource === "macos-microphone"}
+              disabled={
+                state !== "idle" ||
+                !nativeCapability?.available ||
+                !nativeCapability.microphone_only_supported
+              }
+              className={`scenario-card ${captureSource === "macos-microphone" ? "selected" : ""}`}
+              onClick={() => setCaptureSource("macos-microphone")}
+            >
+              <div className="scenario-card-header">
+                <span className="scenario-icon">🎙️</span>
+                <strong>现场会议</strong>
+                <span className="scenario-badge">仅麦克风</span>
+              </div>
+              <p className="scenario-desc">
+                线下面对面讨论或室内演讲，仅收录环境麦克风，无需屏幕录制权限
+              </p>
+            </button>
+
+            <button
+              type="button"
+              role="radio"
+              aria-checked={captureSource === "macos-system"}
+              disabled={state !== "idle" || !nativeCapability?.available}
+              className={`scenario-card ${captureSource === "macos-system" ? "selected" : ""}`}
+              onClick={() => setCaptureSource("macos-system")}
+            >
+              <div className="scenario-card-header">
+                <span className="scenario-icon">💻</span>
+                <strong>仅电脑声音</strong>
+                <span className="scenario-badge">单轨系统音频</span>
+              </div>
+              <p className="scenario-desc">
+                网络研讨会、旁听线上讲座或视频回放，不采集本机麦克风
+              </p>
+            </button>
+
+            {browserCaptureAllowed() && (
               <button
-                disabled={checkingCapture}
-                onClick={() => void checkCapture()}
+                type="button"
+                role="radio"
+                aria-checked={captureSource === "browser"}
+                disabled={state !== "idle"}
+                className={`scenario-card ${captureSource === "browser" ? "selected" : ""}`}
+                onClick={() => setCaptureSource("browser")}
               >
-                {checkingCapture ? "检查中…" : "重新检查"}
+                <div className="scenario-card-header">
+                  <span className="scenario-icon">🌐</span>
+                  <strong>浏览器麦克风</strong>
+                  <span className="scenario-badge">Web Audio</span>
+                </div>
+                <p className="scenario-desc">
+                  使用浏览器标准麦克风接口采集，适用于无原生权限环境
+                </p>
               </button>
-              <small>
-                在系统设置中授权后重新检查；开始原生录音时会请求所需权限。
-              </small>
-              {nativeCapability?.ownership &&
-                nativeCapability.ownership.lease !== "free" && (
-                  <small role="status">
-                    已有采集所有者或所有权尚未核对；不会重复启动或自动接管。请先检查正在进行的录音。
+            )}
+          </div>
+
+          <details className="config-advanced">
+            <summary>高级音频与硬件设置</summary>
+            <div className="config-advanced-body">
+              <fieldset disabled={state !== "idle"} className="config-fields config-audio-preference">
+                <label className="config-echo-field">
+                  双轨回声消除模式
+                  <select
+                    value={echoMode}
+                    onChange={(event) =>
+                      setEchoMode(
+                        event.target.value === "aec3" ? "aec3" : "standard",
+                      )
+                    }
+                  >
+                    <option value="standard">标准处理（推荐）</option>
+                    <option value="aec3">WebRTC AEC3 声学回声消除（实验）</option>
+                  </select>
+                  <small>
+                    {captureSource === "macos-both"
+                      ? "本次双轨录音将使用此设置。"
+                      : "下次选择电脑声音 + 麦克风时生效。"}
+                    {echoMode === "aec3" && " AEC3 不可用时自动降级为标准处理。"}
                   </small>
-                )}
-              <small>
-                独立控制服务可在 API
-                重启后继续采集；使用“继续查看”明确恢复控制。旧版录音仍只恢复已保存内容。
-              </small>
+                </label>
+              </fieldset>
+
+              <label className="config-silence-reminder">
+                <input
+                  type="checkbox"
+                  checked={silenceReminder}
+                  onChange={(event) => setSilenceReminder(event.target.checked)}
+                />
+                持续安静约 5 分钟时提醒
+              </label>
+
+              {captureSource === "macos-microphone" && (
+                <p className="native-capture-hint">仅使用麦克风权限，录制当前输入设备的声音。</p>
+              )}
+              {(captureSource === "macos-system" || captureSource === "macos-both") && (
+                <p className="native-capture-hint">
+                  首次使用需允许 macOS“屏幕与系统音频录制”权限，联合采集还需麦克风权限。仅保存音频，不保存屏幕画面。建议戴耳机，避免麦克风重复收录扬声器声音。所选引擎生成实时草稿，停止后生成正式文字稿。
+                </p>
+              )}
+
+              {state === "idle" && (
+                <div className="capture-preflight">
+                  <span>
+                    原生采集器：
+                    {nativeCapability?.available ? "已就绪" : "未就绪"} ·
+                    系统音频权限：
+                    {nativeCapability?.screen_permission ? "已授权" : "待授权"} ·
+                    麦克风权限：
+                    {nativeCapability?.microphone_permission ? "已授权" : "待授权"}
+                  </span>
+                  <button
+                    disabled={checkingCapture}
+                    onClick={() => void checkCapture()}
+                  >
+                    {checkingCapture ? "检查中…" : "重新检查权限"}
+                  </button>
+                  <small>
+                    在系统设置中授权后重新检查；开始原生录音时会自动申请所需权限。
+                  </small>
+                  {nativeCapability?.ownership &&
+                    nativeCapability.ownership.lease !== "free" && (
+                      <small role="status">
+                        已有采集所有者或所有权尚未核对；不会重复启动或自动接管。请先检查正在进行的录音。
+                      </small>
+                    )}
+                  <small>
+                    独立控制服务可在 API 重启后继续采集；使用“继续查看”明确恢复控制。旧版录音仍只恢复已保存内容。
+                  </small>
+                </div>
+              )}
+              {!nativeCapability?.available && (
+                <p className="native-capture-hint">
+                  系统音频采集器尚未就绪，可运行 bash scripts/build_capture.sh 构建。
+                </p>
+              )}
             </div>
-          )}
-          {!nativeCapability?.available && (
-            <p className="native-capture-hint">
-              系统音频采集器尚未就绪，可运行 bash scripts/build_capture.sh
-              构建。
-            </p>
-          )}
+          </details>
         </section>
       )}
       {settingsTab === "model" && (
@@ -402,7 +458,7 @@ export default function RecordingSettingsDialog({
                 <option value="auto">自动识别（中英）</option>
                 <option value="zh">中文</option>
                 <option value="en">英文</option>
-                <option value="ja">日语（Beta）</option>
+                <option value="ja">日语</option>
               </select>
             </label>
             <label>

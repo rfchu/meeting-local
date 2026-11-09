@@ -418,18 +418,16 @@ export default function RecordingView({
       {state === "idle" ? (
         <RecordingSetupBar
           source={sourceLabel}
-          recognition={`${engineName} · ${({ auto: "自动识别（中英）", zh: "中文", en: "英文", ja: "日语（Beta）" } as const)[brief.source_language || "auto"]} · ${draftEngine === "qwen" && streamEnabled ? (responsiveMode ? "短片段模式" : "逐字推送") : "分段识别"}`}
+          recognition={`${engineName} · ${({ auto: "自动识别（中英）", zh: "中文", en: "英文", ja: "日语" } as const)[brief.source_language || "auto"]} · ${draftEngine === "qwen" && streamEnabled ? (responsiveMode ? "短片段模式" : "逐字推送") : "分段识别"}`}
           outcome={
-            brief.source_language === "ja" || completionMode === "none"
+            completionMode === "none"
               ? "仅保存录音与简记"
               : postGoal === "minutes"
                 ? "文字稿＋AI 纪要"
                 : "生成会议文字稿"
           }
           processing={
-            brief.source_language === "ja"
-              ? "会后可手动生成日语草稿"
-              : `${completionMode === "none" ? "暂不转写" : completionMode === "quick" ? "快速完成" : "精细处理"} · ${autoProcess ? "自动进入整理" : "手动选择"}`
+            `${completionMode === "none" ? "暂不转写" : completionMode === "quick" ? "快速完成" : "精细处理"} · ${autoProcess ? "自动进入整理" : "手动选择"}`
           }
           title={brief.title}
           brief={
@@ -463,7 +461,7 @@ export default function RecordingView({
           <span>
             {recordOnly
               ? "仅录音与简记"
-              : `${engineName} · ${({ auto: "自动识别（中英）", zh: "中文", en: "英文", ja: "日语（Beta）" } as const)[brief.source_language || "zh"]}`}
+              : `${engineName} · ${({ auto: "自动识别（中英）", zh: "中文", en: "英文", ja: "日语" } as const)[brief.source_language || "zh"]}`}
           </span>
           <span>
             {postGoal === "minutes" && !recordOnly
@@ -502,7 +500,6 @@ export default function RecordingView({
           savedEngine={savedEngine}
           handoffError={handoffError}
           recordOnly={recordOnly}
-          japaneseBeta={brief.source_language === "ja"}
           completing={completing}
           completionMode={completionMode}
           postGoal={postGoal}

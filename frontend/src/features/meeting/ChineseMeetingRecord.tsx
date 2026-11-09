@@ -105,7 +105,7 @@ export default function ChineseMeetingRecord({
 
   return (
     <details onToggle={(event) => setOpen(event.currentTarget.open)}>
-      <summary>{draftId ? "查看日语原文与中文译文" : "双语视图"}</summary>
+      <summary>{draftId ? "查看原文与中文译文" : "双语视图"}</summary>
       {open &&
         (dirty ? (
           <p>请先保存文字稿修改，再打开双语视图。</p>

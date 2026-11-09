@@ -295,11 +295,11 @@
 - [x] 提交：Git commit Step 1。
 
 ### Task 5.2: 录音配置场景化降噪与移除多语言硬编码 (Step 2)
-- [ ] 重构 `RecordingSettingsDialog.tsx`：将技术性音源选择收敛为场景化卡片（“线上会议” vs “现场会议”）。
-- [ ] 将底层技术名词（“AEC3”、“常驻进程模型释放”等）收敛进高级折叠面板，普通视图保持极致清爽。
-- [ ] 清理全局针对特定语种的过渡性硬编码（移除 `japaneseBeta` 横幅、特化导出按钮等），统一纳入标准语言流。
-- [ ] 验证：`cd frontend && npm run typecheck && npm run build` 成功。
-- [ ] 提交：Git commit Step 2。
+- [x] 重构 `RecordingSettingsDialog.tsx`：将技术性音源选择收敛为场景化卡片（“线上会议” vs “现场会议”）。
+- [x] 将底层技术名词（“AEC3”、“常驻进程模型释放”等）收敛进高级折叠面板，普通视图保持极致清爽。
+- [x] 清理全局针对特定语种的过渡性硬编码（移除 `japaneseBeta` 横幅、特化导出按钮等），统一纳入标准语言流。
+- [x] 验证：`cd frontend && npm run typecheck && npm run build` 成功。
+- [x] 提交：Git commit Step 2。
 
 ### Task 5.3: 导航与时间线视窗归一与浏览器端体验完善 (Step 3)
 - [ ] 将 Foresight 三栏统一时间线 (`UnifiedTimeline`) 设为已结束会议的默认呈现视图。
