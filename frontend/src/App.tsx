@@ -983,6 +983,11 @@ export default function App({ browserWorkspace = false }: { browserWorkspace?: b
       {libraryOpen && (
         <MeetingLibrary
           meetings={listQuery.data || []}
+          currentMeetingId={meeting?.id}
+          onDeletedActiveMeeting={() => {
+            rememberMeeting("", browserMeetingStorage());
+            setMeeting(null);
+          }}
           onClose={() => setLibraryOpen(false)}
           onPrepare={async (id) => {
             if (browserWorkspace) return toast("请在听记 App 中准备实时会议。");

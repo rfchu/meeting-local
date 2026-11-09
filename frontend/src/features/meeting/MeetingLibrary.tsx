@@ -12,14 +12,18 @@ const groupKey = (item: MeetingSummary) =>
 
 export default function MeetingLibrary({
   meetings,
+  currentMeetingId,
   onOpen,
   onPrepare,
   onClose,
+  onDeletedActiveMeeting,
 }: {
   meetings: MeetingSummary[];
+  currentMeetingId?: string;
   onOpen: (id: string, segmentId?: string) => void;
   onPrepare: (id: string) => Promise<void>;
   onClose: () => void;
+  onDeletedActiveMeeting?: () => void;
 }) {
   const client = useQueryClient();
   const [filter, setFilter] = useState("");
@@ -29,6 +33,7 @@ export default function MeetingLibrary({
   const [kind, setKind] = useState<MeetingOrganization["group_kind"]>("series");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const visible = meetings.filter(
     (item) =>
       !!item.library?.archived === archived &&
@@ -86,6 +91,61 @@ export default function MeetingLibrary({
     } finally {
       setBusy(false);
     }
+  }
+
+  const allSelected =
+    visible.length > 0 && visible.every((item) => selected.includes(item.id));
+
+  function toggleSelectAll() {
+    if (allSelected) {
+      const visibleSet = new Set(visible.map((item) => item.id));
+      setSelected((prev) => prev.filter((id) => !visibleSet.has(id)));
+    } else {
+      const merged = new Set([...selected, ...visible.map((item) => item.id)]);
+      setSelected([...merged]);
+    }
+  }
+
+  async function deleteSelected() {
+    if (busy || !selected.length) return;
+    setBusy(true);
+    setMessage("");
+    const toDelete = [...selected];
+    const errors: string[] = [];
+    let deletedCount = 0;
+    let deletedActive = false;
+
+    for (const id of toDelete) {
+      try {
+        await api.remove(id);
+        deletedCount++;
+        if (currentMeetingId && id === currentMeetingId) {
+          deletedActive = true;
+        }
+      } catch (err) {
+        const target = meetings.find((m) => m.id === id);
+        const title = target?.title || id;
+        const reason = err instanceof Error ? err.message : "未知错误";
+        errors.push(`《${title}》: ${reason}`);
+      }
+    }
+
+    await client.invalidateQueries({ queryKey: ["meetings"] });
+    setSelected([]);
+    setDeleteConfirmOpen(false);
+
+    if (deletedActive) {
+      onDeletedActiveMeeting?.();
+    }
+
+    if (errors.length === 0) {
+      setMessage(`已成功永久删除 ${deletedCount} 场会议`);
+    } else {
+      setMessage(
+        `已删除 ${deletedCount} 场会议，${errors.length} 场删除失败: ${errors.join("; ")}`,
+      );
+    }
+    setBusy(false);
   }
   return (
     <Modal
@@ -203,6 +263,14 @@ export default function MeetingLibrary({
         >
           {archived ? "恢复到资料库" : "归档所选"}
         </button>
+        <button
+          type="button"
+          className="danger-btn"
+          disabled={!selected.length}
+          onClick={() => setDeleteConfirmOpen(true)}
+        >
+          删除所选
+        </button>
       </fieldset>
       {message && <p role="status">{message}</p>}
       {!visible.length && <p>此视图没有会议</p>}
@@ -234,6 +302,75 @@ export default function MeetingLibrary({
           </span>
         </div>
       ))}
+      {deleteConfirmOpen && (
+        <Modal
+          ariaLabel="确认批量删除"
+          className="small-dialog"
+          onClose={() => !busy && setDeleteConfirmOpen(false)}
+        >
+          <div className="search-heading">
+            <h3 style={{ margin: 0, color: "#dc2626" }}>⚠️ 确认永久删除会议</h3>
+            <button
+              disabled={busy}
+              type="button"
+              onClick={() => setDeleteConfirmOpen(false)}
+            >
+              ✕
+            </button>
+          </div>
+          <p style={{ marginTop: 12, lineHeight: 1.6 }}>
+            您已选择 <strong>{selected.length}</strong> 场会议。
+            删除后将<strong>永久清除</strong>
+            本地录音音频文件、转写文字稿、AI 纪要与分析数据，
+            <strong>此操作无法撤销</strong>。
+          </p>
+          <div
+            style={{
+              maxHeight: 160,
+              overflowY: "auto",
+              padding: "8px 12px",
+              background: "#f8fafc",
+              borderRadius: 6,
+              border: "1px solid #e2e8f0",
+              fontSize: 13,
+            }}
+          >
+            <ul style={{ margin: 0, paddingLeft: 18 }}>
+              {meetings
+                .filter((m) => selected.includes(m.id))
+                .map((m) => (
+                  <li key={m.id} style={{ marginBottom: 4 }}>
+                    {m.title}
+                  </li>
+                ))}
+            </ul>
+          </div>
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "flex-end",
+              gap: 10,
+              marginTop: 16,
+            }}
+          >
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => setDeleteConfirmOpen(false)}
+            >
+              取消
+            </button>
+            <button
+              type="button"
+              className="danger-btn"
+              disabled={busy}
+              onClick={() => void deleteSelected()}
+            >
+              {busy ? "正在删除..." : `确认删除 (${selected.length})`}
+            </button>
+          </div>
+        </Modal>
+      )}
     </Modal>
   );
 }
