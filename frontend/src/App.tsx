@@ -231,6 +231,16 @@ export default function App({ browserWorkspace = false }: { browserWorkspace?: b
   const [reviewBusy, setReviewBusy] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [followupsOpen, setFollowupsOpen] = useState(false);
+  useEffect(() => {
+    const handleGlobalShortcuts = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        setSearchOpen((prev) => !prev);
+      }
+    };
+    window.addEventListener("keydown", handleGlobalShortcuts);
+    return () => window.removeEventListener("keydown", handleGlobalShortcuts);
+  }, []);
   const [searchTarget, setSearchTarget] = useState<SearchHit | null>(null);
   const [engine, setEngine] = useModelChoice("transcription", meeting?.id),
     [diarization, setDiarization] = useState(false),

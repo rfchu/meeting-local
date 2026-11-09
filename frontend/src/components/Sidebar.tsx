@@ -55,21 +55,26 @@ export default function Sidebar({
           听记<small>LOCAL MEETING</small>
         </span>
       </a>
-      <button
-        id="uploadBtn"
-        className="primary wide"
-        disabled={uploading}
-        onClick={choose}
-      >
-        {uploading ? "正在导入…" : "＋ 导入会议录音"}
-      </button>
-      {onRecord && <button
-        className="wide record-button"
-        disabled={uploading}
-        onClick={onRecord}
-      >
-        ● 开始实时记录
-      </button>}
+      <div className="sidebar-action-group">
+        {onRecord && (
+          <button
+            id="recordBtn"
+            className="wide record-action-btn"
+            disabled={uploading}
+            onClick={onRecord}
+          >
+            <span className="record-dot" /> 开始实时记录
+          </button>
+        )}
+        <button
+          id="uploadBtn"
+          className="wide upload-action-btn"
+          disabled={uploading}
+          onClick={choose}
+        >
+          {uploading ? "正在导入…" : "＋ 导入会议录音"}
+        </button>
+      </div>
       <input
         id="file"
         type="file"
@@ -81,17 +86,41 @@ export default function Sidebar({
           event.target.value = "";
         }}
       />
-      <button className="wide" onClick={onSearch}>
-        ⌕ 搜索与引用问答
+      <button
+        type="button"
+        className="sidebar-search-btn"
+        onClick={onSearch}
+        title="全局搜索会议与问答 (⌘K)"
+      >
+        <span className="search-icon">🔍</span>
+        <span className="search-placeholder">搜索与问答…</span>
+        <kbd className="search-shortcut">⌘K</kbd>
       </button>
-      <button className="wide" onClick={onFollowups}>
-        ☑ 跨会议跟进
-      </button>
-      <div className="nav-label">
-        <button className="text-btn" onClick={onLibrary}>
-          会议资料库 ↗
-        </button>{" "}
-        <span>{meetings.filter((item) => !item.library?.archived).length}</span>
+      <div className="sidebar-nav-group">
+        <button
+          type="button"
+          className="sidebar-nav-item"
+          onClick={onFollowups}
+          title="集中管理各场会议中已确认的跟进项与待办"
+        >
+          <span className="sidebar-nav-icon">☑</span>
+          <span className="sidebar-nav-label">跨会议跟进</span>
+        </button>
+        <button
+          type="button"
+          className="sidebar-nav-item"
+          onClick={onLibrary}
+          title="查看与检索所有历史会议资料"
+        >
+          <span className="sidebar-nav-icon">📁</span>
+          <span className="sidebar-nav-label">会议资料库</span>
+          <span className="sidebar-nav-badge">
+            {meetings.filter((item) => !item.library?.archived).length}
+          </span>
+        </button>
+      </div>
+      <div className="sidebar-section-header">
+        <span>最近会议</span>
       </div>
       <div id="meetingList">
         {meetings
