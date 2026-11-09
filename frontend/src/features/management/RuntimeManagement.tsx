@@ -220,7 +220,7 @@ export default function RuntimeManagement({
             onChanged={onChanged}
           />
           {page === "environment" && data && (
-            <RuntimeEnvironmentPage data={data} />
+            <RuntimeEnvironmentPage data={data} onPage={onPage} />
           )}
         </div>
       </div>

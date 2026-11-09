@@ -1,4 +1,5 @@
 import { useState } from "react";
+import RecordingReadiness from "../onboarding/RecordingReadiness";
 import WorkspaceReadinessPanel from "./WorkspaceReadinessPanel";
 import QualitySamplesPanel from "./QualitySamplesPanel";
 import QualityBaselinePanel from "./QualityBaselinePanel";
@@ -19,6 +20,15 @@ export default function RuntimeEnvironmentPage({
   const [advanced, setAdvanced] = useState(false);
   return (
     <>
+      <section className="management-section readiness-management-wrapper">
+        <RecordingReadiness
+          source="macos-both"
+          engine="qwen"
+          onConfigure={() => onPage?.("models")}
+          onModels={() => onPage?.("models")}
+          onReadiness={() => {}}
+        />
+      </section>
       <WorkspaceReadinessPanel />
       <ReleaseReadinessPanel />
       <details

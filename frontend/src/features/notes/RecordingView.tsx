@@ -171,7 +171,6 @@ export default function RecordingView({
     null,
   );
   const [returnToOverview, setReturnToOverview] = useState(false);
-  const [readinessOpen, setReadinessOpen] = useState(false);
   const [overviewVersion, setOverviewVersion] = useState(0);
   const [seenOverview, setSeenOverview] = useState(0);
   useEffect(() => {
@@ -246,12 +245,10 @@ export default function RecordingView({
           engines={engines}
           microphoneLevels={microphoneLevels}
           systemLevels={systemLevels}
-          readinessOpen={readinessOpen}
-          setReadinessOpen={setReadinessOpen}
-          acceptReadiness={acceptReadiness}
           onModels={onModels}
           termsOpen={termsOpen}
           setTermsOpen={setTermsOpen}
+          recognitionTerms={recognitionTerms}
           runningSessions={runningSessions}
           attachRunning={attachRunning}
           onStart={() => void start()}

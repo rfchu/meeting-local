@@ -131,6 +131,14 @@
 .management-model-editor {
   margin-top: 20px;
 }
+.readiness-management-wrapper {
+  padding: 0;
+  background: transparent;
+  border: none;
+}
+.readiness-management-wrapper .recording-readiness {
+  margin: 0;
+}
 .management-section h3 {
   font-size: 15px;
   margin: 0 0 16px;
