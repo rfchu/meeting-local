@@ -8,7 +8,6 @@ import LiveOverviewPanel from "../overview/LiveOverviewPanel";
 import RecordingReadiness from "../onboarding/RecordingReadiness";
 import TermDialog from "../terminology/TermDialog";
 import LiveCorrectionReview from "./LiveCorrectionReview";
-import RecordingSetupBar from "./RecordingSetupBar";
 import type { MeetingNoteType } from "../../types";
 import { clock } from "../../utils";
 import Modal from "../../components/Modal";
@@ -171,6 +170,7 @@ export default function RecordingView({
     null,
   );
   const [returnToOverview, setReturnToOverview] = useState(false);
+  const [readinessOpen, setReadinessOpen] = useState(false);
   const [overviewVersion, setOverviewVersion] = useState(0);
   const [seenOverview, setSeenOverview] = useState(0);
   useEffect(() => {
@@ -242,7 +242,7 @@ export default function RecordingView({
       <div className="workbench-topbar">
         <div>
           <div className="eyebrow">本机会议采集</div>
-          <h2>{recording ? brief.title || "本次会议" : "录音与会议简记"}</h2>
+          <h2>{brief.title || "录音与会议简记"}</h2>
           <button
             hidden={recording}
             className="text-btn"
@@ -391,89 +391,76 @@ export default function RecordingView({
       )}
       <RecordingEndGuide guide={endGuide} />
       {state === "idle" && (
-        <label className="recording-session-strip">
-          会议场景与音源
-          <select
-            value={captureSource}
-            onChange={(event) =>
-              setCaptureSource(event.target.value as typeof captureSource)
-            }
-          >
-            <option
-              value="macos-system"
-              disabled={!nativeCapability?.available}
+        <div className="workbench-preflight-strip">
+          <label className="preflight-source-strip">
+            <span className="preflight-label">音源</span>
+            <select
+              value={captureSource}
+              onChange={(event) =>
+                setCaptureSource(event.target.value as typeof captureSource)
+              }
             >
-              线上会议 · 电脑声音
-            </option>
-            <option value="macos-both" disabled={!nativeCapability?.available}>
-              混合会议 · 电脑声音 + 麦克风
-            </option>
-            <option value="macos-microphone" disabled={!nativeCapability?.available || !nativeCapability.microphone_only_supported}>
-              现场会议 · 仅麦克风
-            </option>
-            {browserCaptureAllowed() && <option value="browser">现场会议 · 浏览器麦克风</option>}
-          </select>
-        </label>
-      )}
-      {state === "idle" ? (
-        <RecordingSetupBar
-          source={sourceLabel}
-          recognition={`${engineName} · ${({ auto: "自动识别（中英）", zh: "中文", en: "英文", ja: "日语" } as const)[brief.source_language || "auto"]} · ${draftEngine === "qwen" && streamEnabled ? (responsiveMode ? "短片段模式" : "逐字推送") : "分段识别"}`}
-          outcome={
-            completionMode === "none"
-              ? "仅保存录音与简记"
-              : postGoal === "minutes"
-                ? "文字稿＋AI 纪要"
-                : "生成会议文字稿"
-          }
-          processing={
-            `${completionMode === "none" ? "暂不转写" : completionMode === "quick" ? "快速完成" : "精细处理"} · ${autoProcess ? "自动进入整理" : "手动选择"}`
-          }
-          title={brief.title}
-          brief={
-            brief.interview?.role
-              ? `面试 · ${brief.interview.role}`
-              : brief.purpose
-          }
-          editable={state === "idle"}
-          preferencesSaved={preferencesSaved}
-          onCapture={() => {
-            setSettingsTab("recording");
-            setSettingsOpen(true);
-          }}
-          onOutcome={() => {
-            setSettingsTab("outcome");
-            setSettingsOpen(true);
-          }}
-          onBrief={
-            flowReady
-              ? () => {
-                  setSettingsTab("preparation");
-                  setSettingsOpen(true);
-                }
-              : undefined
-          }
-        />
-      ) : !recording ? (
-        <div className="recording-session-strip" aria-label="当前录音方案">
-          <strong>{brief.title || "本次会议"}</strong>
-          <span>{sourceLabel}</span>
-          <span>
-            {recordOnly
-              ? "仅录音与简记"
-              : `${engineName} · ${({ auto: "自动识别（中英）", zh: "中文", en: "英文", ja: "日语" } as const)[brief.source_language || "zh"]}`}
-          </span>
-          <span>
-            {postGoal === "minutes" && !recordOnly
-              ? "会后整理 AI 纪要"
-              : "原始录音独立保存"}
-          </span>
-          <button className="text-btn" onClick={() => setInspectorOpen(true)}>
-            运行详情
+              <option
+                value="macos-system"
+                disabled={!nativeCapability?.available}
+              >
+                线上会议 · 电脑声音
+              </option>
+              <option value="macos-both" disabled={!nativeCapability?.available}>
+                混合会议 · 电脑声音 + 麦克风
+              </option>
+              <option value="macos-microphone" disabled={!nativeCapability?.available || !nativeCapability.microphone_only_supported}>
+                现场会议 · 仅麦克风
+              </option>
+              {browserCaptureAllowed() && <option value="browser">现场会议 · 浏览器麦克风</option>}
+            </select>
+          </label>
+          <button
+            type="button"
+            className="preflight-pill-btn"
+            onClick={() => {
+              setSettingsTab("recording");
+              setSettingsOpen(true);
+            }}
+            title="点击配置识别引擎与语言"
+          >
+            🎙️ {engineName} · {({ auto: "中英自动", zh: "中文", en: "英文", ja: "日语" } as const)[brief.source_language || "auto"]}
+          </button>
+          <button
+            type="button"
+            className="preflight-pill-btn"
+            onClick={() => {
+              setSettingsTab("outcome");
+              setSettingsOpen(true);
+            }}
+            title="点击配置整理与交付目标"
+          >
+            📋 {completionMode === "none" ? "仅保存录音" : postGoal === "minutes" ? "文字稿＋AI 纪要" : "生成文字稿"}
+          </button>
+          {flowReady && (
+            <button
+              type="button"
+              className="preflight-pill-btn"
+              onClick={() => {
+                setSettingsTab("preparation");
+                setSettingsOpen(true);
+              }}
+              title="设置会议主题与参会人"
+            >
+              ✍️ {brief.title ? `主题: ${brief.title}` : "会议背景…"}
+            </button>
+          )}
+          <button
+            type="button"
+            className={`preflight-readiness-btn ${readinessOpen ? "active" : ""}`}
+            onClick={() => setReadinessOpen(!readinessOpen)}
+            title="查看存储、音轨与模型自检详情"
+          >
+            环境自检 {readinessOpen ? "▲" : "▼"}
           </button>
         </div>
-      ) : null}
-      {state === "idle" && (
+      )}
+      {state === "idle" && readinessOpen && (
         <RecordingReadiness
           nativeCapability={nativeCapability}
           source={captureSource}
@@ -493,6 +480,25 @@ export default function RecordingView({
             上次选择的原生音源暂不可用，改用浏览器麦克风后即可开始。
           </p>
         )}
+      {state !== "idle" && !recording && (
+        <div className="recording-session-strip" aria-label="当前录音方案">
+          <strong>{brief.title || "本次会议"}</strong>
+          <span>{sourceLabel}</span>
+          <span>
+            {recordOnly
+              ? "仅录音与简记"
+              : `${engineName} · ${({ auto: "自动识别（中英）", zh: "中文", en: "英文", ja: "日语" } as const)[brief.source_language || "zh"]}`}
+          </span>
+          <span>
+            {postGoal === "minutes" && !recordOnly
+              ? "会后整理 AI 纪要"
+              : "原始录音独立保存"}
+          </span>
+          <button className="text-btn" onClick={() => setInspectorOpen(true)}>
+            运行详情
+          </button>
+        </div>
+      )}
       {state === "finished" && (
         <RecordingCompletionPanel
           notes={notes}
@@ -528,10 +534,9 @@ export default function RecordingView({
           ))}
         </div>
       )}
-      {state !== "idle" && (
-        <div
-          className={`workbench-history-wrapper${state === "finished" ? (historyOpen ? " ended open" : " ended") : ""}`}
-        >
+      <div
+        className={`workbench-history-wrapper${state === "finished" ? (historyOpen ? " ended open" : " ended") : ""}`}
+      >
           {state === "finished" && (
             <button
               className="history-toggle"
@@ -623,19 +628,21 @@ export default function RecordingView({
                     canAddNote={recording}
                     partial={partialDraft}
                     emptyText={
-                      recording &&
-                      captureSource !== "browser" &&
-                      (captureHealth?.stalled || nativeUnavailable)
-                        ? "已保存的原音保留，当前采集状态异常；请查看底部详情。"
-                        : recordOnly
-                          ? "本次未开启实时识别，请关注下方音轨与文件状态。会后可配置模型生成文字稿。"
-                          : captureSource === "macos-both"
-                            ? "电脑声音和麦克风分别识别，确认后的文字会按时间出现。"
-                            : responsiveMode &&
-                                draftEngine === "qwen" &&
-                                streamEnabled
-                              ? "约 3 秒开始预览，后端根据识别速度调整更新节奏。"
-                              : undefined
+                      state === "idle"
+                        ? "就绪 · 点击右上角「开始录音」，实时文字与发言内容将在此跟随呈现"
+                        : recording &&
+                          captureSource !== "browser" &&
+                          (captureHealth?.stalled || nativeUnavailable)
+                          ? "已保存的原音保留，当前采集状态异常；请查看底部详情。"
+                          : recordOnly
+                            ? "本次未开启实时识别，请关注下方音轨与文件状态。会后可配置模型生成文字稿。"
+                            : captureSource === "macos-both"
+                              ? "电脑声音和麦克风分别识别，确认后的文字会按时间出现。"
+                              : responsiveMode &&
+                                  draftEngine === "qwen" &&
+                                  streamEnabled
+                                ? "约 3 秒开始预览，后端根据识别速度调整更新节奏。"
+                                : undefined
                     }
                     onAddNote={(draft) =>
                       setNotes((old) => [
@@ -857,7 +864,6 @@ export default function RecordingView({
             </>
           )}
         </div>
-      )}
       {recording && (
         <footer className="workbench-footer">
           <div ref={setSubtitleTarget} />
