@@ -1049,7 +1049,28 @@ export default function App({ browserWorkspace = false }: { browserWorkspace?: b
                   会议资料 / {meeting.created.slice(0, 10)}
                 </div>
                 <h1>{meeting.title}</h1>
-                <small className="muted">音频文件：{meeting.filename}</small>
+                <div className="meeting-meta-strip">
+                  <span>{meeting.created.slice(0, 16).replace("T", " ")}</span>
+                  {meeting.duration ? <span>· 时长 {clock(meeting.duration)}</span> : null}
+                  {meeting.revision ? (
+                    <span className="meeting-meta-pill">
+                      {transcriptionJob
+                        ? engineLabel(
+                            JSON.parse(transcriptionJob.config || "{}").engine,
+                          )
+                        : "已转写"}{" "}
+                      · v{meeting.revision}
+                    </span>
+                  ) : (
+                    <span className="meeting-meta-pill pending">待转写</span>
+                  )}
+                  <span
+                    className="meeting-filename-hint"
+                    title={`源音频文件：${meeting.filename}`}
+                  >
+                    源音频 ⓘ
+                  </span>
+                </div>
               </div>
               <button
                 className="text-btn danger"
@@ -1219,19 +1240,17 @@ export default function App({ browserWorkspace = false }: { browserWorkspace?: b
                 <option value="json">结构化 JSON</option>
               </select>
             </div>
-            {transcriptionJob && (
-              <div id="jobBox">
-                <div className="job-head">
-                  <span>
-                    {engineLabel(
-                      JSON.parse(transcriptionJob.config || "{}").engine,
-                    )}{" "}
-                    · {transcriptionJob.stage}
-                  </span>
-                  {(transcriptionRunning ||
-                    ["failed", "cancelled"].includes(
-                      transcriptionJob.state,
-                    )) && (
+            {transcriptionJob &&
+              (transcriptionRunning ||
+                ["failed", "cancelled"].includes(transcriptionJob.state)) && (
+                <div id="jobBox">
+                  <div className="job-head">
+                    <span>
+                      {engineLabel(
+                        JSON.parse(transcriptionJob.config || "{}").engine,
+                      )}{" "}
+                      · {transcriptionJob.stage}
+                    </span>
                     <button
                       className="text-btn"
                       onClick={() =>
@@ -1243,12 +1262,13 @@ export default function App({ browserWorkspace = false }: { browserWorkspace?: b
                     >
                       {transcriptionRunning ? "取消任务" : "从检查点重试"}
                     </button>
+                  </div>
+                  {transcriptionRunning && (
+                    <progress max={1} value={transcriptionJob.progress} />
                   )}
+                  <pre id="jobError">{transcriptionJob.error}</pre>
                 </div>
-                <progress max={1} value={transcriptionJob.progress} />
-                <pre id="jobError">{transcriptionJob.error}</pre>
-              </div>
-            )}
+              )}
             {candidateArtifacts.map((item) => (
               <section className="transcription-recovery" key={item.id}>
                 {item.provenance.experimental === true && (
