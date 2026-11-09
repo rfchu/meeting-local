@@ -267,8 +267,11 @@ export default function RecordingView({
       className={`recording-workbench${recording ? " focus-mode" : ""}`}
       ariaLabel="录音与会议简记工作台"
       onClose={() => {
+        if (recording) {
+          toast("录音正在进行中，请先暂停或结束录音");
+          return;
+        }
         if (
-          !recording &&
           !completing &&
           !["saving", "requesting"].includes(state) &&
           !failedChunksRef.current.length &&

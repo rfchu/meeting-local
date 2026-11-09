@@ -108,6 +108,7 @@ export function useRecordingController({
       .catch(() => {})
       .then(() => api.savePreparation(briefRef.current))
       .then(() => {
+        toast("已自动保存备会草稿");
         onClose();
       })
       .catch((e) => toast("会议准备未保存，窗口已保留：" + e.message));
