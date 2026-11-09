@@ -117,10 +117,10 @@
 }
 
 @media (min-width: 851px) {
-  .recording-workbench.focus-mode
+  .recording-workbench
     .recording-view-tabs
-    .workbench-notes-tab:not([aria-pressed="true"]) {
-    display: none;
+    .workbench-notes-tab {
+    display: none !important;
   }
   .recording-workbench.focus-mode
     .workbench-history-wrapper

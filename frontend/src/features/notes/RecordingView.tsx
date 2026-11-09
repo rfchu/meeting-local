@@ -305,31 +305,6 @@ export default function RecordingView({
               ⚑ 标记此刻
             </button>
           )}
-          {state === "idle" && !targetRecordingId && (
-            <button
-              className="primary"
-              disabled={
-                preflight?.storage.writable === false ||
-                (captureSource === "browser" &&
-                  (!browserCaptureAllowed() ||
-                    typeof MediaRecorder === "undefined" ||
-                    !navigator.mediaDevices?.getUserMedia)) ||
-                (captureSource !== "browser" &&
-                  (!nativeCapability?.available ||
-                    (captureSource === "macos-microphone" && !nativeCapability.microphone_only_supported) ||
-                    (!!nativeCapability.ownership &&
-                      nativeCapability.ownership.lease !== "free")))
-              }
-              onClick={() => void start()}
-            >
-              ●{" "}
-              {(preflight?.engines || engines).find(
-                (engine) => engine.id === draftEngine,
-              )?.ready
-                ? "开始录音"
-                : "仅录音与简记"}
-            </button>
-          )}
           {state === "requesting" && (
             <button disabled>
               {captureSource === "browser"
