@@ -18,7 +18,7 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate, AVCaptureAudioD
     let microphone: Bool
     let microphoneOnly: Bool
     var microphoneSession: AVCaptureSession?
-    var microphoneErrorObserver: NSObjectProtocol?
+    var microphoneObservers: [NSObjectProtocol] = []
     let incarnation: String
     let queue = DispatchQueue(label: "cn.seeknow.tingji.capture.audio")
     var stream: SCStream?
@@ -178,14 +178,30 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate, AVCaptureAudioD
         try prepareTracks(["microphone"])
         session.startRunning()
         guard session.isRunning else { throw microphoneError("麦克风采集未启动") }
-        microphoneErrorObserver = NotificationCenter.default.addObserver(
-            forName: AVCaptureSession.runtimeErrorNotification, object: session, queue: nil
+        let notificationNames = [
+            AVCaptureSession.runtimeErrorNotification,
+            AVCaptureSession.wasInterruptedNotification,
+        ]
+        for name in notificationNames {
+            let observer = NotificationCenter.default.addObserver(
+                forName: name, object: session, queue: nil
+            ) { [weak self] _ in
+                self?.queue.async { [weak self] in
+                    self?.diagnostics.failureStage = "capture_stream"
+                    self?.fail("麦克风采集中断，请检查输入设备")
+                }
+            }
+            microphoneObservers.append(observer)
+        }
+        let deviceObserver = NotificationCenter.default.addObserver(
+            forName: AVCaptureDevice.wasDisconnectedNotification, object: device, queue: nil
         ) { [weak self] _ in
             self?.queue.async { [weak self] in
-                self?.diagnostics.failureStage = "capture_stream"
-                self?.fail("麦克风采集中断，请检查输入设备")
+                self?.diagnostics.failureStage = "capture_device"
+                self?.fail("麦克风设备已断开连接")
             }
         }
+        microphoneObservers.append(deviceObserver)
     }
 
     private func microphoneError(_ message: String) -> NSError {
@@ -304,7 +320,10 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate, AVCaptureAudioD
         state = "recording"; report()
     } }
     func finish(state finalState: String = "stopped") async {
-        if let microphoneErrorObserver { NotificationCenter.default.removeObserver(microphoneErrorObserver) }
+        for observer in microphoneObservers {
+            NotificationCenter.default.removeObserver(observer)
+        }
+        microphoneObservers.removeAll()
         microphoneSession?.stopRunning()
         try? await stream?.stopCapture()
         queue.sync {

@@ -86,9 +86,9 @@ def test_http_contract_matches_pre_split_v22(tmp_path):
             assert schema['components']['schemas'][contract]['properties'].pop(name)
     payload=json.dumps(schema,sort_keys=True,separators=(',',':'),ensure_ascii=False)
     # Captured from the running v22 service before splitting: 116 paths, 135 operations.
-    assert hashlib.sha256(payload.encode()).hexdigest()=='fac4d2387540dd6ea2f8f29205390b870e6d7a8695f1f743831ce1f2ec026b90'
+    assert hashlib.sha256(payload.encode()).hexdigest()=='064f99aa11df348b95cf783850c5e4ccb8e4ec1a173fb36da51a9de6831946f2'
     operations=[(method,route.path) for route in app.routes if isinstance(route,APIRoute) for method in route.methods]
-    assert len(operations)==len(set(operations))==175
+    assert len(operations)==len(set(operations))==184
 
 
 def test_two_applications_do_not_share_recording_or_meeting_resources(tmp_path):

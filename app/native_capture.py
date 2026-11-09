@@ -14,7 +14,7 @@ HELPER=Path(os.getenv('TINGJI_CAPTURE_APP',str(Path.home()/'Library/Caches/cn.se
 def native_tracks(session):
     if session.get('microphone_only'):
         return ('microphone',)
-    return ('system','microphone') if session.get('include_microphone') else ('system',)
+    return ('system','microphone') if session.get('include_microphone',True) else ('system',)
 
 
 class NativeCapture:
@@ -383,7 +383,7 @@ class NativeCapture:
             if blocks_publication(self.ownership(),rid):raise ValueError('采集所有权尚未释放，音轨保留，请稍后重试整理')
             session=self.recordings.read(rid)
             if session['state']=='completed':raise ValueError('此录音已完成并被删除，不能重新恢复')
-            names=('microphone',) if session.get('microphone_only') else ('system','microphone')
+            names=native_tracks(session)
             sources=[folder/f'{name}.pcm' for name in names]
             sources=[path for path in sources if path.is_file() and path.stat().st_size>0]
             if not sources:raise ValueError(status.get('error') or '尚未采集到音频，请检查所选音源和录音权限')
