@@ -99,7 +99,19 @@ export function useRecordingController({
   minutesModel,
   onMinutesModel,
 }: RecordingDialogProps) {
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
   const closeWithPreparation = () => {
+    if (stateRef.current === "requesting") {
+      toast("正在启动录音通道，请稍候…");
+      return;
+    }
     if (!flowReady || stateRef.current !== "idle" || !briefReady) {
       onClose();
       return;
@@ -1309,6 +1321,11 @@ export function useRecordingController({
           keepAwake,
           captureSource === "macos-microphone",
         );
+        if (!mountedRef.current) {
+          void api.recordingKeepAwake(session.id, false).catch(() => {});
+          await api.nativeCommand(session.id, "stop").catch(() => {});
+          return;
+        }
         session.brief = briefRef.current;
         sessionRef.current = session;
         setNativeSessionId(session.id);
@@ -1350,6 +1367,10 @@ export function useRecordingController({
           autoGainControl: true,
         },
       });
+      if (!mountedRef.current) {
+        stream.getTracks().forEach((t) => t.stop());
+        return;
+      }
       streamRef.current = stream;
       const mimeType = supportedMime();
       const recorder = new MediaRecorder(stream, {
@@ -1359,6 +1380,10 @@ export function useRecordingController({
       const session = await api.createRecording(
         recorder.mimeType || mimeType || "audio/webm",
       );
+      if (!mountedRef.current) {
+        stream.getTracks().forEach((t) => t.stop());
+        return;
+      }
       await bufferRecording(session);
       session.brief = briefRef.current;
       sessionRef.current = session;

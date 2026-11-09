@@ -215,12 +215,73 @@ export default function RecordingView({
         id="recordingWorkbench"
         className="recording-workbench setup-mode"
         ariaLabel="会议准备与预设"
-        onClose={closeWithPreparation}
+        onClose={() => {
+          if (state === "requesting") {
+            toast("正在启动录音通道，请稍候…");
+            return;
+          }
+          closeWithPreparation();
+        }}
       >
         {termsOpen && (
           <TermDialog
             scope={sessionRef.current?.id || "library"}
             onClose={() => setTermsOpen(false)}
+          />
+        )}
+        {settingsOpen && (
+          <RecordingSettingsDialog
+            autoProcess={autoProcess}
+            brief={brief}
+            briefReady={briefReady}
+            briefSaved={briefSaved}
+            captureSource={captureSource}
+            echoMode={echoMode}
+            setEchoMode={setEchoMode}
+            checkCapture={checkCapture}
+            checkingCapture={checkingCapture}
+            completionMode={completionMode}
+            contextEnabled={contextEnabled}
+            controlModel={controlModel}
+            correctionEnabled={correctionEnabled}
+            correctionProfileId={correctionProfileId}
+            draftEngine={draftEngine}
+            engineLabel={engineLabel}
+            engines={engines}
+            environment={environment}
+            flowReady={flowReady}
+            meetings={meetings}
+            minutesModel={minutesModel}
+            modelActionBusy={modelActionBusy}
+            modelStatus={modelStatus}
+            nativeCapability={nativeCapability}
+            onClose={onClose}
+            onMinutesModel={onMinutesModel}
+            onModels={onModels}
+            postGoal={postGoal}
+            prefixEnabled={prefixEnabled}
+            recognitionTerms={recognitionTerms}
+            responsiveMode={responsiveMode}
+            setAutoProcess={setAutoProcess}
+            setBrief={setBrief}
+            setCaptureSource={setCaptureSource}
+            setCompletionMode={setCompletionMode}
+            setContextEnabled={setContextEnabled}
+            setCorrectionEnabled={setCorrectionEnabled}
+            setCorrectionProfileId={setCorrectionProfileId}
+            setDraftEngine={setDraftEngine}
+            setPostGoal={setPostGoal}
+            setPrefixEnabled={setPrefixEnabled}
+            setRecognitionTerms={setRecognitionTerms}
+            setResponsiveMode={setResponsiveMode}
+            setSettingsOpen={setSettingsOpen}
+            setSettingsTab={setSettingsTab}
+            setSilenceReminder={setSilenceReminder}
+            setStreamEnabled={setStreamEnabled}
+            settingsTab={settingsTab}
+            silenceReminder={silenceReminder}
+            state={state}
+            streamEnabled={streamEnabled}
           />
         )}
         <RecordingSetupView
@@ -253,7 +314,20 @@ export default function RecordingView({
           attachRunning={attachRunning}
           requesting={state === "requesting"}
           onStart={() => void start()}
-          onClose={closeWithPreparation}
+          onClose={() => {
+            if (state === "requesting") {
+              toast("正在启动录音通道，请稍候…");
+              return;
+            }
+            closeWithPreparation();
+          }}
+          onOpenSettings={() => {
+            setSettingsTab("recording");
+            setSettingsOpen(true);
+          }}
+          echoMode={echoMode}
+          environment={environment}
+          minutesModel={minutesModel}
         />
       </Modal>
     );

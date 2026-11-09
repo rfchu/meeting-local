@@ -5416,6 +5416,47 @@ button.note-options-trigger {
   flex-shrink: 0;
 }
 
+/* 高级音频设置条 */
+.setup-source-advanced-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 10px;
+  background: #f1f5f9;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  margin-top: 8px;
+  margin-bottom: 12px;
+}
+
+.setup-source-advanced-info {
+  font-size: 11.5px;
+  color: #475569;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.btn-setup-advanced-audio {
+  border: 1px solid #cbd5e1;
+  background: #ffffff;
+  color: #334155;
+  font-size: 11px;
+  font-weight: 500;
+  padding: 3px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.15s ease;
+}
+
+.btn-setup-advanced-audio:hover {
+  background: #f8fafc;
+  border-color: #94a3b8;
+  color: #0f172a;
+}
+
 /* 实时试音电平条 */
 .setup-meters-strip {
   background: #f8fafc;
@@ -5431,15 +5472,51 @@ button.note-options-trigger {
   margin-bottom: 8px;
 }
 
-.setup-meter-header span {
+.setup-meter-header-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.setup-meter-header-info span {
   font-size: 12px;
   font-weight: 600;
   color: #334155;
 }
 
-.setup-meter-header small {
+.setup-meter-header-info small {
   font-size: 11px;
   color: #94a3b8;
+}
+
+.setup-meter-header-actions {
+  display: flex;
+  align-items: center;
+}
+
+.btn-mic-test {
+  border: 1px solid #cbd5e1;
+  background: #ffffff;
+  color: #2563eb;
+  font-size: 11px;
+  font-weight: 500;
+  padding: 3px 9px;
+  border-radius: 5px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.15s ease;
+}
+
+.btn-mic-test:hover {
+  background: #eff6ff;
+  border-color: #93c5fd;
+}
+
+.btn-mic-test.active {
+  background: #fef2f2;
+  border-color: #fca5a5;
+  color: #dc2626;
+  font-weight: 600;
 }
 
 .setup-meter-tracks {
@@ -5483,7 +5560,7 @@ button.note-options-trigger {
 
 .meter-val-text {
   font-size: 10.5px;
-  width: 38px;
+  width: 44px;
   text-align: right;
   color: #94a3b8;
   flex-shrink: 0;
@@ -5492,6 +5569,15 @@ button.note-options-trigger {
 .meter-val-text.active {
   color: #10b981;
   font-weight: 600;
+}
+
+.meter-val-text.untested {
+  color: #94a3b8;
+}
+
+.meter-val-text.muted {
+  color: #f59e0b;
+  font-weight: 500;
 }
 
 /* 个人术语库组件 */
@@ -5688,6 +5774,15 @@ button.note-options-trigger {
 .setup-privacy-badge {
   color: #64748b;
   font-size: 11px;
+}
+
+.setup-privacy-badge.cloud-notice {
+  background: #f0fdf4;
+  color: #166534;
+  border: 1px solid #bbf7d0;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-weight: 500;
 }
 
 .setup-footer-right {

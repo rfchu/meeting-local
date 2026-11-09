@@ -153,3 +153,50 @@ def test_interview_roles_are_optional_and_current_roles_reject_wrong_speaker(set
  refreshed=c.post(f'/api/meetings/{mid}/minutes/compose',json=body)
  assert refreshed.status_code==201
  assert refreshed.json()['artifact']['payload']['interview_context']['speaker_roles'] is None
+
+
+def test_interview_strict_containment_and_actual_segment_relocation():
+    custom_segments = [
+        {'id': 's1', 'speaker': '面试官', 'text': '你昨天主要完成了什么任务？'},
+        {'id': 's2', 'speaker': '候选人', 'text': '昨天安排红色清单。'},
+    ]
+    from app.interview import InterviewSpeakerRoles, InterviewQA, Evidence
+    roles = InterviewSpeakerRoles(revision=1, candidate='候选人', interviewers=['面试官']).segment_roles(custom_segments)
+
+    # 1. Hallucinated appended content must fail
+    fabricated = InterviewResult(
+        qa=[InterviewQA(
+            question='任务',
+            question_evidence=[Evidence(segment_id='s1', quote='你昨天主要完成了什么任务')],
+            content='安排红色清单',
+            evidence=[Evidence(segment_id='s2', quote='昨天安排红色清单并确认候选人承担项目')]
+        )]
+    )
+    with pytest.raises(ValueError, match='原文摘录不匹配'):
+        fabricated.validate_sources(custom_segments, roles)
+
+    # 2. Adjacent match should relocate segment_id and check actual speaker role
+    # Misattributed to s1 (interviewer), but quote is from s2 (candidate)
+    misattributed = InterviewResult(
+        qa=[InterviewQA(
+            question='任务',
+            question_evidence=[Evidence(segment_id='s1', quote='你昨天主要完成了什么任务')],
+            content='安排红色清单',
+            evidence=[Evidence(segment_id='s1', quote='昨天安排红色清单')]
+        )]
+    )
+    # Validates and segment_id should be updated to s2
+    misattributed.validate_sources(custom_segments, roles)
+    assert misattributed.qa[0].evidence[0].segment_id == 's2'
+
+    # 3. Misattributed to s2 (candidate), but quote is from s1 (interviewer)
+    wrong_speaker = InterviewResult(
+        qa=[InterviewQA(
+            question='任务',
+            question_evidence=[Evidence(segment_id='s1', quote='你昨天主要完成了什么任务')],
+            content='回答',
+            evidence=[Evidence(segment_id='s2', quote='你昨天主要完成了什么任务')]
+        )]
+    )
+    with pytest.raises(ValueError, match='非候选人'):
+        wrong_speaker.validate_sources(custom_segments, roles)
