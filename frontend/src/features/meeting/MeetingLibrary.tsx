@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import Modal from "../../components/Modal";
 import { api } from "../../api";
+import { clock } from "../../utils";
 import type { MeetingOrganization, MeetingSummary } from "../../types";
 
 const kinds = { project: "项目", customer: "客户", series: "会议系列" };
@@ -9,6 +10,44 @@ const groupKey = (item: MeetingSummary) =>
   item.library?.group_name
     ? JSON.stringify([item.library.group_kind, item.library.group_name])
     : "";
+
+function formatCreatedDate(isoString?: string) {
+  if (!isoString) return "—";
+  try {
+    return isoString.replace("T", " ").slice(0, 16);
+  } catch {
+    return isoString;
+  }
+}
+
+function getMeetingStatusBadge(item: MeetingSummary) {
+  if (
+    item.job &&
+    (item.job.state === "running" || item.job.state === "queued")
+  ) {
+    return <span className="library-badge badge-running">转写中</span>;
+  }
+  if (item.revision > 0) {
+    return <span className="library-badge badge-success">已转写</span>;
+  }
+  return <span className="library-badge badge-pending">待转写</span>;
+}
+
+function getCategoryTag(item: MeetingSummary) {
+  if (!item.library?.group_name) {
+    return <span className="library-tag-empty">—</span>;
+  }
+  const kindLabel = kinds[item.library.group_kind] || "系列";
+  return (
+    <span
+      className="library-tag"
+      title={`${kindLabel}: ${item.library.group_name}`}
+    >
+      <span className="tag-kind">{kindLabel}:</span>
+      <span className="tag-name">{item.library.group_name}</span>
+    </span>
+  );
+}
 
 export default function MeetingLibrary({
   meetings,
@@ -151,157 +190,355 @@ export default function MeetingLibrary({
     <Modal
       ariaLabel="会议资料库"
       onClose={onClose}
-      className="handoff-sources-dialog"
+      className="meeting-library-dialog"
     >
-      <div className="overview-heading">
-        <h2>会议资料库</h2>
-        <button onClick={onClose}>关闭</button>
-      </div>
-      <label>
-        归类筛选{" "}
-        <select
-          value={filter}
-          disabled={busy}
-          onChange={(event) => {
-            setFilter(event.target.value);
-            setSelected([]);
-          }}
+      <div className="meeting-library-header">
+        <h2>
+          <span>📁 会议资料库</span>
+          <span className="meeting-library-header-meta">
+            共 {visible.length} 场
+          </span>
+        </h2>
+        <button
+          className="text-btn"
+          style={{ fontSize: 16, cursor: "pointer" }}
+          onClick={onClose}
+          aria-label="关闭"
         >
-          <option value="">全部归类</option>
-          {groups.map(([id, label]) => (
-            <option key={id} value={id}>
-              {label}
-            </option>
-          ))}
-        </select>
-      </label>
-      <label>
-        <input
-          type="checkbox"
-          checked={archived}
-          disabled={busy}
-          onChange={(event) => {
-            setArchived(event.target.checked);
-            setSelected([]);
-          }}
-        />{" "}
-        查看归档
-      </label>
-      {filter && (
-        <section>
-          <h3>最近会议与未完成事项</h3>
-          {members[0] && (
-            <button onClick={() => onOpen(members[0].id)}>
-              打开最近会议 · {members[0].title}
-            </button>
-          )}
-          {members[0] && (
-            <button disabled={busy} onClick={() => void prepare(members[0].id)}>
-              关联最近会议并准备下一场
-            </button>
-          )}
-          {followups.isPending && <p>正在读取跟进事项…</p>}
-          {followups.isError && (
-            <button onClick={() => void followups.refetch()}>
-              重试读取跟进事项
-            </button>
-          )}
-          {tasks?.length === 0 && <p>暂无未完成事项</p>}
-          {tasks?.map((task) => (
-            <p key={task.id}>
+          ✕
+        </button>
+      </div>
+
+      <div className="meeting-library-body">
+        <div className="library-top-bar">
+          <div className="library-filter-group">
+            <label
+              style={{
+                fontSize: 13,
+                fontWeight: 500,
+                color: "#475569",
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+              }}
+            >
+              归类筛选:
+              <select
+                value={filter}
+                disabled={busy}
+                onChange={(event) => {
+                  setFilter(event.target.value);
+                  setSelected([]);
+                }}
+                style={{ padding: "4px 8px", borderRadius: 6, fontSize: 13 }}
+              >
+                <option value="">全部归类</option>
+                {groups.map(([id, label]) => (
+                  <option key={id} value={id}>
+                    {label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label
+              style={{
+                fontSize: 13,
+                color: "#475569",
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+                cursor: "pointer",
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={archived}
+                disabled={busy}
+                onChange={(event) => {
+                  setArchived(event.target.checked);
+                  setSelected([]);
+                }}
+              />
+              查看归档
+            </label>
+          </div>
+        </div>
+
+        {filter && (
+          <section className="library-group-card">
+            <div className="library-group-card-header">
+              <span>📌 归类专属跟进与关联</span>
+              <div className="library-group-card-actions">
+                {members[0] && (
+                  <button
+                    className="library-action-btn"
+                    onClick={() => onOpen(members[0].id)}
+                  >
+                    打开最近会议 · {members[0].title}
+                  </button>
+                )}
+                {members[0] && (
+                  <button
+                    className="library-action-btn"
+                    disabled={busy}
+                    onClick={() => void prepare(members[0].id)}
+                  >
+                    关联最近会议并准备下一场
+                  </button>
+                )}
+              </div>
+            </div>
+            {followups.isPending && (
+              <p style={{ margin: 0, color: "#64748b", fontSize: 12 }}>
+                正在读取跟进事项…
+              </p>
+            )}
+            {followups.isError && (
               <button
                 className="text-btn"
-                onClick={() =>
-                  onOpen(
-                    task.meeting_id,
-                    task.stale ? undefined : task.source_segment_ids?.[0],
-                  )
-                }
+                onClick={() => void followups.refetch()}
               >
-                {task.content} · {task.meeting_title}
-                {task.stale ? " · 来源待核对" : ""}
+                重试读取跟进事项
               </button>
-            </p>
-          ))}
-        </section>
-      )}
-      <fieldset disabled={busy}>
-        <legend>已选 {selected.length} 场</legend>
-        <select
-          aria-label="归类类型"
-          value={kind}
-          onChange={(event) => setKind(event.target.value as typeof kind)}
-        >
-          {Object.entries(kinds).map(([id, label]) => (
-            <option key={id} value={id}>
-              {label}
-            </option>
-          ))}
-        </select>
-        <input
-          aria-label="归类名称"
-          placeholder="输入归类名称"
-          value={group}
-          maxLength={100}
-          onChange={(event) => setGroup(event.target.value)}
-        />
-        <button
-          disabled={!selected.length || !group.trim()}
-          onClick={() => void update({ group })}
-        >
-          设置归类
-        </button>
-        <button
-          disabled={!selected.length}
-          onClick={() => void update({ group: "" })}
-        >
-          清除归类
-        </button>
-        <button
-          disabled={!selected.length}
-          onClick={() => void update({ archived: !archived })}
-        >
-          {archived ? "恢复到资料库" : "归档所选"}
-        </button>
-        <button
-          type="button"
-          className="danger-btn"
-          disabled={!selected.length}
-          onClick={() => setDeleteConfirmOpen(true)}
-        >
-          删除所选
-        </button>
-      </fieldset>
-      {message && <p role="status">{message}</p>}
-      {!visible.length && <p>此视图没有会议</p>}
-      {visible.map((item) => (
-        <div className="management-row" key={item.id}>
-          <label>
-            <input
-              type="checkbox"
-              aria-label={`选择 ${item.title}`}
-              disabled={
-                busy || (selected.length >= 100 && !selected.includes(item.id))
-              }
-              checked={selected.includes(item.id)}
-              onChange={(event) =>
-                setSelected(
-                  event.target.checked
-                    ? [...selected, item.id]
-                    : selected.filter((id) => id !== item.id),
-                )
-              }
-            />
-          </label>
-          <button className="text-btn" onClick={() => onOpen(item.id)}>
-            {item.title}
-          </button>
-          <span>
-            {item.created.slice(0, 10)}
-            {item.library?.group_name ? ` · ${item.library.group_name}` : ""}
-          </span>
+            )}
+            {tasks?.length === 0 && (
+              <p style={{ margin: 0, color: "#64748b", fontSize: 12 }}>
+                暂无未完成事项
+              </p>
+            )}
+            {tasks && tasks.length > 0 && (
+              <div
+                style={{
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 4,
+                  fontSize: 12.5,
+                }}
+              >
+                {tasks.map((task) => (
+                  <div key={task.id}>
+                    <button
+                      className="text-btn"
+                      style={{ textAlign: "left", padding: "2px 0" }}
+                      onClick={() =>
+                        onOpen(
+                          task.meeting_id,
+                          task.stale ? undefined : task.source_segment_ids?.[0],
+                        )
+                      }
+                    >
+                      • {task.content}{" "}
+                      <span style={{ color: "#64748b" }}>
+                        ({task.meeting_title}
+                        {task.stale ? " · 来源待核对" : ""})
+                      </span>
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
+        )}
+
+        {selected.length > 0 && (
+          <div className="library-batch-bar">
+            <div className="library-batch-left">
+              <span className="library-batch-count">
+                已选中 {selected.length} 场
+              </span>
+              <button
+                type="button"
+                className="text-btn"
+                style={{ fontSize: 12, padding: "2px 6px" }}
+                onClick={() => setSelected([])}
+              >
+                取消勾选
+              </button>
+            </div>
+            <div className="library-batch-right">
+              <select
+                aria-label="归类类型"
+                value={kind}
+                disabled={busy}
+                onChange={(event) => setKind(event.target.value as typeof kind)}
+                style={{ padding: "4px 8px", borderRadius: 6, fontSize: 12 }}
+              >
+                {Object.entries(kinds).map(([id, label]) => (
+                  <option key={id} value={id}>
+                    {label}
+                  </option>
+                ))}
+              </select>
+              <input
+                aria-label="归类名称"
+                placeholder="输入归类名称"
+                value={group}
+                maxLength={100}
+                disabled={busy}
+                onChange={(event) => setGroup(event.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && group.trim()) {
+                    void update({ group });
+                  }
+                }}
+                style={{
+                  padding: "4px 8px",
+                  borderRadius: 6,
+                  fontSize: 12,
+                  width: 130,
+                }}
+              />
+              <button
+                disabled={busy || !group.trim()}
+                onClick={() => void update({ group })}
+              >
+                设置归类
+              </button>
+              <button
+                disabled={busy}
+                onClick={() => void update({ group: "" })}
+              >
+                清除归类
+              </button>
+              <button
+                disabled={busy}
+                onClick={() => void update({ archived: !archived })}
+              >
+                {archived ? "恢复到资料库" : "归档所选"}
+              </button>
+              <button
+                type="button"
+                className="danger-btn"
+                disabled={busy}
+                onClick={() => setDeleteConfirmOpen(true)}
+              >
+                删除所选 ({selected.length})
+              </button>
+            </div>
+          </div>
+        )}
+
+        {message && (
+          <div
+            role="status"
+            style={{
+              margin: "8px 24px 0",
+              padding: "8px 14px",
+              borderRadius: 6,
+              background: message.includes("失败") ? "#fef2f2" : "#f0fdf4",
+              color: message.includes("失败") ? "#991b1b" : "#166534",
+              border: `1px solid ${message.includes("失败") ? "#fecaca" : "#bbf7d0"}`,
+              fontSize: 13,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+            }}
+          >
+            <span>{message}</span>
+            <button
+              type="button"
+              className="text-btn"
+              style={{ fontSize: 12, padding: "0 4px" }}
+              onClick={() => setMessage("")}
+            >
+              ✕
+            </button>
+          </div>
+        )}
+
+        <div className="library-table-container">
+          {!visible.length ? (
+            <div className="library-empty-state">
+              <p>📭 当前视图下没有会议</p>
+            </div>
+          ) : (
+            <table className="library-table">
+              <thead>
+                <tr>
+                  <th className="library-col-checkbox">
+                    <input
+                      type="checkbox"
+                      aria-label="全选当前列表"
+                      checked={allSelected}
+                      onChange={toggleSelectAll}
+                    />
+                  </th>
+                  <th className="library-col-title">会议名称</th>
+                  <th className="library-col-tag">系列 / 归类</th>
+                  <th className="library-col-duration">时长</th>
+                  <th className="library-col-status">状态</th>
+                  <th className="library-col-date">创建时间</th>
+                  <th className="library-col-actions">操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                {visible.map((item) => {
+                  const isChecked = selected.includes(item.id);
+                  return (
+                    <tr
+                      key={item.id}
+                      className={isChecked ? "selected" : undefined}
+                    >
+                      <td className="library-col-checkbox">
+                        <input
+                          type="checkbox"
+                          aria-label={`选择 ${item.title}`}
+                          checked={isChecked}
+                          disabled={
+                            busy ||
+                            (selected.length >= 100 &&
+                              !selected.includes(item.id))
+                          }
+                          onChange={(e) => {
+                            if (e.target.checked) {
+                              setSelected([...selected, item.id]);
+                            } else {
+                              setSelected(
+                                selected.filter((id) => id !== item.id),
+                              );
+                            }
+                          }}
+                        />
+                      </td>
+                      <td className="library-col-title">
+                        <button
+                          type="button"
+                          className="library-title-btn"
+                          onClick={() => onOpen(item.id)}
+                          title={`打开会议: ${item.title}`}
+                        >
+                          {item.title}
+                        </button>
+                      </td>
+                      <td className="library-col-tag">
+                        {getCategoryTag(item)}
+                      </td>
+                      <td className="library-col-duration">
+                        {item.duration > 0 ? clock(item.duration) : "—"}
+                      </td>
+                      <td className="library-col-status">
+                        {getMeetingStatusBadge(item)}
+                      </td>
+                      <td className="library-col-date">
+                        {formatCreatedDate(item.created)}
+                      </td>
+                      <td className="library-col-actions">
+                        <button
+                          type="button"
+                          className="library-action-btn"
+                          onClick={() => onOpen(item.id)}
+                        >
+                          打开 ↗
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          )}
         </div>
-      ))}
+      </div>
       {deleteConfirmOpen && (
         <Modal
           ariaLabel="确认批量删除"
