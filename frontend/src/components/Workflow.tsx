@@ -53,6 +53,7 @@ const hints: Record<ReviewStep, string> = {
 
 export default function Workflow(props: Props) {
   const [sourcesOpen, setSourcesOpen] = useState(false);
+  const [reviewOpen, setReviewOpen] = useState(false);
   const {
     meeting,
     transcriptDirty,
@@ -256,7 +257,7 @@ export default function Workflow(props: Props) {
       {label !== "核对录音" && qualityNotice}
       {meeting.recording_quality?.recorded &&
         (liveEngine === "whisper" || liveEngine === "qwen") && (
-          <>
+          <div className="workflow-coverage-bar">
             <button
               className="text-btn"
               aria-expanded={coverageMeeting === meeting.id}
@@ -271,17 +272,39 @@ export default function Workflow(props: Props) {
             {coverageMeeting === meeting.id && (
               <RecordingReceipt id={meeting.id} engine={liveEngine} />
             )}
-          </>
+          </div>
         )}
-      <div className="workflow-next">
-        <span>{hint}</span>
-        <button
-          className="primary"
-          disabled={!!busy && !guidance}
-          onClick={action}
-        >
-          {label}
-        </button>
+      <div className="workflow-bar workflow-next">
+        <div className="workflow-lead">
+          <span className="workflow-icon" aria-hidden="true">
+            💡
+          </span>
+          <span className="workflow-hint">{hint}</span>
+        </div>
+        <div className="workflow-actions">
+          <button
+            type="button"
+            className={`workflow-review-toggle ${reviewOpen ? "active" : ""}`}
+            aria-expanded={reviewOpen}
+            onClick={() => setReviewOpen(!reviewOpen)}
+            title="查看交接与人工核对清单"
+          >
+            本次交接与核对 · {progress.requiredComplete}/{progress.requiredTotal}
+            {progress.requiredStale
+              ? ` · ${progress.requiredStale} 项待复核`
+              : ""}
+            <span className="workflow-chevron" aria-hidden="true">
+              {reviewOpen ? " ▴" : " ▾"}
+            </span>
+          </button>
+          <button
+            className="primary"
+            disabled={!!busy && !guidance}
+            onClick={action}
+          >
+            {label}
+          </button>
+        </div>
       </div>
       {sourcesOpen && (
         <HandoffSourcesDialog
@@ -300,17 +323,12 @@ export default function Workflow(props: Props) {
           }}
         />
       )}
-      <details className="postmeeting-review">
-        <summary>
-          本次交接与核对 · {progress.requiredComplete}/{progress.requiredTotal}
-          {progress.requiredStale
-            ? ` · ${progress.requiredStale} 项待复核`
-            : ""}
-        </summary>
-        <p>
-          人工核对记录只表示你的确认，不等同于 AI
-          已验证；不限制独立生成分析或纪要。个人与暂缓记录不阻碍纪要交付。
-        </p>
+      {reviewOpen && (
+        <div className="workflow-review-drawer postmeeting-review">
+          <p>
+            人工核对记录只表示你的确认，不等同于 AI
+            已验证；不限制独立生成分析或纪要。个人与暂缓记录不阻碍纪要交付。
+          </p>
         {handoff && (
           <div className="handoff-stages" aria-label="会后交接状态">
             {handoff.stages.map((stage) => (
@@ -434,7 +452,8 @@ export default function Workflow(props: Props) {
             </article>
           ))}
         </div>
-      </details>
+      </div>
+      )}
     </section>
   );
 }

@@ -1580,11 +1580,11 @@ dialog code {
   width: 100%;
 }
 .workflow {
-  margin: 0 0 22px;
-  background: #fff;
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  padding: 16px 20px;
+  margin: 0 0 16px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  padding: 8px 14px;
 }
 .workflow-steps {
   display: grid;
@@ -1620,21 +1620,87 @@ dialog code {
   background: #fff5dc;
   color: #8b6617;
 }
+.workflow-bar,
 .workflow-next {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  margin-top: 12px;
-  padding-top: 12px;
-  border-top: 1px solid var(--line);
-  font-size: 12px;
-  color: #687584;
+  min-height: 34px;
 }
-.workflow-next button {
-  padding: 7px 11px;
-  font-size: 11px;
+.workflow-lead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+}
+.workflow-icon {
+  font-size: 14px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+.workflow-hint {
+  font-size: 13px;
+  color: #334155;
+  font-weight: 500;
+  line-height: 1.4;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
+}
+.workflow-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+.workflow-review-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 10px;
+  font-size: 12px;
+  color: #64748b;
+  background: rgba(0, 0, 0, 0.03);
+  border: 1px solid transparent;
+  border-radius: 6px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.15s ease;
+}
+.workflow-review-toggle:hover {
+  color: #1e293b;
+  background: rgba(0, 0, 0, 0.06);
+  border-color: #cbd5e1;
+}
+.workflow-review-toggle.active {
+  color: #2563eb;
+  background: #eff6ff;
+  border-color: #bfdbfe;
+  font-weight: 500;
+}
+.workflow-chevron {
+  font-size: 10px;
+  opacity: 0.7;
+  margin-left: 2px;
+}
+.workflow-actions button.primary {
+  padding: 6px 14px;
+  font-size: 12px;
+  font-weight: 500;
+  border-radius: 6px;
+  white-space: nowrap;
+}
+.workflow-review-drawer {
+  margin-top: 10px;
+  padding-top: 12px;
+  border-top: 1px solid #e2e8f0;
+}
+.workflow-coverage-bar {
+  margin-bottom: 6px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid #e2e8f0;
 }
 #speakerDialog {
   width: min(560px, 94vw);
@@ -1698,12 +1764,21 @@ dialog code {
   .workflow-steps {
     grid-template-columns: 1fr 1fr;
   }
+  .workflow-bar,
   .workflow-next {
-    align-items: flex-start;
+    align-items: stretch;
     flex-direction: column;
+    gap: 10px;
   }
-  .workflow-next button {
+  .workflow-hint {
+    white-space: normal;
+  }
+  .workflow-actions {
     width: 100%;
+    justify-content: space-between;
+  }
+  .workflow-actions button.primary {
+    flex: 1;
   }
   #speakerForm {
     grid-template-columns: 1fr;
