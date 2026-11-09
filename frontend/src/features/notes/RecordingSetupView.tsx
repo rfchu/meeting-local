@@ -33,6 +33,7 @@ export type RecordingSetupViewProps = Pick<
   | "runningSessions"
   | "attachRunning"
 > & {
+  requesting?: boolean;
   onStart: () => void;
   onClose: () => void;
 };
@@ -62,6 +63,7 @@ export default function RecordingSetupView({
   recognitionTerms = "",
   runningSessions = [],
   attachRunning,
+  requesting = false,
   onStart,
   onClose,
 }: RecordingSetupViewProps) {
@@ -93,7 +95,7 @@ export default function RecordingSetupView({
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
-        if (!startDisabled) {
+        if (!startDisabled && !requesting) {
           event.preventDefault();
           onStart();
         }
@@ -101,7 +103,7 @@ export default function RecordingSetupView({
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [startDisabled, onStart]);
+  }, [startDisabled, requesting, onStart]);
 
   const tracks = [
     ...(captureSource !== "browser" && captureSource !== "macos-microphone"
@@ -120,29 +122,34 @@ export default function RecordingSetupView({
           <button
             type="button"
             className="ghost-back-btn"
+            disabled={requesting}
             onClick={onClose}
-            title="自动保存备会草稿并返回"
+            title={requesting ? "正在启动录音，暂不可返回" : "自动保存备会草稿并返回"}
           >
             ← 返回
           </button>
           <div className="setup-title-group">
             <h2>会前准备与就绪舱</h2>
             <span className="setup-status-pill">
-              {briefSaved ? "✓ 备会内容已保存到本机" : "正在保存草稿…"}
+              {requesting
+                ? "正在启动录音通道…"
+                : briefSaved
+                  ? "✓ 备会内容已保存到本机"
+                  : "正在保存草稿…"}
             </span>
           </div>
         </div>
         <div className="setup-topbar-right">
           <button
             type="button"
-            className="setup-start-btn"
-            disabled={startDisabled}
+            className={`setup-start-btn ${requesting ? "loading" : ""}`}
+            disabled={startDisabled || requesting}
             onClick={onStart}
-            title="快捷键: ⌘ + Enter"
+            title={requesting ? "正在请求权限并启动录音…" : "快捷键: ⌘ + Enter"}
           >
-            <span className="setup-record-dot" />
-            开始实时录音
-            <kbd className="setup-kbd-hint">⌘↵</kbd>
+            <span className={`setup-record-dot ${requesting ? "loading" : ""}`} />
+            {requesting ? "正在启动录音…" : "开始实时录音"}
+            {!requesting && <kbd className="setup-kbd-hint">⌘↵</kbd>}
           </button>
         </div>
       </header>

@@ -209,7 +209,7 @@ export default function RecordingView({
   const controlRequired =
     sessionRef.current?.source === "macos" &&
     !!nativeOwnership?.control_required;
-  if (state === "idle" && !targetRecordingId) {
+  if ((state === "idle" || state === "requesting") && !targetRecordingId) {
     return (
       <Modal
         id="recordingWorkbench"
@@ -251,6 +251,7 @@ export default function RecordingView({
           recognitionTerms={recognitionTerms}
           runningSessions={runningSessions}
           attachRunning={attachRunning}
+          requesting={state === "requesting"}
           onStart={() => void start()}
           onClose={closeWithPreparation}
         />

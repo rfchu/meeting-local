@@ -4969,6 +4969,12 @@ button.note-options-trigger {
   transform: none;
 }
 
+.setup-start-btn.loading {
+  background: #2563eb;
+  opacity: 0.85;
+  cursor: wait;
+}
+
 .setup-record-dot {
   width: 9px;
   height: 9px;
@@ -4976,6 +4982,12 @@ button.note-options-trigger {
   background: #ef4444;
   box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.6);
   animation: pulse-dot 2s infinite ease-in-out;
+}
+
+.setup-record-dot.loading {
+  background: #f59e0b;
+  box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.4);
+  animation: pulse-dot 0.8s infinite ease-in-out;
 }
 
 @keyframes pulse-dot {
