@@ -1,4 +1,5 @@
 import { browserCaptureAllowed } from "../../preferences/nativeHost";
+import Modal from "../../components/Modal";
 import RecordingReadiness from "../onboarding/RecordingReadiness";
 import { clock } from "../../utils";
 import type { RecordingViewModel } from "./useRecordingController";
@@ -543,6 +544,7 @@ export default function RecordingSetupView({
             <div className="setup-card">
               <div className="setup-card-header">
                 <h3>🛠️ 辅助与就绪检查</h3>
+                <p>硬件权限、识别模型与词库准备。</p>
               </div>
               <div className="setup-readiness-summary">
                 <div className="setup-check-item">
@@ -553,6 +555,12 @@ export default function RecordingSetupView({
                     {nativeCapability?.available
                       ? "本机系统采集服务就绪"
                       : "需系统声音或麦克风授权"}
+                  </span>
+                </div>
+                <div className="setup-check-item">
+                  <span className="check-icon">✓</span>
+                  <span>
+                    实时识别已配置（{draftEngine === "qwen" ? "千问 Qwen-ASR" : "Whisper"}）
                   </span>
                 </div>
                 <div className="setup-check-item">
@@ -578,25 +586,48 @@ export default function RecordingSetupView({
                 <button
                   type="button"
                   className="setup-sub-btn"
-                  onClick={() => setReadinessOpen(!readinessOpen)}
+                  onClick={() => setReadinessOpen(true)}
                 >
-                  🔍 环境自检 {readinessOpen ? "▲" : "▼"}
+                  🔍 环境自检与试录...
                 </button>
               </div>
+            </div>
 
-              {readinessOpen && (
-                <div className="setup-readiness-details">
+            {readinessOpen && (
+              <Modal
+                className="recording-readiness-modal"
+                ariaLabel="环境与声音自检"
+                onClose={() => setReadinessOpen(false)}
+              >
+                <div className="readiness-modal-content">
+                  <div className="readiness-modal-header">
+                    <div className="readiness-modal-title">
+                      <span className="setup-eyebrow-tag">系统与设备诊断</span>
+                      <h2>🔍 环境自检与十秒试录</h2>
+                    </div>
+                    <button
+                      type="button"
+                      className="readiness-modal-close"
+                      onClick={() => setReadinessOpen(false)}
+                      aria-label="关闭"
+                    >
+                      ✕
+                    </button>
+                  </div>
                   <RecordingReadiness
                     nativeCapability={nativeCapability}
                     source={captureSource}
                     engine={draftEngine}
                     onReadiness={acceptReadiness}
-                    onConfigure={() => {}}
-                    onModels={onModels}
+                    onConfigure={() => setReadinessOpen(false)}
+                    onModels={() => {
+                      setReadinessOpen(false);
+                      onModels();
+                    }}
                   />
                 </div>
-              )}
-            </div>
+              </Modal>
+            )}
           </div>
         </div>
       </div>
