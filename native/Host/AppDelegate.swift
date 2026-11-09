@@ -76,6 +76,10 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         reopenWorkspace(); return true
     }
+    func application(_ application: NSApplication, open urls: [URL]) {
+        NSApp.activate(ignoringOtherApps: true)
+        reopenWorkspace()
+    }
     private func label(_ text: String, size: CGFloat = 13, color: NSColor = .secondaryLabelColor) -> NSTextField {
         let value = NSTextField(wrappingLabelWithString: text)
         value.font = .systemFont(ofSize: size); value.textColor = color; return value

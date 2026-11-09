@@ -112,7 +112,26 @@ export default function App({ browserWorkspace = false }: { browserWorkspace?: b
     queryFn: api.minutesTemplates,
   });
   const [meeting, setMeeting] = useState<Meeting | null>(null),
-    [workspace, setWorkspace] = useState<Workspace>("transcript");
+    [workspace, setWorkspace] = useState<Workspace>("copilot");
+  const [sessionExpired, setSessionExpired] = useState(false);
+  useEffect(() => {
+    if (!browserWorkspace) return;
+    const checkSession = async () => {
+      try {
+        const res = await fetch("/api/runtime/workspace-mode");
+        if (res.ok) {
+          const data = (await res.json()) as { mode: string };
+          if (data.mode !== "browser") setSessionExpired(true);
+        } else if (res.status === 403) {
+          setSessionExpired(true);
+        }
+      } catch {
+        /* network blip */
+      }
+    };
+    const timer = window.setInterval(checkSession, 30_000);
+    return () => window.clearInterval(timer);
+  }, [browserWorkspace]);
   const [actionsFocus, setActionsFocus] = useState(false);
   const [deliveryFocus, setDeliveryFocus] = useState(false);
   const [overviewFocus, setOverviewFocus] = useState(false);
@@ -497,7 +516,9 @@ export default function App({ browserWorkspace = false }: { browserWorkspace?: b
       if (!artifact && minutesOptions.method === "current")
         setMinutesOptions((old) => ({ ...old, method: "ai" }));
       setShowCitations(artifact?.payload.style === "internal");
-      setWorkspace(restored.workspace);
+      setWorkspace(
+        readMeetingView(id, browserMeetingStorage()).workspace || "copilot",
+      );
 
       meetingRef.current = value;
       const job = latestJob(value, "transcription");
@@ -939,6 +960,7 @@ export default function App({ browserWorkspace = false }: { browserWorkspace?: b
         onRecord={browserWorkspace ? undefined : () => setRecordingOpen(true)}
         onManage={browserWorkspace ? undefined : () => setManagementPage("overview")}
         onSearch={() => setSearchOpen(true)}
+        browserWorkspace={browserWorkspace}
         onFollowups={() =>
           environment?.meeting_flow_ready
             ? setFollowupsOpen(true)
@@ -981,6 +1003,25 @@ export default function App({ browserWorkspace = false }: { browserWorkspace?: b
             <span className="dot" /> 转写本地处理 · 分析引擎可配置
           </div>
         </header>
+        {browserWorkspace && sessionExpired && (
+          <div className="browser-session-expired-banner" role="alert">
+            <div className="session-expired-content">
+              <span className="session-expired-icon">🔒</span>
+              <div>
+                <strong>浏览器访问授权已过期</strong>
+                <p>
+                  为保护会议隐私与安全，访问授权已结束。请在听记 App 菜单栏点击「打开浏览器工作台」重新授权，或直接唤醒桌面客户端。
+                </p>
+              </div>
+            </div>
+            <div className="session-expired-actions">
+              <a href="tingji://open" className="primary-btn-link">
+                唤醒听记 App ↗
+              </a>
+              <button onClick={() => window.location.reload()}>重新检查</button>
+            </div>
+          </div>
+        )}
         {!meeting && !!recordingRecoveryCount(recoveryQuery.data || []) && (
           <section
             className="recording-recovery-banner"
@@ -1400,12 +1441,14 @@ export default function App({ browserWorkspace = false }: { browserWorkspace?: b
                     {(
                       [
                         ["copilot", "伴随时间线"],
-                        ["prepare", "会议准备"],
+                        ["minutes", "会议成果"],
+                        ["analysis", "深入分析"],
                         [
                           "notes",
                           `会后整理${meeting.notes.length ? ` · ${meeting.notes.length}` : ""}`,
                         ],
-                        ["minutes", "会议成果"],
+                        ["transcript", "精细文字稿"],
+                        ["prepare", "会议准备"],
                       ] as [Workspace, string][]
                     ).map(([key, label]) => (
                       <button
@@ -1416,31 +1459,6 @@ export default function App({ browserWorkspace = false }: { browserWorkspace?: b
                         {label}
                       </button>
                     ))}
-                    <details className="meeting-source-tools">
-                      <summary>
-                        {workspace === "transcript"
-                          ? "文字稿"
-                          : workspace === "analysis"
-                            ? "深入分析"
-                            : "原文与分析"}
-                      </summary>
-                      <button
-                        onClick={(e) => {
-                          setWorkspace("transcript");
-                          e.currentTarget.closest("details")!.open = false;
-                        }}
-                      >
-                        打开文字稿
-                      </button>
-                      <button
-                        onClick={(e) => {
-                          setWorkspace("analysis");
-                          e.currentTarget.closest("details")!.open = false;
-                        }}
-                      >
-                        打开深入分析
-                      </button>
-                    </details>
                   </div>
                   {workspace === "transcript" && (
                     <button

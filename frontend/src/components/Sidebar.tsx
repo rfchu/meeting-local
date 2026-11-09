@@ -21,6 +21,7 @@ interface Props {
   onManage?: () => void;
   onSearch: () => void;
   recoveryCount: number;
+  browserWorkspace?: boolean;
 }
 
 export default function Sidebar({
@@ -36,6 +37,7 @@ export default function Sidebar({
   onManage,
   onSearch,
   recoveryCount,
+  browserWorkspace,
 }: Props) {
   const choose = () => document.getElementById("file")?.click();
   return (
@@ -114,12 +116,18 @@ export default function Sidebar({
       </div>
       <div className="sidebar-bottom">
         <span className="dot" /> 会议数据保存在本机
-        {onManage && <button className="text-btn sidebar-management" onClick={onManage}>
-          运行管理 ↗
-          {recoveryCount > 0 && (
-            <span className="recovery-count">待恢复 {recoveryCount}</span>
-          )}
-        </button>}
+        {browserWorkspace ? (
+          <a href="tingji://open" className="sidebar-app-link" title="返回听记原生应用">
+            打开听记 App ↗
+          </a>
+        ) : onManage && (
+          <button className="text-btn sidebar-management" onClick={onManage}>
+            运行管理 ↗
+            {recoveryCount > 0 && (
+              <span className="recovery-count">待恢复 {recoveryCount}</span>
+            )}
+          </button>
+        )}
       </div>
     </aside>
   );

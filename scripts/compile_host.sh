@@ -49,6 +49,7 @@ config={'version':1,'projectRoot':str(root),'dataRoot':str(Path(os.getenv('MEETI
 (app/'Contents/Resources/host-config.json').write_text(json.dumps(config,ensure_ascii=False,indent=2))
 with (app/'Contents/Info.plist').open('wb') as f:
     info={'CFBundleIdentifier':identifier,'CFBundleName':'听记','CFBundleDisplayName':'听记宿主','CFBundleExecutable':'TingjiHost','CFBundlePackageType':'APPL','CFBundleIconFile':'Tingji.icns','CFBundleVersion':'4','CFBundleShortVersionString':'0.4.0','LSMinimumSystemVersion':'15.0','NSHighResolutionCapable':True}
+    info['CFBundleURLTypes']=[{'CFBundleURLName':'cn.seeknow.tingji','CFBundleURLSchemes':['tingji']}]
     info['NSMicrophoneUsageDescription']='听记仅在你开启麦克风录音时采集声音，用于保存现场音轨和生成会议文字。'
     if os.getenv('TINGJI_PORTABLE_RUNTIME_SOURCE'):
         info['TingjiPortableRuntime']=True
