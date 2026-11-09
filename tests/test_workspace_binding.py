@@ -78,3 +78,35 @@ def test_portable_requires_private_authorization_before_workbench_and_companion_
         assert companion.status_code == 200
         assert companion.json()['proof'] == hmac.digest(secret, b'companion:'+challenge.encode(), 'sha256').hex()
         assert client.post(translation, headers=headers).status_code == 422
+
+
+def test_browser_ticket_grants_meeting_access_without_recording_control(tmp_path, monkeypatch):
+    from app.host_bridge import workspace_mac
+
+    monkeypatch.setenv('TINGJI_PORTABLE_SERVICE', '1')
+    secret = b'b' * 32
+    keyfile = tmp_path / 'workspace.key'
+    keyfile.write_bytes(secret)
+    keyfile.chmod(0o600)
+    app = create_app(tmp_path / 'data', start_worker=False)
+    landing = '/_tingji/browser'
+    with TestClient(app, base_url='http://127.0.0.1:18876') as browser:
+        assert browser.get('/').status_code == 403
+        assert browser.post(landing).status_code == 403
+        native = {'X-Tingji-Authorization': workspace_mac(secret, 'request:' + workspace_binding(app.state.paths))}
+        code = browser.post(landing, headers=native).json()['code']
+        page = browser.get(landing)
+        assert page.status_code == 200 and code not in page.text
+        redemption = {'Origin': 'http://127.0.0.1:18876', 'X-Tingji-Browser-Code': code}
+        assert browser.post(landing, headers={**redemption, 'Origin': 'https://other.example'}).status_code == 403
+        response = browser.post(landing, headers=redemption)
+        assert response.status_code == 200 and 'HttpOnly' in response.headers['set-cookie']
+        assert browser.post(landing, headers=redemption).status_code == 403
+        assert browser.get('/api/runtime/workspace-mode').json() == {'mode': 'browser'}
+        assert browser.get('/').status_code == 200
+        assert browser.get('/api/meetings').status_code == 200
+        for path in ('/api/native-capture', '/api/recordings', '/api/recordings/test/commands', '/api/capture-tests'):
+            assert browser.post(path, headers={'Origin': redemption['Origin']}, json={}).status_code == 403
+        assert browser.post('/api/meetings', headers={'Origin': redemption['Origin']}).status_code == 422
+        assert browser.post('/api/meetings').status_code == 403
+        assert browser.get('/api/runtime/workspace-mode', headers=native).status_code == 200

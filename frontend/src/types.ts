@@ -267,6 +267,7 @@ export interface RecordingSession {
   source_language?: SourceLanguage;
   capture_transport?: string;
   include_microphone?: boolean;
+  microphone_only?: boolean;
   brief?: MeetingBrief;
   id: string;
   mime_type: string;
@@ -387,6 +388,7 @@ export interface NativeCapability {
   available: boolean;
   supported: boolean;
   screen_permission: boolean;
+  microphone_only_supported?: boolean;
   microphone_permission: boolean;
   build_command: string;
   diagnostics_version?: number;

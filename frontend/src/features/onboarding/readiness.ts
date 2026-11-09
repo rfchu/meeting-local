@@ -1,5 +1,5 @@
 import type { EngineInfo, NativeCapability } from "../../types";
-export type CaptureSource = "browser" | "macos-system" | "macos-both";
+export type CaptureSource = "browser" | "macos-system" | "macos-both" | "macos-microphone";
 export type Readiness = {
   native: NativeCapability;
   engines: EngineInfo[];
@@ -39,9 +39,11 @@ export function captureState(
     };
   if (!native?.available || !native.supported)
     return { state: "blocked", label: "原生采集器尚未就绪" };
+  if (source === "macos-microphone" && !native.microphone_only_supported)
+    return { state: "blocked", label: "请更新采集器以使用仅麦克风录音" };
   if (
-    !native.screen_permission ||
-    (source === "macos-both" && !native.microphone_permission)
+    (source !== "macos-microphone" && !native.screen_permission) ||
+    (source !== "macos-system" && !native.microphone_permission)
   )
     return { state: "pending", label: "首次试录或开始录音时请求系统权限" };
   return { state: "ready", label: "所需系统权限已允许" };

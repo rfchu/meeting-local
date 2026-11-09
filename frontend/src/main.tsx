@@ -10,10 +10,17 @@ const client = new QueryClient({
   defaultOptions: { queries: { retry: 1, refetchOnWindowFocus: false } },
 });
 
-createRoot(document.getElementById("root")!).render(
-  <StrictMode>
-    <QueryClientProvider client={client}>
-      <App />
-    </QueryClientProvider>
-  </StrictMode>,
-);
+async function mount() {
+  const browserWorkspace = await fetch("/api/runtime/workspace-mode")
+    .then(async (response) => response.ok && (await response.json()).mode === "browser")
+    .catch(() => false);
+  createRoot(document.getElementById("root")!).render(
+    <StrictMode>
+      <QueryClientProvider client={client}>
+        <App browserWorkspace={browserWorkspace} />
+      </QueryClientProvider>
+    </StrictMode>,
+  );
+}
+
+void mount();

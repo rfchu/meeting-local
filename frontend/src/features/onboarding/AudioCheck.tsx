@@ -242,7 +242,7 @@ export default function AudioCheck({
       <h3>十秒试录</h3>
       <p>
         请
-        {source === "browser"
+        {(source === "browser" || source === "macos-microphone")
           ? "对着麦克风说一句话"
           : source === "macos-both"
             ? "播放一段电脑声音，并对着麦克风说一句话"

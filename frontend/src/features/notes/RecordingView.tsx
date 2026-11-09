@@ -1,10 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../../api";
 import { useEffect, useState } from "react";
-import {
-  browserCaptureAllowed,
-  embeddedHost,
-} from "../../preferences/nativeHost";
+import { browserCaptureAllowed } from "../../preferences/nativeHost";
 import RecordingSettingsDialog from "./RecordingSettingsDialog";
 import { toggleOverviewFocus } from "../overview/notes";
 import LiveOverviewPanel from "../overview/LiveOverviewPanel";
@@ -180,7 +177,7 @@ export default function RecordingView({
     if (mobilePane === "overview") setSeenOverview(overviewVersion);
   }, [mobilePane, overviewVersion]);
   const tracks = [
-    ...(captureSource !== "browser"
+    ...(captureSource !== "browser" && captureSource !== "macos-microphone"
       ? [{ label: "电脑声音", levels: systemLevels, color: "#3968e8" }]
       : []),
     ...(captureSource !== "macos-system"
@@ -234,11 +231,6 @@ export default function RecordingView({
           onClose={() => setTermsOpen(false)}
         />
       )}
-      {embeddedHost() && !recording && (
-        <p className="muted">
-          内嵌工作区请使用电脑声音或电脑声音加麦克风。
-        </p>
-      )}
       {state === "idle" &&
         captureSource !== "browser" &&
         nativeCapability?.ownership &&
@@ -281,6 +273,7 @@ export default function RecordingView({
                     !navigator.mediaDevices?.getUserMedia)) ||
                 (captureSource !== "browser" &&
                   (!nativeCapability?.available ||
+                    (captureSource === "macos-microphone" && !nativeCapability.microphone_only_supported) ||
                     (!!nativeCapability.ownership &&
                       nativeCapability.ownership.lease !== "free")))
               }
@@ -413,11 +406,12 @@ export default function RecordingView({
               线上会议 · 电脑声音
             </option>
             <option value="macos-both" disabled={!nativeCapability?.available}>
-              现场／混合会议 · 电脑声音 + 麦克风
+              混合会议 · 电脑声音 + 麦克风
             </option>
-            <option value="browser" disabled={!browserCaptureAllowed()}>
-              现场会议 · 浏览器麦克风
+            <option value="macos-microphone" disabled={!nativeCapability?.available || !nativeCapability.microphone_only_supported}>
+              现场会议 · 仅麦克风
             </option>
+            {browserCaptureAllowed() && <option value="browser">现场会议 · 浏览器麦克风</option>}
           </select>
         </label>
       )}

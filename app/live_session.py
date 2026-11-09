@@ -114,7 +114,7 @@ class LiveSessions:
         session=self.recordings.read(rid)
         if session['state']=='completed' or self.store.one('SELECT id FROM meetings WHERE id=?',(rid,)):raise ValueError('录音已保存，不能重启实时识别')
         source='native' if session.get('source')=='macos' else 'browser'
-        if source!='native' or not session.get('include_microphone'):
+        if source!='native' or not session.get('include_microphone') or session.get('microphone_only'):
             config['echo_mode']='standard'
         if source=='native' and self.native.status(rid,touch=False).get('state') not in ('recording','paused'):raise ValueError('原生采集未运行，已有结果仍可查看')
         row=self.store.one('SELECT * FROM live_sessions WHERE recording_id=?',(rid,))
@@ -361,7 +361,8 @@ class LiveSessions:
                     if capture.get('state') in ('stopped','interrupted','failed'):draining=True
                     available=max(0,capture.get('duration',0)-cursor/RATE)
                     target=min(HARD_SECONDS,max(next_target,math.floor(available))) if config['responsive'] else 15
-                    dual=self.recordings.read(rid).get('include_microphone',False)
+                    session=self.recordings.read(rid)
+                    dual=session.get('include_microphone') and not session.get('microphone_only')
                     if dual:
                         # A short acoustic pause is a boundary only when each decoded track ends a sentence.
                         hints=[sentence_hint(part['text'],(preview_end-cursor)/RATE) for part in previous_tracks.values()]

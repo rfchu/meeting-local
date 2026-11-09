@@ -13,9 +13,12 @@ func jsonLine(_ value: [String: Any]) {
     }
 }
 
-final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
+final class Capture: NSObject, SCStreamOutput, SCStreamDelegate, AVCaptureAudioDataOutputSampleBufferDelegate {
     let folder: URL
     let microphone: Bool
+    let microphoneOnly: Bool
+    var microphoneSession: AVCaptureSession?
+    var microphoneErrorObserver: NSObjectProtocol?
     let incarnation: String
     let queue = DispatchQueue(label: "cn.seeknow.tingji.capture.audio")
     var stream: SCStream?
@@ -42,7 +45,12 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
     var elapsed: Double = 0
     let outputFormat = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: 16000, channels: 1, interleaved: true)!
 
-    init(folder: URL, microphone: Bool, incarnation: String) { self.folder = folder; self.microphone = microphone; self.incarnation = incarnation }
+    init(folder: URL, microphone: Bool, microphoneOnly: Bool, incarnation: String) {
+        self.folder = folder
+        self.microphone = microphone
+        self.microphoneOnly = microphoneOnly
+        self.incarnation = incarnation
+    }
 
     func defaultDevice(_ selector: AudioObjectPropertySelector) -> AudioDeviceID? {
         var address = AudioObjectPropertyAddress(mSelector: selector, mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
@@ -114,13 +122,77 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
 
     func start() async throws {
         queue.sync { report() }
-        guard CGPreflightScreenCaptureAccess() || CGRequestScreenCaptureAccess() else {
+        guard microphoneOnly || CGPreflightScreenCaptureAccess() || CGRequestScreenCaptureAccess() else {
             throw NSError(domain: "TingjiCapture", code: 1, userInfo: [NSLocalizedDescriptionKey: "请在系统设置 → 隐私与安全性 → 屏幕与系统音频录制中允许听记采集器，然后重新开始"])
         }
-        if microphone {
+        if microphone || microphoneOnly {
             let allowed = await AVCaptureDevice.requestAccess(for: .audio)
             guard allowed else { throw NSError(domain: "TingjiCapture", code: 2, userInfo: [NSLocalizedDescriptionKey: "麦克风未授权，请在系统设置中允许听记采集器访问麦克风"] ) }
         }
+        if microphoneOnly {
+            try startMicrophone()
+        } else {
+            try await startScreenAudio()
+        }
+        queue.sync {
+            let timer = DispatchSource.makeTimerSource(queue: queue)
+            timer.schedule(deadline: .now(), repeating: 1)
+            timer.setEventHandler { [weak self] in
+                guard let self else { return }
+                do { for file in self.files.values { try file.synchronize() }; self.report() }
+                catch { self.diagnostics.failureStage = "storage"; self.fail("磁盘保存失败：\(error.localizedDescription)") }
+            }
+            self.timer = timer; timer.resume()
+        }
+    }
+
+    private func prepareTracks(_ names: [String]) throws {
+        try queue.sync {
+            for name in names {
+                let url = folder.appendingPathComponent(name + ".pcm")
+                FileManager.default.createFile(atPath: url.path, contents: nil)
+                files[name] = try FileHandle(forWritingTo: url)
+            }
+            origin = hostSeconds()
+            signalGraceAt = origin
+            watchDevices()
+            state = "recording"
+            report()
+        }
+    }
+
+    private func startMicrophone() throws {
+        guard let device = AVCaptureDevice.default(for: .audio) else {
+            throw microphoneError("没有可用的麦克风")
+        }
+        let session = AVCaptureSession()
+        let input = try AVCaptureDeviceInput(device: device)
+        let output = AVCaptureAudioDataOutput()
+        guard session.canAddInput(input) else { throw microphoneError("无法连接麦克风") }
+        session.addInput(input)
+        guard session.canAddOutput(output) else { throw microphoneError("无法读取麦克风音频") }
+        session.addOutput(output)
+        output.setSampleBufferDelegate(self, queue: queue)
+        selectedMicrophoneID = device.uniqueID
+        microphoneSession = session
+        try prepareTracks(["microphone"])
+        session.startRunning()
+        guard session.isRunning else { throw microphoneError("麦克风采集未启动") }
+        microphoneErrorObserver = NotificationCenter.default.addObserver(
+            forName: AVCaptureSession.runtimeErrorNotification, object: session, queue: nil
+        ) { [weak self] _ in
+            self?.queue.async { [weak self] in
+                self?.diagnostics.failureStage = "capture_stream"
+                self?.fail("麦克风采集中断，请检查输入设备")
+            }
+        }
+    }
+
+    private func microphoneError(_ message: String) -> NSError {
+        NSError(domain: "TingjiCapture", code: 5, userInfo: [NSLocalizedDescriptionKey: message])
+    }
+
+    private func startScreenAudio() async throws {
         let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
         guard let display = content.displays.first else {
             throw NSError(domain: "TingjiCapture", code: 3, userInfo: [NSLocalizedDescriptionKey: "没有可用显示器"])
@@ -144,24 +216,9 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
         if #available(macOS 15.0, *), microphone {
             try capture.addStreamOutput(self, type: .microphone, sampleHandlerQueue: queue)
         }
-        for name in microphone ? ["system", "microphone"] : ["system"] {
-            let url = folder.appendingPathComponent(name + ".pcm")
-            FileManager.default.createFile(atPath: url.path, contents: nil)
-            files[name] = try FileHandle(forWritingTo: url)
-        }
-        stream = capture; origin = hostSeconds(); signalGraceAt = origin
-        queue.sync { watchDevices(); state = "recording"; report() }
+        stream = capture
+        try prepareTracks(microphone ? ["system", "microphone"] : ["system"])
         try await capture.startCapture()
-        queue.sync {
-            let timer = DispatchSource.makeTimerSource(queue: queue)
-            timer.schedule(deadline: .now(), repeating: 1)
-            timer.setEventHandler { [weak self] in
-                guard let self else { return }
-                do { for file in self.files.values { try file.synchronize() }; self.report() }
-                catch { self.diagnostics.failureStage = "storage"; self.fail("磁盘保存失败：\(error.localizedDescription)") }
-            }
-            self.timer = timer; timer.resume()
-        }
     }
 
     func fail(_ message: String) {
@@ -180,6 +237,15 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
         if type == .audio { name = "system" }
         else if #available(macOS 15.0, *), type == .microphone { name = "microphone" }
         else { return }
+        consume(sample, track: name)
+    }
+
+    func captureOutput(_ output: AVCaptureOutput, didOutput sample: CMSampleBuffer, from connection: AVCaptureConnection) {
+        consume(sample, track: "microphone")
+    }
+
+    private func consume(_ sample: CMSampleBuffer, track name: String) {
+        guard state == "recording" else { return }
         diagnostics.received(name)
         guard sample.isValid, let description = sample.formatDescription else { diagnostics.dropped(name); return }
         let format = AVAudioFormat(cmAudioFormatDescription: description)
@@ -238,6 +304,8 @@ final class Capture: NSObject, SCStreamOutput, SCStreamDelegate {
         state = "recording"; report()
     } }
     func finish(state finalState: String = "stopped") async {
+        if let microphoneErrorObserver { NotificationCenter.default.removeObserver(microphoneErrorObserver) }
+        microphoneSession?.stopRunning()
         try? await stream?.stopCapture()
         queue.sync {
             if state == "recording" { elapsed = max(0, hostSeconds() - origin - pausedTotal) }
@@ -261,7 +329,7 @@ if arguments.contains("--diagnostics-self-test") {
 if arguments.contains("--probe") {
     jsonLine(["screen_permission": CGPreflightScreenCaptureAccess(),
               "microphone_permission": AVCaptureDevice.authorizationStatus(for: .audio) == .authorized,
-              "supported": ProcessInfo.processInfo.operatingSystemVersion.majorVersion >= 15, "diagnostics_version": 1, "helper_build": 4, "ownership_protocol_version": 1, "artifact_guard_version": 1])
+              "supported": ProcessInfo.processInfo.operatingSystemVersion.majorVersion >= 15, "diagnostics_version": 1, "microphone_only_supported": true, "helper_build": 4, "ownership_protocol_version": 1, "artifact_guard_version": 1])
     exit(0)
 }
 guard let option = arguments.firstIndex(of: "--output"), arguments.indices.contains(option + 1) else {
@@ -276,7 +344,7 @@ do { ownerLease = try CaptureOwnerLease(folder:URL(fileURLWithPath:arguments[opt
 catch { jsonLine(["error":"采集所有权无法取得，未打开设备"]); exit(3) }
 let application = NSApplication.shared
 application.setActivationPolicy(.accessory)
-let capture = Capture(folder: URL(fileURLWithPath: arguments[option + 1]), microphone: arguments.contains("--microphone"), incarnation:ownerLease.incarnation)
+let capture = Capture(folder: URL(fileURLWithPath: arguments[option + 1]), microphone: arguments.contains("--microphone"), microphoneOnly: arguments.contains("--microphone-only"), incarnation:ownerLease.incarnation)
 Task {
     do {
         try await capture.start()

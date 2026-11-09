@@ -1,4 +1,5 @@
 import { useQueryClient } from "@tanstack/react-query";
+import type { CaptureSource } from "../onboarding/readiness";
 import { browserCaptureAllowed } from "../../preferences/nativeHost";
 import { reconcileNativePhase } from "./recordingCoordinator";
 import { useNativeCaptureStatus } from "./useNativeCaptureStatus";
@@ -254,7 +255,8 @@ export function useRecordingController({
       preferences.correctionEnabled,
     ),
     [correctionReviewOpen, setCorrectionReviewOpen] = useState(false),
-    [echoMode, setEchoMode] = useState<"standard" | "aec3">("standard"),
+    [preferredEchoMode, setEchoMode] = useState(preferences.echoMode),
+    [attachedEchoMode, setAttachedEchoMode] = useState<typeof preferredEchoMode>(),
     [responsiveMode, setResponsiveMode] = useState(preferences.responsiveMode),
     [modelStatus, setModelStatus] = useState<Awaited<
       ReturnType<typeof api.liveModelStatus>
@@ -278,9 +280,11 @@ export function useRecordingController({
     [coverageStatus, setCoverageStatus] = useState("开始识别后保存覆盖情况"),
     [draftStatus, setDraftStatus] = useState("开始录音后自动生成"),
     [saveStatus, setSaveStatus] = useState("录音分段会自动保存到本机"),
-    [captureSource, setCaptureSource] = useState<
-      "browser" | "macos-system" | "macos-both"
-    >(preferences.captureSource),
+    [captureSource, setCaptureSource] = useState<CaptureSource>(
+      preferences.captureSource === "browser" && !browserCaptureAllowed()
+        ? "macos-both"
+        : preferences.captureSource,
+    ),
     [nativeCapability, setNativeCapability] = useState<NativeCapability | null>(
       null,
     ),
@@ -346,6 +350,7 @@ export function useRecordingController({
   );
   noteDraftRef.current = { text: noteText, type: noteType, scope: noteScope };
 
+  const echoMode = state === "idle" ? preferredEchoMode : attachedEchoMode ?? preferredEchoMode;
   const persistPreferences = (mode = completionMode) => {
     let saved = false;
     try {
@@ -359,6 +364,7 @@ export function useRecordingController({
         postGoal,
         captureSource,
         draftEngine,
+        echoMode: preferredEchoMode,
         streamEnabled,
         contextEnabled,
         prefixEnabled,
@@ -380,6 +386,7 @@ export function useRecordingController({
     brief.output_language,
     captureSource,
     draftEngine,
+    preferredEchoMode,
     streamEnabled,
     responsiveMode,
     contextEnabled,
@@ -578,7 +585,7 @@ export function useRecordingController({
       output_language: session.brief?.output_language || "zh",
     });
     setCaptureSource(
-      session.include_microphone ? "macos-both" : "macos-system",
+      session.microphone_only ? "macos-microphone" : session.include_microphone ? "macos-both" : "macos-system",
     );
     setRecordOnly(!entry.config);
     recordOnlyRef.current = !entry.config;
@@ -587,7 +594,7 @@ export function useRecordingController({
     setResponsiveMode(entry.config?.responsive ?? false);
     setContextEnabled(entry.config?.context_enabled ?? false);
     setPrefixEnabled(entry.config?.prefix_enabled !== false);
-    setEchoMode(entry.config?.echo_mode ?? "standard");
+    setAttachedEchoMode(entry.config?.echo_mode ?? "standard");
     setRecognitionTerms(entry.config?.terms || "");
     accruedRef.current = session.duration;
     activeSinceRef.current = performance.now();
@@ -1242,6 +1249,7 @@ export function useRecordingController({
 
   const start = async () => {
     if (targetRecordingId) return;
+    setAttachedEchoMode(undefined);
     if (captureSource === "browser" && !browserCaptureAllowed())
       return toast(
         "内嵌工作区未启用浏览器采集。请改用原生音轨，或在浏览器工作台录音。",
@@ -1296,8 +1304,9 @@ export function useRecordingController({
       setState("requesting");
       try {
         const session = await api.nativeStart(
-          captureSource === "macos-both",
+          captureSource !== "macos-system",
           keepAwake,
+          captureSource === "macos-microphone",
         );
         session.brief = briefRef.current;
         sessionRef.current = session;
@@ -1637,6 +1646,7 @@ export function useRecordingController({
     browser: "浏览器麦克风",
     "macos-system": "电脑声音",
     "macos-both": "电脑声音 + 麦克风",
+    "macos-microphone": "仅麦克风",
   }[captureSource];
   const engineName = draftEngine === "qwen" ? "千问 Qwen-ASR" : "Whisper";
   return {

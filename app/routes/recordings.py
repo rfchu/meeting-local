@@ -150,7 +150,7 @@ def register_routes(app,services:ApplicationServices):
         try:
             with capture_probes.lock:
                 if capture_probes.active():raise ValueError('正在试录，请先完成或取消测试')
-                session=native_capture.start(body.microphone)
+                session=native_capture.start(True, microphone_only=True) if body.microphone_only else native_capture.start(body.microphone)
             native_capture.set_keep_awake(session['id'],body.keep_awake)
             if body.keep_awake:keep_awake.acquire(session['id'])
             return session

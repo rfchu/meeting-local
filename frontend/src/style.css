@@ -3260,6 +3260,89 @@ button.note-options-trigger {
 .recording-config-panel > section {
   padding: 24px 28px;
 }
+.recording-config-panel .config-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.recording-config-panel .config-fields label {
+  display: grid;
+  align-content: start;
+  gap: 7px;
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+.recording-config-panel .config-fields select {
+  width: 100%;
+  min-height: 38px;
+  padding: 7px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+}
+.recording-config-panel .config-output-language {
+  padding: 20px 28px 0;
+}
+.recording-config-panel .config-audio-preference {
+  grid-template-columns: minmax(0, 1fr);
+  margin-top: 16px;
+  padding: 14px;
+  border-radius: 10px;
+  background: #f5f7fb;
+}
+.recording-config-panel .config-source-field {
+  grid-template-columns: minmax(0, 1fr);
+}
+.config-silence-reminder {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 16px;
+  font-size: 13px;
+}
+.config-section-heading p,
+.config-field-hint,
+.config-echo-field small {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.55;
+}
+.config-section-heading p {
+  margin: 0 0 18px;
+}
+.config-field-hint {
+  margin: 10px 0 18px;
+}
+.config-advanced {
+  padding: 0 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+.config-advanced > summary {
+  padding: 12px 0;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.config-advanced-body {
+  display: grid;
+  gap: 12px;
+  padding: 4px 0 14px;
+}
+.recording-config-panel .config-management-link {
+  margin-top: 12px;
+}
+@media (max-width: 420px) {
+  .recording-config-panel .config-fields {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
 .recording-config-panel h3 {
   font-size: 16px;
   margin: 0 0 8px;

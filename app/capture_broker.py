@@ -323,13 +323,15 @@ class BrokerProcess:
 
 def main():
     parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--root',type=Path,required=True);parser.add_argument('--recording-id',required=True);parser.add_argument('--incarnation',required=True);parser.add_argument('--helper',type=Path,required=True);parser.add_argument('--microphone',action='store_true')
+    parser.add_argument('--microphone-only',action='store_true')
     args=parser.parse_args()
     if not token(args.recording_id) or not token(args.incarnation):parser.error('无效会话身份')
     folder=args.root/args.recording_id
     session=json.loads((folder/'session.json').read_text())
     if session.get('id')!=args.recording_id or session.get('capture_incarnation')!=args.incarnation or session.get('capture_transport')!='broker_v2':parser.error('会话身份不匹配')
     command=[str(args.helper),'--output',str(folder),'--incarnation',args.incarnation]
-    if args.microphone:command.append('--microphone')
+    if args.microphone_only:command.append('--microphone-only')
+    elif args.microphone:command.append('--microphone')
     Broker(args.root,args.recording_id,args.incarnation,command,helper_path=args.helper).run()
 
 if __name__=='__main__':main()

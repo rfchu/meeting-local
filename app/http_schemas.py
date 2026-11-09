@@ -258,6 +258,7 @@ class ReviewCheckpointInput(BaseModel):
 
 class NativeRecordingInput(BaseModel):
     microphone: bool=True
+    microphone_only: bool=False
     keep_awake: bool=True
 
 

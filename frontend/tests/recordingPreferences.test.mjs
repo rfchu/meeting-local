@@ -10,12 +10,12 @@ test('Quiet reminder defaults safely and remembers explicit opt-out',()=>{
 });
 test('Last used source, engine, streaming and completion choice survive reopening',()=>{
   let raw=null;const storage={getItem:()=>raw,setItem:(_,value)=>{raw=value;}};
-  const selected={...DEFAULT_RECORDING_PREFERENCES,version:1,keepAwake:true,autoProcess:true,postGoal:"transcript",captureSource:'macos-both',draftEngine:'qwen',streamEnabled:true,responsiveMode:true,completionMode:'none'};
+  const selected={...DEFAULT_RECORDING_PREFERENCES,version:1,keepAwake:true,autoProcess:true,postGoal:"transcript",captureSource:'macos-both',draftEngine:'qwen',echoMode:'aec3',streamEnabled:true,responsiveMode:true,completionMode:'none'};
   assert.equal(saveRecordingPreferences(storage,selected),true);
   assert.deepEqual(readRecordingPreferences(storage),selected);
 });
 test('Corrupt, old and unsupported preferences restore safe defaults',()=>{
-  for(const value of ['bad', 'null',JSON.stringify({version:2}),JSON.stringify({version:1,keepAwake:true,captureSource:'remote',draftEngine:'unknown',streamEnabled:'yes',responsiveMode:'yes',completionMode:'delete'})]) {
+  for(const value of ['bad', 'null',JSON.stringify({version:2}),JSON.stringify({version:1,keepAwake:true,captureSource:'remote',draftEngine:'unknown',echoMode:'unsupported',streamEnabled:'yes',responsiveMode:'yes',completionMode:'delete'})]) {
     assert.deepEqual(readRecordingPreferences({getItem:()=>value}),DEFAULT_RECORDING_PREFERENCES);
   }
   assert.deepEqual(readRecordingPreferences({getItem:()=>{throw Error('denied');}}),DEFAULT_RECORDING_PREFERENCES);

@@ -21,7 +21,8 @@ class CaptureProbe:
             temporary=tempfile.TemporaryDirectory(prefix='tingji-audio-check-');key=uid();incarnation=uid();folder=Path(temporary.name)/key;folder.mkdir()
             RecordingStore.write(folder/'session.json',{'id':key,'capture_incarnation':incarnation,'source':'macos','state':'starting'})
             log=(folder/'capture.log').open('ab');args=[str(HELPER),'--output',str(folder),'--incarnation',incarnation]
-            if source=='macos-both':args.append('--microphone')
+            if source=='macos-microphone':args.append('--microphone-only')
+            elif source=='macos-both':args.append('--microphone')
             gate=BinaryLease(HELPER)
             try:
                 gate.acquire()
@@ -82,7 +83,8 @@ class CaptureProbe:
             item=self.items[key]
             if item['state']!='completed':raise ValueError('请等待十秒试录完成')
             tracks=[]
-            for name in (('system','microphone') if item['source']=='macos-both' else ('system',)):
+            source_tracks={'macos-both':('system','microphone'),'macos-microphone':('microphone',),'macos-system':('system',)}
+            for name in source_tracks[item['source']]:
                 path=item['folder']/(name+'.pcm')
                 if path.exists():
                     raw=path.read_bytes()[:320000];samples=array('h');samples.frombytes(raw[:len(raw)//2*2]);tracks.append(samples)

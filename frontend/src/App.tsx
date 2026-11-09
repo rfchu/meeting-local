@@ -75,7 +75,7 @@ import CompanionRecordingStatus, {
 import RecordingDialog from "./features/notes/RecordingDialog";
 import { recoverableRecordings } from "./features/notes/recordingBuffer";
 
-export default function App() {
+export default function App({ browserWorkspace = false }: { browserWorkspace?: boolean } = {}) {
   const [targetRecordingId, setTargetRecordingId] = useState<string>();
   const [companionId, setCompanionId] = useState(() =>
     companionRecording(window.location.hash),
@@ -936,8 +936,8 @@ export default function App() {
         uploading={uploading}
         onSelect={(id) => void openMeeting(id)}
         onUpload={(file) => void upload(file)}
-        onRecord={() => setRecordingOpen(true)}
-        onManage={() => setManagementPage("overview")}
+        onRecord={browserWorkspace ? undefined : () => setRecordingOpen(true)}
+        onManage={browserWorkspace ? undefined : () => setManagementPage("overview")}
         onSearch={() => setSearchOpen(true)}
         onFollowups={() =>
           environment?.meeting_flow_ready
@@ -951,6 +951,7 @@ export default function App() {
           meetings={listQuery.data || []}
           onClose={() => setLibraryOpen(false)}
           onPrepare={async (id) => {
+            if (browserWorkspace) return toast("请在听记 App 中准备实时会议。");
             const current = await api.preparation();
             await api.savePreparation({ ...current, previous_meeting_id: id });
             setLibraryOpen(false);
@@ -997,7 +998,7 @@ export default function App() {
         {!meeting ? (
           <Welcome
             onUpload={(file) => void upload(file)}
-            onRecord={() => setRecordingOpen(true)}
+            onRecord={browserWorkspace ? undefined : () => setRecordingOpen(true)}
           />
         ) : (
           <section id="detail">
@@ -1924,7 +1925,7 @@ export default function App() {
           await openMeeting(id);
           setWorkspace("minutes");
         }}
-        recordingOpen={recordingOpen}
+        recordingOpen={!browserWorkspace && recordingOpen}
         targetRecordingId={targetRecordingId}
         environment={environment}
         minutesModel={minutesModel}
@@ -1942,7 +1943,7 @@ export default function App() {
         companionId={companionId}
         onCloseCompanion={closeCompanionStatus}
         onCompanionNativeRecording={
-          !recordingOpen && !managementPage
+          !browserWorkspace && !recordingOpen && !managementPage
             ? (id) => {
                 closeCompanionStatus();
                 setTargetRecordingId(id);
@@ -1969,7 +1970,7 @@ function Welcome({
   onRecord,
 }: {
   onUpload: (file: File) => void;
-  onRecord: () => void;
+  onRecord?: () => void;
 }) {
   const [dragging, setDragging] = useState(false);
   const [sampleOpen, setSampleOpen] = useState(false);
@@ -2009,11 +2010,11 @@ function Welcome({
         <strong>导入已有录音 · 拖放或点击选择</strong>
         <span>WAV / MP3 / M4A / MP4 等 · 最大 4GB</span>
       </button>
-      <button className="welcome-record" onClick={onRecord}>
+      {onRecord ? <button className="welcome-record" onClick={onRecord}>
         <span>●</span>
         <strong>开始线上或现场会议</strong>
         <small>录音时可随手记下重点、问题、决策和待办</small>
-      </button>
+      </button> : <p className="muted">如需开始录音，请打开听记 App。</p>}
       <button className="text-btn" onClick={() => setSampleOpen(true)}>
         先体验样例会议 · 无需配置模型 →
       </button>

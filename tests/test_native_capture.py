@@ -140,6 +140,25 @@ def running_window(capture,duration=15,microphone=True,state='recording'):
     capture.last_seen[value['id']]=time.monotonic()
     return value['id'],folder
 
+def test_microphone_only_uses_one_track_for_live_text_and_saved_meeting(capture):
+    import io
+    import wave
+
+    rid,folder=running_window(capture)
+    value=capture.recordings.read(rid)
+    value['microphone_only']=True
+    RecordingStore.write(folder/'session.json',value)
+    audio=b'\x02\x00'*240000
+    (folder/'microphone.pcm').write_bytes(audio)
+    (folder/'system.pcm').write_bytes(b'\x05\x00'*240000)
+    assert [track['name'] for track in capture.status(rid)['health']['tracks']]==['microphone']
+    with wave.open(io.BytesIO(capture.draft_window(rid,0)['payload']),'rb') as wav:
+        assert wav.readframes(240000)==audio
+    assert capture.finish(rid)==rid
+    asset=capture.store.directory(rid)
+    assert json.loads((asset/'asset.json').read_text())['tracks']==['microphone.wav']
+    assert capture.store.one('SELECT title FROM meetings WHERE id=?',(rid,))['title'].startswith('现场会议-')
+
 def test_draft_snapshot_mixes_aligned_tracks_without_mutating_originals(capture):
     import struct,wave,io
     rid,folder=running_window(capture)

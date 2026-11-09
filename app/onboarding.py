@@ -24,7 +24,7 @@ def sample_document():
         summary=[MinutesItem(content='交付范围已明确，上线日期仍待确认。',source_segment_ids=['demo-1','demo-2','demo-3'])])
 
 class ProbeInput(BaseModel):
-    source:Literal['macos-system','macos-both']
+    source:Literal['macos-system','macos-both','macos-microphone']
 
 def register_onboarding(app,store,native,probes):
     @app.get('/api/recording-readiness')

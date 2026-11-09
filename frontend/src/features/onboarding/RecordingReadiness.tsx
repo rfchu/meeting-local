@@ -174,7 +174,9 @@ export default function RecordingReadiness({
               ? "本次测试使用浏览器麦克风。"
               : source === "macos-both"
                 ? "本次测试采集电脑声音与麦克风。"
-                : "本次测试仅采集电脑声音。"}
+                : source === "macos-microphone"
+                  ? "本次测试仅采集麦克风。"
+                  : "本次测试仅采集电脑声音。"}
           </p>
           <div className="guide-actions">
             <button disabled={loading} onClick={() => void refresh()}>

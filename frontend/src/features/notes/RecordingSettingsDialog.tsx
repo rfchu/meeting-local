@@ -121,7 +121,7 @@ export default function RecordingSettingsDialog({
         <div>
           <span className="config-panel-eyebrow">本次会议</span>
           <h2>录音方案</h2>
-          <p>调整当前方案，主工作区保持原位。</p>
+          <p>音源、识别和会后整理</p>
         </div>
         <button onClick={() => setSettingsOpen(false)}>完成</button>
       </div>
@@ -143,29 +143,8 @@ export default function RecordingSettingsDialog({
           </button>
         ))}
       </div>
-      {(settingsTab === "model" || settingsTab === "outcome") && (
-        <fieldset disabled={state !== "idle"} className="config-panel-section">
-          {settingsTab === "model" ? (
-            <label>
-              原文语言
-              <select
-                aria-label="录音原文语言"
-                value={brief.source_language || "auto"}
-                onChange={(event) =>
-                  setBrief({
-                    ...brief,
-                    source_language: event.target
-                      .value as typeof brief.source_language,
-                  })
-                }
-              >
-                <option value="auto">自动识别（中英）</option>
-                <option value="zh">中文</option>
-                <option value="en">英文</option>
-                <option value="ja">日语（Beta）</option>
-              </select>
-            </label>
-          ) : (
+      {settingsTab === "outcome" && (
+        <fieldset disabled={state !== "idle"} className="config-fields config-output-language">
             <label>
               纪要输出语言
               <select
@@ -183,8 +162,6 @@ export default function RecordingSettingsDialog({
                 <option value="en">英文</option>
               </select>
             </label>
-          )}
-          <p className="muted">原文按所选语言转写，纪要按独立设置整理。</p>
         </fieldset>
       )}
       {settingsTab === "outcome" && (
@@ -291,42 +268,73 @@ export default function RecordingSettingsDialog({
       )}
       {settingsTab === "recording" && (
         <section>
-          <label>
+          <div className="config-section-heading">
+            <h3>采集设置</h3>
+            <p>选择录音音源。双轨录音可单独设定回声处理。</p>
+          </div>
+          <fieldset disabled={state !== "idle"} className="config-fields config-source-field">
+            <label>
+              录音来源
+              <select
+                aria-label="录音来源"
+                value={captureSource}
+                onChange={(e) =>
+                  setCaptureSource(e.target.value as typeof captureSource)
+                }
+              >
+                {browserCaptureAllowed() && <option value="browser">浏览器麦克风</option>}
+                <option value="macos-microphone" disabled={!nativeCapability?.available || !nativeCapability.microphone_only_supported}>
+                  现场会议 · 仅麦克风
+                </option>
+                <option
+                  value="macos-both"
+                  disabled={!nativeCapability?.available}
+                >
+                  macOS 电脑声音 + 麦克风
+                </option>
+                <option
+                  value="macos-system"
+                  disabled={!nativeCapability?.available}
+                >
+                  macOS 仅电脑声音
+                </option>
+              </select>
+            </label>
+          </fieldset>
+          <fieldset disabled={state !== "idle"} className="config-fields config-audio-preference">
+            <label className="config-echo-field">
+              双轨回声消除
+              <select
+                value={echoMode}
+                onChange={(event) =>
+                  setEchoMode(
+                    event.target.value === "aec3" ? "aec3" : "standard",
+                  )
+                }
+              >
+                <option value="standard">标准处理</option>
+                <option value="aec3">WebRTC AEC3（实验）</option>
+              </select>
+              <small>
+                {captureSource === "macos-both"
+                  ? "本次双轨录音将使用此设置。"
+                  : "下次选择电脑声音 + 麦克风时生效。"}
+                {echoMode === "aec3" && " AEC3 不可用时自动使用标准处理。"}
+              </small>
+            </label>
+          </fieldset>
+          <label className="config-silence-reminder">
             <input
               type="checkbox"
               checked={silenceReminder}
               onChange={(event) => setSilenceReminder(event.target.checked)}
             />
-            持续安静约 5 分钟时提醒（仅提醒，继续录音）
+            持续安静约 5 分钟时提醒
           </label>
-          <label className="capture-source">
-            录音来源
-            <select
-              aria-label="录音来源"
-              value={captureSource}
-              disabled={state !== "idle"}
-              onChange={(e) =>
-                setCaptureSource(e.target.value as typeof captureSource)
-              }
-            >
-              <option value="browser" disabled={!browserCaptureAllowed()}>
-                浏览器麦克风（支持实时草稿）
-              </option>
-              <option
-                value="macos-both"
-                disabled={!nativeCapability?.available}
-              >
-                macOS 电脑声音 + 麦克风
-              </option>
-              <option
-                value="macos-system"
-                disabled={!nativeCapability?.available}
-              >
-                macOS 仅电脑声音
-              </option>
-            </select>
-          </label>
-          {captureSource !== "browser" && (
+          {captureSource === "macos-microphone" && (
+            <p className="native-capture-hint">仅使用麦克风权限，录制当前输入设备的声音。</p>
+          )}
+          {(captureSource === "macos-system" || captureSource === "macos-both") && (
             <p className="native-capture-hint">
               首次使用需允许
               macOS“屏幕与系统音频录制”权限，联合采集还需麦克风权限。仅保存音频，不保存屏幕画面。建议戴耳机，避免麦克风重复收录扬声器声音。所选引擎生成实时草稿，停止后生成正式文字稿。
@@ -372,217 +380,225 @@ export default function RecordingSettingsDialog({
         </section>
       )}
       {settingsTab === "model" && (
-        <section>
+        <section className="config-recognition">
+          <div className="config-section-heading">
+            <h3>转写设置</h3>
+            <p>选择会议原文语言和实时识别引擎。</p>
+          </div>
+          <fieldset disabled={state !== "idle"} className="config-fields">
+            <label>
+              原文语言
+              <select
+                aria-label="录音原文语言"
+                value={brief.source_language || "auto"}
+                onChange={(event) =>
+                  setBrief({
+                    ...brief,
+                    source_language: event.target
+                      .value as typeof brief.source_language,
+                  })
+                }
+              >
+                <option value="auto">自动识别（中英）</option>
+                <option value="zh">中文</option>
+                <option value="en">英文</option>
+                <option value="ja">日语（Beta）</option>
+              </select>
+            </label>
+            <label>
+              实时识别引擎
+              <select
+                aria-label="实时识别引擎"
+                value={draftEngine}
+                disabled={state !== "idle"}
+                onChange={(event) =>
+                  setDraftEngine(event.target.value as "whisper" | "qwen")
+                }
+              >
+                {(["whisper", "qwen"] as const).map((id) => (
+                  <option
+                    key={id}
+                    value={id}
+                    disabled={!engines.find((engine) => engine.id === id)?.ready}
+                  >
+                    {id === "qwen" ? "千问 Qwen-ASR" : "Whisper"}
+                    {!engines.find((engine) => engine.id === id)?.ready
+                      ? "（未就绪）"
+                      : ""}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </fieldset>
+          <p className="config-field-hint">会后精细转写和纪要语言在「会后产物」中设置。</p>
+          {draftEngine === "qwen" && (
+            <details className="config-advanced">
+              <summary>识别细节与模型状态</summary>
+              <div className="config-advanced-body">
+                <label className="capture-source">
+                  <input
+                    type="checkbox"
+                    checked={streamEnabled}
+                    disabled={state !== "idle"}
+                    onChange={(event) => setStreamEnabled(event.target.checked)}
+                  />
+                  逐字推送
+                  <small>
+                    {responsiveMode
+                      ? "短片段先预览，再用后续上下文修订。"
+                      : "收集约 15 秒音频后，文字逐步显示。"}
+                    未确认文字不计入覆盖，也不能转为简记。关闭后整批显示。
+                  </small>
+                </label>
+                {streamEnabled && (
+                  <>
+                    <label className="capture-source">
+                      <input
+                        type="checkbox"
+                        checked={responsiveMode}
+                        disabled={state !== "idle" || !modelStatus}
+                        onChange={(event) => setResponsiveMode(event.target.checked)}
+                      />
+                      短片段与尾部修订（试用）
+                    </label>
+                    <p className="native-capture-hint">
+                      {responsiveMode
+                        ? "约 3 秒开始预览；优先在约 0.8 秒停顿处确认。15 秒为软目标，连续讲话可延长到 25 秒；硬切分的连续发言会合并阅读。"
+                        : "标准模式：约 15 秒一段，完成后确认。"}
+                    </p>
+                    {responsiveMode && (
+                      <label className="capture-source">
+                        <input
+                          type="checkbox"
+                          aria-label="前缀续写与尾部回退"
+                          checked={prefixEnabled}
+                          disabled={state !== "idle"}
+                          onChange={(event) => setPrefixEnabled(event.target.checked)}
+                        />
+                        前缀续写与尾部回退（试用）
+                        <small>
+                          连续预览稳定后保留前缀，重新生成尾部；确认时完整复核。音频相同可复用编码，音频增长后重新编码。
+                        </small>
+                      </label>
+                    )}
+                    <div className="capture-preflight">
+                      <span>
+                        Qwen 模型：
+                        {modelStatus?.loading
+                          ? "加载中"
+                          : modelStatus?.loaded
+                            ? "已常驻"
+                            : "未加载"}{" "}
+                        ·{" "}
+                        {modelStatus?.busy
+                          ? "识别中"
+                          : modelStatus?.formal_job_running
+                            ? "正式任务处理中"
+                            : "空闲"}
+                        {modelStatus?.peak_memory_gb
+                          ? ` · 峰值 ${modelStatus.peak_memory_gb.toFixed(1)} GB`
+                          : ""}
+                      </span>
+                      <button
+                        disabled={
+                          state !== "idle" || modelActionBusy || modelStatus?.busy
+                        }
+                        onClick={() => void controlModel("warm")}
+                      >
+                        预加载模型
+                      </button>
+                      <button
+                        disabled={
+                          !modelStatus?.loaded ||
+                          modelActionBusy ||
+                          modelStatus?.busy ||
+                          !["idle", "paused"].includes(state)
+                        }
+                        onClick={() => void controlModel("release")}
+                      >
+                        释放模型
+                      </button>
+                      <small>
+                        同一进程复用模型，空闲约 3
+                        分钟自动释放；正式处理任务优先释放常驻模型。取消正在识别的窗口会重建进程。
+                      </small>
+                    </div>
+                  </>
+                )}
+                {streamEnabled && (
+                  <fieldset
+                    className="live-context-settings"
+                    disabled={state !== "idle"}
+                  >
+                    <legend>上下文与纠错</legend>
+                    <label>
+                      <input
+                        type="checkbox"
+                        checked={contextEnabled}
+                        onChange={(e) => setContextEnabled(e.target.checked)}
+                      />{" "}
+                      使用前文与会议准备辅助识别
+                    </label>
+                    <label>
+                      会议术语／姓名
+                      <textarea
+                        aria-label="识别参考术语"
+                        rows={2}
+                        maxLength={1000}
+                        value={recognitionTerms}
+                        placeholder="例如：听记、Qwen、项目代号、参会人姓名；仅作为词汇参考"
+                        onChange={(e) => setRecognitionTerms(e.target.value)}
+                      />
+                    </label>
+                    <label>
+                      <input
+                        type="checkbox"
+                        checked={correctionEnabled}
+                        onChange={(e) => setCorrectionEnabled(e.target.checked)}
+                      />{" "}
+                      已确认片段智能纠错（本地 LLM）
+                    </label>
+                    {correctionEnabled && (
+                      <label>
+                        纠错模型
+                        <select
+                          aria-label="实时纠错模型"
+                          value={correctionProfileId}
+                          onChange={(e) => setCorrectionProfileId(e.target.value)}
+                        >
+                          <option value="">请选择本地模型配置</option>
+                          {environment?.analysis.profiles
+                            .filter((p) => p.provider_type === "local")
+                            .map((p) => (
+                              <option key={p.id} value={p.id}>
+                                {p.name} · {p.model}
+                              </option>
+                            ))}
+                        </select>
+                      </label>
+                    )}
+                    <small>
+                      原始识别始终保存；内容修改需在“纠错记录”确认。校对失败不影响录音与转写。与
+                      ASR 同时运行本地 LLM 可能增加延迟。
+                    </small>
+                  </fieldset>
+                )}
+              </div>
+            </details>
+          )}
           <button
+            className="text-btn config-management-link"
             onClick={() => {
               setSettingsOpen(false);
               onModels();
             }}
           >
-            分析 LLM 与本机服务配置
+            管理模型与服务 ↗
           </button>
-          <label className="capture-source">
-            实时草稿引擎
-            <select
-              aria-label="实时草稿引擎"
-              value={draftEngine}
-              disabled={state !== "idle"}
-              onChange={(event) =>
-                setDraftEngine(event.target.value as "whisper" | "qwen")
-              }
-            >
-              {(["whisper", "qwen"] as const).map((id) => (
-                <option
-                  key={id}
-                  value={id}
-                  disabled={!engines.find((engine) => engine.id === id)?.ready}
-                >
-                  {id === "qwen" ? "千问 Qwen-ASR" : "Whisper"}
-                  {!engines.find((engine) => engine.id === id)?.ready
-                    ? "（未就绪）"
-                    : ""}
-                </option>
-              ))}
-            </select>
-          </label>
-          {captureSource === "macos-both" && (
-            <label className="capture-source">
-              双轨实时消回声
-              <select
-                value={echoMode}
-                disabled={state !== "idle"}
-                onChange={(event) =>
-                  setEchoMode(
-                    event.target.value === "aec3" ? "aec3" : "standard",
-                  )
-                }
-              >
-                <option value="standard">标准</option>
-                <option value="aec3">WebRTC AEC3（实验）</option>
-              </select>
-              <small>AEC3 不可用时自动切回标准处理。原始音轨独立保存。</small>
-            </label>
-          )}
-          <p className="native-capture-hint">
-            实时草稿与停止后的正式转写引擎独立选择。
-            {draftEngine === "qwen"
-              ? `千问草稿按识别片段定位，不是精确字词时间。${streamEnabled ? "流式识别复用常驻模型" : "整批输出每段加载模型"}；正式转写仍保留精细对齐。`
-              : "Whisper 草稿保留句级时间戳。"}
-          </p>
-          {draftEngine === "qwen" && (
-            <label className="capture-source">
-              <input
-                type="checkbox"
-                checked={streamEnabled}
-                disabled={state !== "idle"}
-                onChange={(event) => setStreamEnabled(event.target.checked)}
-              />
-              逐字推送
-              <small>
-                {responsiveMode
-                  ? "短片段先预览，再用后续上下文修订。"
-                  : "收集约 15 秒音频后，文字逐步显示。"}
-                未确认文字不计入覆盖，也不能转为简记。关闭后整批显示。
-              </small>
-            </label>
-          )}
-          {draftEngine === "qwen" && streamEnabled && (
-            <>
-              <label className="capture-source">
-                <input
-                  type="checkbox"
-                  checked={responsiveMode}
-                  disabled={state !== "idle" || !modelStatus}
-                  onChange={(event) => setResponsiveMode(event.target.checked)}
-                />
-                短片段与尾部修订（试用）
-              </label>
-              <p className="native-capture-hint">
-                {responsiveMode
-                  ? "约 3 秒开始预览；优先在约 0.8 秒停顿处确认。15 秒为软目标，连续讲话可延长到 25 秒；硬切分的连续发言会合并阅读。"
-                  : "标准模式：约 15 秒一段，完成后确认。"}
-              </p>
-              {responsiveMode && (
-                <label className="capture-source">
-                  <input
-                    type="checkbox"
-                    aria-label="前缀续写与尾部回退"
-                    checked={prefixEnabled}
-                    disabled={state !== "idle"}
-                    onChange={(event) => setPrefixEnabled(event.target.checked)}
-                  />
-                  前缀续写与尾部回退（试用）
-                  <small>
-                    连续预览稳定后保留前缀，重新生成尾部；确认时完整复核。音频相同可复用编码，音频增长后重新编码。
-                  </small>
-                </label>
-              )}
-              <div className="capture-preflight">
-                <span>
-                  Qwen 模型：
-                  {modelStatus?.loading
-                    ? "加载中"
-                    : modelStatus?.loaded
-                      ? "已常驻"
-                      : "未加载"}{" "}
-                  ·{" "}
-                  {modelStatus?.busy
-                    ? "识别中"
-                    : modelStatus?.formal_job_running
-                      ? "正式任务处理中"
-                      : "空闲"}
-                  {modelStatus?.peak_memory_gb
-                    ? ` · 峰值 ${modelStatus.peak_memory_gb.toFixed(1)} GB`
-                    : ""}
-                </span>
-                <button
-                  disabled={
-                    state !== "idle" || modelActionBusy || modelStatus?.busy
-                  }
-                  onClick={() => void controlModel("warm")}
-                >
-                  预加载模型
-                </button>
-                <button
-                  disabled={
-                    !modelStatus?.loaded ||
-                    modelActionBusy ||
-                    modelStatus?.busy ||
-                    !["idle", "paused"].includes(state)
-                  }
-                  onClick={() => void controlModel("release")}
-                >
-                  释放模型
-                </button>
-                <small>
-                  同一进程复用模型，空闲约 3
-                  分钟自动释放；正式处理任务优先释放常驻模型。取消正在识别的窗口会重建进程。
-                </small>
-              </div>
-            </>
-          )}
-          {draftEngine === "qwen" && streamEnabled && (
-            <fieldset
-              className="live-context-settings"
-              disabled={state !== "idle"}
-            >
-              <legend>上下文与纠错</legend>
-              <label>
-                <input
-                  type="checkbox"
-                  checked={contextEnabled}
-                  onChange={(e) => setContextEnabled(e.target.checked)}
-                />{" "}
-                使用前文与会议准备辅助识别
-              </label>
-              <label>
-                会议术语／姓名
-                <textarea
-                  aria-label="识别参考术语"
-                  rows={2}
-                  maxLength={1000}
-                  value={recognitionTerms}
-                  placeholder="例如：听记、Qwen、项目代号、参会人姓名；仅作为词汇参考"
-                  onChange={(e) => setRecognitionTerms(e.target.value)}
-                />
-              </label>
-              <label>
-                <input
-                  type="checkbox"
-                  checked={correctionEnabled}
-                  onChange={(e) => setCorrectionEnabled(e.target.checked)}
-                />{" "}
-                已确认片段智能纠错（本地 LLM）
-              </label>
-              {correctionEnabled && (
-                <label>
-                  纠错模型
-                  <select
-                    aria-label="实时纠错模型"
-                    value={correctionProfileId}
-                    onChange={(e) => setCorrectionProfileId(e.target.value)}
-                  >
-                    <option value="">请选择本地模型配置</option>
-                    {environment?.analysis.profiles
-                      .filter((p) => p.provider_type === "local")
-                      .map((p) => (
-                        <option key={p.id} value={p.id}>
-                          {p.name} · {p.model}
-                        </option>
-                      ))}
-                  </select>
-                </label>
-              )}
-              <small>
-                原始识别始终保存；内容修改需在“纠错记录”确认。校对失败不影响录音与转写。与
-                ASR 同时运行本地 LLM 可能增加延迟。
-              </small>
-            </fieldset>
-          )}
         </section>
       )}
       <p className="muted">
-        模型选择保存在本机工作空间，其余录音偏好保存在当前浏览器。录音时不能更换音源或识别模式；结束后可选择快速完成或精细处理。
+        音源、识别偏好和回声消除模式会自动保存。
       </p>
     </Modal>
   );

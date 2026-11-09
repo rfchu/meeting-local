@@ -286,7 +286,7 @@ export const api = {
     ),
   recordingReadiness: () => request<Readiness>("/recording-readiness"),
   sampleMeeting: () => request<SampleMeeting>("/onboarding/sample"),
-  startCaptureTest: (source: "macos-system" | "macos-both") =>
+  startCaptureTest: (source: "macos-system" | "macos-both" | "macos-microphone") =>
     request<CaptureTest>("/capture-tests", json("POST", { source })),
   captureTest: (id: string) => request<CaptureTest>(`/capture-tests/${id}`),
   deleteCaptureTest: (id: string) =>
@@ -599,10 +599,10 @@ export const api = {
   liveModelControl: (action: "warm" | "release") =>
     request("/live-model/" + action, { method: "POST" }),
   nativeCapability: () => request<NativeCapability>("/native-capture"),
-  nativeStart: (microphone: boolean, keepAwake = true) =>
+  nativeStart: (microphone: boolean, keepAwake = true, microphoneOnly = false) =>
     request<RecordingSession>(
       "/native-capture",
-      json("POST", { microphone, keep_awake: keepAwake }),
+      json("POST", { microphone, keep_awake: keepAwake, microphone_only: microphoneOnly }),
     ),
   nativeStatus: (id: string, signal?: AbortSignal) =>
     request<NativeCaptureStatus>(`/native-capture/${id}`, {

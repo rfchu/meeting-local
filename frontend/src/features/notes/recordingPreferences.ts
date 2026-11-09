@@ -1,4 +1,6 @@
 import type { SourceLanguage, OutputLanguage } from "../../types";
+import type { CaptureSource } from "../onboarding/readiness";
+export type EchoMode = "standard" | "aec3";
 export type CompletionMode = "quick" | "full" | "none";
 export interface RecordingPreferences {
   sourceLanguage?: SourceLanguage;
@@ -13,8 +15,9 @@ export interface RecordingPreferences {
   silenceReminder: boolean;
   autoProcess: boolean;
   postGoal: "transcript" | "minutes";
-  captureSource: "browser" | "macos-system" | "macos-both";
+  captureSource: CaptureSource;
   draftEngine: "whisper" | "qwen";
+  echoMode: EchoMode;
   streamEnabled: boolean;
   responsiveMode: boolean;
   completionMode: CompletionMode;
@@ -35,6 +38,7 @@ export const DEFAULT_RECORDING_PREFERENCES: RecordingPreferences = {
   postGoal: "transcript",
   captureSource: "browser",
   draftEngine: "whisper",
+  echoMode: "standard",
   streamEnabled: true,
   responsiveMode: true,
   completionMode: "quick",
@@ -75,12 +79,13 @@ export function readRecordingPreferences(
         typeof value.silenceReminder === "boolean"
           ? value.silenceReminder
           : true,
-      captureSource: ["browser", "macos-system", "macos-both"].includes(
+      captureSource: ["browser", "macos-system", "macos-both", "macos-microphone"].includes(
         value.captureSource,
       )
         ? value.captureSource
         : "browser",
       draftEngine: value.draftEngine === "qwen" ? "qwen" : "whisper",
+      echoMode: value.echoMode === "aec3" ? "aec3" : "standard",
       streamEnabled:
         typeof value.streamEnabled === "boolean" ? value.streamEnabled : true,
       responsiveMode:

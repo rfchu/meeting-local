@@ -16,9 +16,9 @@ interface Props {
   uploading: boolean;
   onSelect: (id: string) => void;
   onUpload: (file: File) => void;
-  onRecord: () => void;
+  onRecord?: () => void;
   onFollowups: () => void;
-  onManage: () => void;
+  onManage?: () => void;
   onSearch: () => void;
   recoveryCount: number;
 }
@@ -61,13 +61,13 @@ export default function Sidebar({
       >
         {uploading ? "正在导入…" : "＋ 导入会议录音"}
       </button>
-      <button
+      {onRecord && <button
         className="wide record-button"
         disabled={uploading}
         onClick={onRecord}
       >
         ● 开始实时记录
-      </button>
+      </button>}
       <input
         id="file"
         type="file"
@@ -114,12 +114,12 @@ export default function Sidebar({
       </div>
       <div className="sidebar-bottom">
         <span className="dot" /> 会议数据保存在本机
-        <button className="text-btn sidebar-management" onClick={onManage}>
+        {onManage && <button className="text-btn sidebar-management" onClick={onManage}>
           运行管理 ↗
           {recoveryCount > 0 && (
             <span className="recovery-count">待恢复 {recoveryCount}</span>
           )}
-        </button>
+        </button>}
       </div>
     </aside>
   );

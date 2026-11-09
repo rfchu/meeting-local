@@ -85,14 +85,29 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, 
         submenu.addItem(withTitle: "关于听记宿主", action: #selector(about), keyEquivalent: "")
         let config = submenu.addItem(withTitle: "连接设置…", action: #selector(showConfiguration), keyEquivalent: ","); config.target = self
         submenu.addItem(withTitle: "打开伴随窗口", action: #selector(showCompanion), keyEquivalent: "").target = self
+        submenu.addItem(withTitle: "打开浏览器工作台", action: #selector(openBrowserWorkspace), keyEquivalent: "").target = self
         submenu.addItem(.separator())
         submenu.addItem(withTitle: "重新载入工作区…", action: #selector(reloadWorkspace), keyEquivalent: "r").target = self
         submenu.addItem(withTitle: "返回宿主", action: #selector(showWindow), keyEquivalent: "").target = self
         submenu.addItem(.separator())
         let quit = submenu.addItem(withTitle: "退出听记宿主", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"); quit.target = NSApp
-        app.submenu = submenu; menu.addItem(app); NSApp.mainMenu = menu
+        app.submenu = submenu; menu.addItem(app)
+
+        // Nil targets let AppKit dispatch these commands to the focused WebKit or native field.
+        let edit = NSMenuItem(title: "编辑", action: nil, keyEquivalent: "")
+        let editMenu = NSMenu(title: "编辑")
+        editMenu.addItem(withTitle: "剪切", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
+        editMenu.addItem(withTitle: "复制", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+        editMenu.addItem(withTitle: "粘贴", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        editMenu.addItem(withTitle: "全选", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        edit.submenu = editMenu
+        menu.addItem(edit)
+        NSApp.mainMenu = menu
     }
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        if menuItem.action == #selector(openBrowserWorkspace) {
+            return browserButton.isEnabled
+        }
         if menuItem.action == #selector(reloadWorkspace) {
             return workspace?.canReload == true && !starting && !restarting
         }
@@ -156,7 +171,7 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, 
         menuReturn?.isEnabled = recording != nil && openButton.isEnabled
         statusItem?.button?.title = recording?.phase == "recording" ? " 听记 · 录音中" :
             recording?.phase == "paused" ? " 听记 · 已暂停" : " 听记"
-        browserButton.isEnabled = configuration.portableRuntime == nil && openButton.isEnabled; menuBrowser?.isEnabled = browserButton.isEnabled
+        browserButton.isEnabled = openButton.isEnabled; menuBrowser?.isEnabled = browserButton.isEnabled
         menuOpen?.isEnabled = openButton.isEnabled; menuSettings?.isEnabled = !starting
         statusItem?.button?.toolTip = "听记 · " + status.stringValue
         if loaded.problem { detail.stringValue = "已保存配置无法使用。请打开连接设置修复；当前没有连接或启动任何服务。"; return }
@@ -354,8 +369,22 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, 
         feedback.stringValue = "已打开内嵌工作区；关闭窗口会保留页面。"
     }
     @objc private func openBrowserWorkspace() {
-        guard configuration.portableRuntime == nil, state.canOpen, !loaded.problem, !starting, !opening else { return }
+        guard state.canOpen, !loaded.problem, !starting, !opening else { return }
         opening = true; probing = true; let token = generation.next(); render()
+        if configuration.portableRuntime != nil {
+            client.browserWorkspace(configuration) { [weak self] target in
+                DispatchQueue.main.async {
+                    guard let self, self.generation.accepts(token) else { return }
+                    self.opening = false; self.probing = false; self.render()
+                    if let target, NSWorkspace.shared.open(target) {
+                        self.feedback.stringValue = "已在默认浏览器打开会议工作台。"
+                    } else {
+                        self.feedback.stringValue = "暂时无法授权浏览器，请稍后重试。"
+                    }
+                }
+            }
+            return
+        }
         client.probe(configuration) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self, self.generation.accepts(token) else { return }

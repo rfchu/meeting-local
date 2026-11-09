@@ -11,6 +11,12 @@ from .live_segmentation import elastic_plan,HARD_SECONDS
 BASE=Path(__file__).resolve().parents[1]
 HELPER=Path(os.getenv('TINGJI_CAPTURE_APP',str(Path.home()/'Library/Caches/cn.seeknow.tingji/TingjiCapture.app')))/'Contents/MacOS/TingjiCapture'
 
+def native_tracks(session):
+    if session.get('microphone_only'):
+        return ('microphone',)
+    return ('system','microphone') if session.get('include_microphone') else ('system',)
+
+
 class NativeCapture:
     def __init__(self,store,recordings):
         self.store=store;self.recordings=recordings;self.processes={};self.last_seen={}
@@ -147,24 +153,28 @@ class NativeCapture:
                 self.recordings.event('capture.exited',rid,exit_code=code)
             return code
 
-    def start(self,microphone=True):return self._start(microphone,True)
+    def start(self,microphone=True,*,microphone_only=False):return self._start(microphone,True,microphone_only)
 
     def _start_direct(self,microphone=True):return self._start(microphone,False)
 
-    def _start(self,microphone,broker):
+    def _start(self,microphone,broker,microphone_only=False):
         with self.lock:
             if not self.available():raise ValueError('原生采集器未安装，请运行 bash scripts/build_capture.sh')
             if self.ownership()['lease']!='free':raise ValueError('采集所有权尚未释放或无法核对，未启动第二个采集器')
             capability=self.capability()
             if capability.get('ownership_protocol_version')!=1:raise ValueError('请先更新原生采集器（bash scripts/build_capture.sh），以启用跨进程采集保护')
             if any(p.poll() is None for p in self.processes.values()):raise ValueError('已有系统音频采集正在运行，请先停止')
+            if microphone_only and not capability.get('microphone_only_supported'):
+                raise ValueError('当前采集器不支持仅麦克风，请更新听记')
             session=self.recordings.create('audio/wav');rid=session['id']
             session.update(source='macos',include_microphone=microphone,capture_incarnation=uuid.uuid4().hex)
+            if microphone_only:session['microphone_only']=True
             if broker:session['capture_transport']='broker_v2'
             folder=self.recordings.folder(rid);RecordingStore.write(folder/'session.json',session)
             if broker:
                 args=[sys.executable,'-m','app.capture_broker','--root',str(self.recordings.root),'--recording-id',rid,'--incarnation',session['capture_incarnation'],'--helper',str(HELPER)]
-                if microphone:args.append('--microphone')
+                if microphone_only:args.append('--microphone-only')
+                elif microphone:args.append('--microphone')
                 with (folder/'broker.log').open('ab') as log:
                     launcher=subprocess.Popen(args,stdin=subprocess.DEVNULL,stdout=log,stderr=log,start_new_session=True,close_fds=True,cwd=BASE)
                 client=BrokerClient(self.recordings.root,rid,session['capture_incarnation'])
@@ -188,7 +198,8 @@ class NativeCapture:
                 RecordingStore.write(folder/'session.json',session)
                 raise ValueError(session['stop_reason'])
             args=[str(HELPER),'--output',str(folder),'--incarnation',session['capture_incarnation']]
-            if microphone:args.append('--microphone')
+            if microphone_only:args.append('--microphone-only')
+            elif microphone:args.append('--microphone')
             with (folder/'capture.log').open('ab') as log:
                 process=subprocess.Popen(args,stdin=subprocess.PIPE,stdout=log,stderr=log)
             self.processes[rid]=process;self.last_seen[rid]=time.monotonic()
@@ -227,7 +238,7 @@ class NativeCapture:
         heartbeat_age=max(0,time.time()-path.stat().st_mtime) if path.exists() else None
         stalled=state=='recording' and heartbeat_age is not None and heartbeat_age>10
         tracks=[]
-        for name in ('system','microphone') if session.get('include_microphone') else ('system',):
+        for name in native_tracks(session):
             frames=status.get(name+'_frames',0)
             age=status.get('buffer_age',{}).get(name)
             silence=status.get('silence_seconds',{}).get(name)
@@ -274,7 +285,7 @@ class NativeCapture:
             if not split_tracks and end-begin>2*limit*16000:
                 latest=max(begin,end-limit*16000);skipped=(latest-begin)/16000;begin=latest
             if skipped:sentence_end=None
-            names=('system','microphone') if session.get('include_microphone') else ('system',)
+            names=native_tracks(session)
             quiet=responsive and all(status.get('silence_seconds',{}).get(name,0)>=.8 for name in names)
             if quiet and available_frames>0:
                 horizon=status.get('duration',horizon);end=round(horizon*16000)
@@ -285,7 +296,7 @@ class NativeCapture:
             if elastic and (split_tracks or sentence_end is not None) and status['state']=='recording':minimum=3*16000
             if count<minimum:return {'ready':False,'next_offset':offset,'skipped_seconds':0}
             folder=self.recordings.folder(rid);tracks=[]
-            for name in ('system','microphone') if session.get('include_microphone') else ('system',):
+            for name in names:
                 path=folder/(name+'.pcm')
                 samples=array('h')
                 if path.exists():
@@ -372,9 +383,10 @@ class NativeCapture:
             if blocks_publication(self.ownership(),rid):raise ValueError('采集所有权尚未释放，音轨保留，请稍后重试整理')
             session=self.recordings.read(rid)
             if session['state']=='completed':raise ValueError('此录音已完成并被删除，不能重新恢复')
-            sources=[folder/f'{name}.pcm' for name in ('system','microphone')]
+            names=('microphone',) if session.get('microphone_only') else ('system','microphone')
+            sources=[folder/f'{name}.pcm' for name in names]
             sources=[path for path in sources if path.is_file() and path.stat().st_size>0]
-            if not sources:raise ValueError(status.get('error') or '尚未采集到音频，请授权并开始播放会议声音')
+            if not sources:raise ValueError(status.get('error') or '尚未采集到音频，请检查所选音源和录音权限')
             # ScreenCaptureKit may stop audio callbacks during silence; retain the clock tail.
             timeline=max(0,float(status.get('duration',0)))
             if not math.isfinite(timeline) or timeline>62500:raise ValueError('录音时间线无效，原始音轨已保留')
@@ -402,7 +414,7 @@ class NativeCapture:
                 tracks.append(output.name)
             with wave.open(str(target/'original'),'rb') as wav:duration=wav.getnframes()/wav.getframerate()
             with self.recordings.lock:
-                session=self.recordings.read(rid);filename='线上会议-'+time.strftime('%Y%m%d-%H%M%S',time.localtime(session['created']))+'.wav'
+                session=self.recordings.read(rid);filename=('现场会议-' if session.get('microphone_only') else '线上会议-')+time.strftime('%Y%m%d-%H%M%S',time.localtime(session['created']))+'.wav'
                 RecordingStore.write(target/'asset.json',{'filename':filename,'source':'macos','tracks':tracks,'sample_rate':16000})
                 with self.store.connect() as db:
                     db.execute('BEGIN IMMEDIATE')

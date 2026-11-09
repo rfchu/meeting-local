@@ -18,6 +18,22 @@ final class ServiceClient: NSObject, URLSessionTaskDelegate, URLSessionDataDeleg
         session = URLSession(configuration: options, delegate: self, delegateQueue: nil)
     }
     func close() { session.invalidateAndCancel() }
+    func browserWorkspace(_ configuration: HostConfiguration, completion: @escaping (URL?) -> Void) {
+        let landing = configuration.workspaceURL.appendingPathComponent("_tingji/browser")
+        var request = URLRequest(url: landing)
+        request.httpMethod = "POST"
+        authorized(request, configuration: configuration) { data, status in
+            guard status == 200,
+                  let reply = (try? JSONSerialization.jsonObject(with: data)) as? [String: String],
+                  let code = reply["code"], code.range(of: "^[0-9a-f]{64}$", options: .regularExpression) != nil,
+                  var url = URLComponents(url: landing, resolvingAgainstBaseURL: false) else {
+                completion(nil)
+                return
+            }
+            url.fragment = code
+            completion(url.url)
+        }
+    }
     func probe(_ configuration: HostConfiguration, completion: @escaping (ConnectionState) -> Void) {
         var request = URLRequest(url: configuration.identityURL)
         let challenge = configuration.portableRuntime == nil ? nil : Self.challenge()
