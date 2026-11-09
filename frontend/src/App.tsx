@@ -997,14 +997,6 @@ export default function App({ browserWorkspace = false }: { browserWorkspace?: b
         />
       )}
       <main>
-        <header>
-          <div className="breadcrumb">
-            工作空间 <span>/</span> 会议转写
-          </div>
-          <div className="local-pill">
-            <span className="dot" /> 转写本地处理 · 分析引擎可配置
-          </div>
-        </header>
         {browserWorkspace && sessionExpired && (
           <div className="browser-session-expired-banner" role="alert">
             <div className="session-expired-content">

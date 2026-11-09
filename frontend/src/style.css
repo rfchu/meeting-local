@@ -170,31 +170,6 @@ aside {
 main {
   margin-left: 248px;
 }
-header {
-  height: 82px;
-  border-bottom: 1px solid var(--line);
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0 42px;
-  background: #ffffff99;
-}
-.breadcrumb {
-  font-size: 12px;
-  color: #657080;
-}
-.breadcrumb span {
-  padding: 0 12px;
-  color: #bbb;
-}
-.local-pill {
-  font-size: 11px;
-  color: #687584;
-  background: white;
-  border: 1px solid var(--line);
-  border-radius: 20px;
-  padding: 8px 12px;
-}
 #welcome {
   max-width: 950px;
   margin: auto;
@@ -1178,12 +1153,6 @@ dialog code {
     left: 185px;
     padding: 14px;
     gap: 8px;
-  }
-  header {
-    padding: 0 20px;
-  }
-  .local-pill {
-    display: none;
   }
   #detail {
     padding: 24px 16px 100px;
