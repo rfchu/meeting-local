@@ -66,6 +66,7 @@ export default function MeetingLibrary({
 }) {
   const client = useQueryClient();
   const [filter, setFilter] = useState("");
+  const [search, setSearch] = useState("");
   const [archived, setArchived] = useState(false);
   const [selected, setSelected] = useState<string[]>([]);
   const [group, setGroup] = useState("");
@@ -73,11 +74,24 @@ export default function MeetingLibrary({
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
-  const visible = meetings.filter(
-    (item) =>
-      !!item.library?.archived === archived &&
-      (!filter || groupKey(item) === filter),
-  );
+
+  const activeCount = meetings.filter((item) => !item.library?.archived).length;
+  const archivedCount = meetings.filter((item) => !!item.library?.archived).length;
+
+  const normalizedSearch = search.trim().toLowerCase();
+  const visible = meetings.filter((item) => {
+    if (!!item.library?.archived !== archived) return false;
+    if (filter && groupKey(item) !== filter) return false;
+    if (normalizedSearch) {
+      const titleMatch = item.title.toLowerCase().includes(normalizedSearch);
+      const dateMatch = item.created.toLowerCase().includes(normalizedSearch);
+      const groupMatch =
+        item.library?.group_name &&
+        item.library.group_name.toLowerCase().includes(normalizedSearch);
+      if (!titleMatch && !dateMatch && !groupMatch) return false;
+    }
+    return true;
+  });
   const groups = [
     ...new Map(
       meetings
@@ -212,6 +226,35 @@ export default function MeetingLibrary({
       <div className="meeting-library-body">
         <div className="library-top-bar">
           <div className="library-filter-group">
+            <div className="library-segmented" role="tablist">
+              <button
+                type="button"
+                role="tab"
+                aria-selected={!archived}
+                className={`library-segment-tab ${!archived ? "active" : ""}`}
+                disabled={busy}
+                onClick={() => {
+                  setArchived(false);
+                  setSelected([]);
+                }}
+              >
+                全部会议 ({activeCount})
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={archived}
+                className={`library-segment-tab ${archived ? "active" : ""}`}
+                disabled={busy}
+                onClick={() => {
+                  setArchived(true);
+                  setSelected([]);
+                }}
+              >
+                已归档 ({archivedCount})
+              </button>
+            </div>
+
             <label
               style={{
                 fontSize: 13,
@@ -220,6 +263,7 @@ export default function MeetingLibrary({
                 display: "flex",
                 alignItems: "center",
                 gap: 6,
+                marginLeft: 4,
               }}
             >
               归类筛选:
@@ -240,27 +284,29 @@ export default function MeetingLibrary({
                 ))}
               </select>
             </label>
-            <label
-              style={{
-                fontSize: 13,
-                color: "#475569",
-                display: "flex",
-                alignItems: "center",
-                gap: 6,
-                cursor: "pointer",
+          </div>
+
+          <div className="library-search-box">
+            <input
+              type="text"
+              value={search}
+              placeholder="搜索会议名称、归类或日期..."
+              onChange={(e) => {
+                setSearch(e.target.value);
+                setSelected([]);
               }}
-            >
-              <input
-                type="checkbox"
-                checked={archived}
-                disabled={busy}
-                onChange={(event) => {
-                  setArchived(event.target.checked);
-                  setSelected([]);
-                }}
-              />
-              查看归档
-            </label>
+              aria-label="搜索会议"
+            />
+            {search && (
+              <button
+                type="button"
+                className="library-search-clear"
+                onClick={() => setSearch("")}
+                aria-label="清除搜索"
+              >
+                ✕
+              </button>
+            )}
           </div>
         </div>
 
@@ -449,7 +495,23 @@ export default function MeetingLibrary({
         <div className="library-table-container">
           {!visible.length ? (
             <div className="library-empty-state">
-              <p>📭 当前视图下没有会议</p>
+              {search ? (
+                <div>
+                  <p>🔍 未搜索到匹配「{search}」的会议</p>
+                  <button
+                    type="button"
+                    className="library-action-btn"
+                    style={{ marginTop: 8 }}
+                    onClick={() => setSearch("")}
+                  >
+                    清除搜索条件
+                  </button>
+                </div>
+              ) : archived ? (
+                <p>📭 暂无已归档会议</p>
+              ) : (
+                <p>📭 暂无会议记录</p>
+              )}
             </div>
           ) : (
             <table className="library-table">
