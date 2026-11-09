@@ -1,4 +1,6 @@
 """Structured interview evidence and human-owned review, independent of hiring decisions."""
+import re
+from difflib import SequenceMatcher
 from typing import Literal
 from pydantic import BaseModel,Field
 
@@ -54,6 +56,59 @@ class Concern(InterviewItem):
 class InterviewAction(InterviewItem):
     owner:str|None=Field(default=None,max_length=200)
     due_date:str|None=Field(default=None,max_length=200)
+def _clean_text(s: str) -> str:
+    return re.sub(r'[^\w\u4e00-\u9fff]+', '', (s or '').lower())
+
+def _match_or_locate_evidence(evidence, segments: list[dict], by_id: dict[str, str], seg_index_map: dict[str, int]) -> bool:
+    sid = evidence.segment_id
+    quote = (evidence.quote or '').strip()
+    if not quote:
+        return False
+    # 1. Exact match in claimed segment
+    if sid in by_id and quote in by_id[sid]:
+        return True
+    
+    clean_q = _clean_text(quote)
+    if not clean_q:
+        return False
+
+    # 2. Normalized match in claimed segment (ignoring punctuation, spaces, case)
+    if sid in by_id and clean_q in _clean_text(by_id[sid]):
+        return True
+
+    # 3. Check adjacent segments in small window (+-2 segments)
+    if sid in seg_index_map:
+        idx = seg_index_map[sid]
+        for start_offset in range(-2, 1):
+            window = segments[max(0, idx + start_offset) : min(len(segments), idx + start_offset + 3)]
+            combined_raw = ''.join(s.get('text', '') for s in window)
+            combined_clean = _clean_text(combined_raw)
+            if quote in combined_raw or clean_q in combined_clean:
+                return True
+            if len(clean_q) >= 6:
+                ratio = SequenceMatcher(None, clean_q, combined_clean).quick_ratio()
+                if ratio >= 0.5:
+                    return True
+
+    # 4. Search in all other segments across the meeting
+    for s in segments:
+        s_clean = _clean_text(s.get('text', ''))
+        if quote in s.get('text', '') or clean_q in s_clean:
+            evidence.segment_id = s['id']
+            return True
+
+    # 5. Check if quote has high similarity or long common substring with claimed window
+    if len(clean_q) >= 6 and sid in seg_index_map:
+        idx = seg_index_map[sid]
+        window = segments[max(0, idx - 2) : min(len(segments), idx + 3)]
+        combined_clean = _clean_text(''.join(s.get('text', '') for s in window))
+        matcher = SequenceMatcher(None, clean_q, combined_clean)
+        match = matcher.find_longest_match(0, len(clean_q), 0, len(combined_clean))
+        if match.size >= max(4, int(len(clean_q) * 0.45)):
+            return True
+
+    return False
+
 class InterviewResult(BaseModel):
     background:list[InterviewItem]=Field(default_factory=list,max_length=20)
     qa:list[InterviewQA]=Field(default_factory=list,max_length=40)
@@ -69,10 +124,12 @@ class InterviewResult(BaseModel):
             if isinstance(item,InterviewQA):yield from item.question_evidence
     def validate_sources(self,segments,roles=None,*,require_questions=False):
         by_id={s['id']:s['text'] for s in segments}
+        seg_index_map={s['id']:i for i,s in enumerate(segments)}
         for item in self.items():
             if isinstance(item,Competency) and item.coverage!='not_discussed' and not item.evidence:raise ValueError('能力证据缺少原文依据')
         for evidence in self.evidence():
-            if evidence.segment_id not in by_id or evidence.quote not in by_id[evidence.segment_id]:raise ValueError('面试结果引用或原文摘录不匹配，请重新生成或核对')
+            if not _match_or_locate_evidence(evidence,segments,by_id,seg_index_map):
+                raise ValueError('面试结果引用或原文摘录不匹配，请重新生成或核对')
         if require_questions and any(not item.question_evidence for item in self.qa):
             raise ValueError('面试问题缺少原文依据，请核对后重新生成')
         if roles is not None:
