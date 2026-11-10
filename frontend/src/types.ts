@@ -63,6 +63,7 @@ export interface InterviewPreparation {
   job_description: string;
 }
 export interface InterviewEvidence {
+  span_segment_ids?: string[];
   segment_id: string;
   quote: string;
 }

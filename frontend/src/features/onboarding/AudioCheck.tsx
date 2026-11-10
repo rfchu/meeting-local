@@ -8,6 +8,7 @@ export interface CaptureTest {
   duration: number;
   source: string;
   error: string;
+  levels?: Partial<Record<"system" | "microphone", number>>;
 }
 export default function AudioCheck({
   source,
@@ -18,7 +19,7 @@ export default function AudioCheck({
   source: CaptureSource;
   engine: "qwen" | "whisper";
   engineReady: boolean;
-  onTested: () => void;
+  onTested?: () => void;
 }) {
   const [state, setState] = useState("idle"),
     [seconds, setSeconds] = useState(0),
@@ -26,6 +27,7 @@ export default function AudioCheck({
   const [audio, setAudio] = useState(""),
     [text, setText] = useState(""),
     [level, setLevel] = useState(0);
+  const [nativeLevels, setNativeLevels] = useState<CaptureTest["levels"]>();
   const generation = useRef(0),
     stream = useRef<MediaStream | null>(null),
     context = useRef<AudioContext | null>(null);
@@ -70,9 +72,12 @@ export default function AudioCheck({
     objectURL.current = URL.createObjectURL(value);
     setAudio(objectURL.current);
     setState("completed");
-    onTested();
+    onTested?.();
   };
+  const pending = useRef(false);
   const start = async () => {
+    if (pending.current) return;
+    pending.current = true;
     const token = ++generation.current;
     cleanup();
     clearAudio();
@@ -81,6 +86,7 @@ export default function AudioCheck({
     setError("");
     setSeconds(0);
     setLevel(0);
+    setNativeLevels(undefined);
     setState("requesting");
     try {
       if (source !== "browser") {
@@ -99,6 +105,7 @@ export default function AudioCheck({
             const current = await api.captureTest(item.id);
             if (token !== generation.current) return;
             setSeconds(Math.floor(current.duration));
+            setNativeLevels(current.levels);
             if (current.state === "recording") setState("recording");
             if (current.state === "failed")
               throw new Error(current.error || "试录失败，请检查权限");
@@ -205,6 +212,8 @@ export default function AudioCheck({
             : (e as Error).message,
         );
       }
+    } finally {
+      if (token === generation.current) pending.current = false;
     }
   };
   const transcribe = async () => {
@@ -255,16 +264,23 @@ export default function AudioCheck({
       {state === "recording" && (
         <div role="status">
           <strong>{seconds}/10 秒</strong>
-          <meter
-            min={0}
-            max={1}
-            value={source === "browser" ? level : 0}
-            aria-label="麦克风测试音量"
-            hidden={source !== "browser"}
-          />
-          <span>
-            {source !== "browser" ? "等待原生采集完成" : "请说话并观察音量"}
-          </span>
+          {source === "browser" && (
+            <meter min={0} max={1} value={level} aria-label="麦克风测试音量" />
+          )}
+        </div>
+      )}
+      {source !== "browser" && ["recording", "completed"].includes(state) && (
+        <div aria-label="原生试录电平">
+          {(source === "macos-both" ? ["system", "microphone"] as const
+            : source === "macos-system" ? ["system"] as const : ["microphone"] as const
+          ).map((track) => {
+            const name = track === "system" ? "电脑声音" : "麦克风";
+            const rms = nativeLevels?.[track];
+            return <div key={track}>
+              {name} <meter min={0} max={1} value={Math.min(1, Math.sqrt(rms ?? 0) * 2.4)} aria-label={name + "测试音量"} />
+              {" "}{rms == null ? "等待输入" : rms >= 0.002 ? "有输入" : "无信号"}
+            </div>;
+          })}
         </div>
       )}
       {state === "requesting" && <p role="status">等待采集权限…</p>}
@@ -276,6 +292,7 @@ export default function AudioCheck({
           <button
             onClick={() => {
               generation.current++;
+              pending.current = false;
               cleanup();
               setState(audio ? "completed" : "idle");
             }}

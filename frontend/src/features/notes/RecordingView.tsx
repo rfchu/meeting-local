@@ -2,7 +2,6 @@ import { useQuery } from "@tanstack/react-query";
 import { api } from "../../api";
 import { useEffect, useState } from "react";
 import { browserCaptureAllowed } from "../../preferences/nativeHost";
-import RecordingSettingsDialog from "./RecordingSettingsDialog";
 import { toggleOverviewFocus } from "../overview/notes";
 import LiveOverviewPanel from "../overview/LiveOverviewPanel";
 import RecordingReadiness from "../onboarding/RecordingReadiness";
@@ -141,13 +140,9 @@ export default function RecordingView({
   setPrefixEnabled,
   setRecognitionTerms,
   setResponsiveMode,
-  setSettingsOpen,
-  setSettingsTab,
   setSilenceReminder,
   setStreamEnabled,
   setTermsOpen,
-  settingsOpen,
-  settingsTab,
   silenceReminder,
   sourceLabel,
   start,
@@ -229,61 +224,6 @@ export default function RecordingView({
             onClose={() => setTermsOpen(false)}
           />
         )}
-        {settingsOpen && (
-          <RecordingSettingsDialog
-            autoProcess={autoProcess}
-            brief={brief}
-            briefReady={briefReady}
-            briefSaved={briefSaved}
-            captureSource={captureSource}
-            echoMode={echoMode}
-            setEchoMode={setEchoMode}
-            checkCapture={checkCapture}
-            checkingCapture={checkingCapture}
-            completionMode={completionMode}
-            contextEnabled={contextEnabled}
-            controlModel={controlModel}
-            correctionEnabled={correctionEnabled}
-            correctionProfileId={correctionProfileId}
-            draftEngine={draftEngine}
-            engineLabel={engineLabel}
-            engines={engines}
-            environment={environment}
-            flowReady={flowReady}
-            meetings={meetings}
-            minutesModel={minutesModel}
-            modelActionBusy={modelActionBusy}
-            modelStatus={modelStatus}
-            nativeCapability={nativeCapability}
-            onClose={onClose}
-            onMinutesModel={onMinutesModel}
-            onModels={onModels}
-            postGoal={postGoal}
-            prefixEnabled={prefixEnabled}
-            recognitionTerms={recognitionTerms}
-            responsiveMode={responsiveMode}
-            setAutoProcess={setAutoProcess}
-            setBrief={setBrief}
-            setCaptureSource={setCaptureSource}
-            setCompletionMode={setCompletionMode}
-            setContextEnabled={setContextEnabled}
-            setCorrectionEnabled={setCorrectionEnabled}
-            setCorrectionProfileId={setCorrectionProfileId}
-            setDraftEngine={setDraftEngine}
-            setPostGoal={setPostGoal}
-            setPrefixEnabled={setPrefixEnabled}
-            setRecognitionTerms={setRecognitionTerms}
-            setResponsiveMode={setResponsiveMode}
-            setSettingsOpen={setSettingsOpen}
-            setSettingsTab={setSettingsTab}
-            setSilenceReminder={setSilenceReminder}
-            setStreamEnabled={setStreamEnabled}
-            settingsTab={settingsTab}
-            silenceReminder={silenceReminder}
-            state={state}
-            streamEnabled={streamEnabled}
-          />
-        )}
         <RecordingSetupView
           brief={brief}
           setBrief={setBrief}
@@ -304,8 +244,6 @@ export default function RecordingView({
           setAutoProcess={setAutoProcess}
           preflight={preflight}
           engines={engines}
-          microphoneLevels={microphoneLevels}
-          systemLevels={systemLevels}
           onModels={onModels}
           termsOpen={termsOpen}
           setTermsOpen={setTermsOpen}
@@ -321,10 +259,7 @@ export default function RecordingView({
             }
             closeWithPreparation();
           }}
-          onOpenSettings={() => {
-            setSettingsTab("recording");
-            setSettingsOpen(true);
-          }}
+          setEchoMode={setEchoMode}
           echoMode={echoMode}
           environment={environment}
           minutesModel={minutesModel}
@@ -1196,61 +1131,6 @@ export default function RecordingView({
               </details>
             )}
         </Modal>
-      )}
-      {settingsOpen && (
-        <RecordingSettingsDialog
-          autoProcess={autoProcess}
-          brief={brief}
-          briefReady={briefReady}
-          briefSaved={briefSaved}
-          captureSource={captureSource}
-          echoMode={echoMode}
-          setEchoMode={setEchoMode}
-          checkCapture={checkCapture}
-          checkingCapture={checkingCapture}
-          completionMode={completionMode}
-          contextEnabled={contextEnabled}
-          controlModel={controlModel}
-          correctionEnabled={correctionEnabled}
-          correctionProfileId={correctionProfileId}
-          draftEngine={draftEngine}
-          engineLabel={engineLabel}
-          engines={engines}
-          environment={environment}
-          flowReady={flowReady}
-          meetings={meetings}
-          minutesModel={minutesModel}
-          modelActionBusy={modelActionBusy}
-          modelStatus={modelStatus}
-          nativeCapability={nativeCapability}
-          onClose={onClose}
-          onMinutesModel={onMinutesModel}
-          onModels={onModels}
-          postGoal={postGoal}
-          prefixEnabled={prefixEnabled}
-          recognitionTerms={recognitionTerms}
-          responsiveMode={responsiveMode}
-          setAutoProcess={setAutoProcess}
-          setBrief={setBrief}
-          setCaptureSource={setCaptureSource}
-          setCompletionMode={setCompletionMode}
-          setContextEnabled={setContextEnabled}
-          setCorrectionEnabled={setCorrectionEnabled}
-          setCorrectionProfileId={setCorrectionProfileId}
-          setDraftEngine={setDraftEngine}
-          setPostGoal={setPostGoal}
-          setPrefixEnabled={setPrefixEnabled}
-          setRecognitionTerms={setRecognitionTerms}
-          setResponsiveMode={setResponsiveMode}
-          setSettingsOpen={setSettingsOpen}
-          setSettingsTab={setSettingsTab}
-          setSilenceReminder={setSilenceReminder}
-          setStreamEnabled={setStreamEnabled}
-          settingsTab={settingsTab}
-          silenceReminder={silenceReminder}
-          state={state}
-          streamEnabled={streamEnabled}
-        />
       )}
     </Modal>
   );

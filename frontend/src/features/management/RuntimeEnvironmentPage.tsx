@@ -1,4 +1,11 @@
 import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { api } from "../../api";
+import {
+  readRecordingPreferences,
+  saveRecordingPreferences,
+  type RecordingPreferences,
+} from "../notes/recordingPreferences";
 import RecordingReadiness from "../onboarding/RecordingReadiness";
 import WorkspaceReadinessPanel from "./WorkspaceReadinessPanel";
 import QualitySamplesPanel from "./QualitySamplesPanel";
@@ -7,6 +14,74 @@ import ReleaseReadinessPanel from "./ReleaseReadinessPanel";
 import ServiceLifecyclePanel from "./ServiceLifecyclePanel";
 import RecordingValidationPanel from "./RecordingValidationPanel";
 import type { RuntimeOverview, ManagementPage } from "./types";
+
+const recordingDefaults = [
+  ["keepAwake", "录音期间保持系统唤醒"],
+  ["silenceReminder", "持续静音时提醒"],
+  ["streamEnabled", "Qwen 实时推送文字"],
+  ["responsiveMode", "短片段预览与尾部修订"],
+  ["prefixEnabled", "保留稳定前缀"],
+  ["contextEnabled", "使用会议准备与前文辅助识别"],
+  ["correctionEnabled", "用本地模型校对已确认的转写"],
+] as const;
+
+function RecordingDefaults() {
+  const [preferences, setPreferences] = useState(() =>
+    readRecordingPreferences(window.localStorage),
+  );
+  const [saveError, setSaveError] = useState(false);
+  const { data: environment } = useQuery({
+    queryKey: ["environment"],
+    queryFn: api.environment,
+    enabled: preferences.correctionEnabled,
+  });
+  const localProfiles = environment?.analysis.profiles.filter((profile) => profile.provider_type === "local") || [];
+  function update(patch: Partial<RecordingPreferences>) {
+    const next = { ...readRecordingPreferences(window.localStorage), ...patch };
+    const saved = saveRecordingPreferences(window.localStorage, next);
+    setSaveError(!saved);
+    if (saved) setPreferences(next);
+  }
+  return (
+    <details className="management-section">
+      <summary>录音与识别默认项</summary>
+      <p className="muted">应用于下次开始的录音。音源、回声消除和本场交付目标在会前准备选择。</p>
+      {recordingDefaults.map(([key, label]) => (
+        <label className="management-row" key={key}>
+          <span>{label}</span>
+          <input
+            type="checkbox"
+            checked={preferences[key]}
+            onChange={(event) => update({ [key]: event.target.checked })}
+          />
+        </label>
+      ))}
+      {preferences.correctionEnabled && (
+        <label className="management-row">
+          <span>校对模型</span>
+          <select
+            value={preferences.correctionProfileId}
+            onChange={(event) => update({ correctionProfileId: event.target.value })}
+          >
+            <option value="">请选择本地模型</option>
+            {localProfiles.map((profile) => (
+              <option key={profile.id} value={profile.id}>{profile.name}</option>
+            ))}
+          </select>
+        </label>
+      )}
+      <label className="management-row">
+        <span>通用识别参考词</span>
+        <input
+          value={preferences.recognitionTerms}
+          maxLength={1000}
+          onChange={(event) => update({ recognitionTerms: event.target.value })}
+        />
+      </label>
+      {saveError && <p role="alert">当前环境无法保存录音偏好。</p>}
+    </details>
+  );
+}
 
 const bytes = (n: number | null) =>
   n === null ? "暂不可用" : `${(n / 1024 ** 3).toFixed(1)} GB`;
@@ -29,6 +104,7 @@ export default function RuntimeEnvironmentPage({
           onReadiness={() => {}}
         />
       </section>
+      <RecordingDefaults />
       <WorkspaceReadinessPanel />
       <ReleaseReadinessPanel />
       <details

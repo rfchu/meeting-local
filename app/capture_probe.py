@@ -1,5 +1,5 @@
 """Short native audio checks isolated from durable meeting recordings."""
-import io,json,subprocess,tempfile,threading,time,wave
+import io,json,math,subprocess,tempfile,threading,time,wave
 from array import array
 from pathlib import Path
 from .db import uid
@@ -34,7 +34,7 @@ class CaptureProbe:
 
     @staticmethod
     def public(item):
-        return {key:item[key] for key in ('id','state','source','duration','error')}
+        return {key:item[key] for key in ('id','state','source','duration','error')} | {'levels':item.get('levels', {})}
 
     def finish(self,item):
         process=item['process']
@@ -48,6 +48,7 @@ class CaptureProbe:
         if item.get('binary_guard'):item['binary_guard'].close()
         item['log'].close();item['finished']=time.monotonic()
         if item['state']!='failed':item['state']='completed'
+        item['levels'] = item.get('peaks', {})
 
     def tick(self):
         with self.lock:
@@ -58,6 +59,15 @@ class CaptureProbe:
                     try:
                         status=json.loads(path.read_text());item['duration']=min(10,float(status.get('duration',0)))
                         if status.get('state')=='recording':item['state']='recording'
+                        levels = item.setdefault('levels', {})
+                        peaks = item.setdefault('peaks', {})
+                        for track in ('system', 'microphone'):
+                            samples = status.get(track + '_levels', [])
+                            if isinstance(samples, list) and samples:
+                                peak = max((v for v in samples[-72:] if type(v) in (int, float) and math.isfinite(v) and 0 <= v <= 1), default=0)
+                                levels[track] = peak
+                                peaks[track] = max(peaks.get(track, 0), peak)
+
                         if status.get('error') or status.get('state') in ('failed','interrupted'):
                             item.update(state='failed',error=str(status.get('error') or '测试输入已中断')[:500])
                         if status.get('duration',0)>=10 or status.get('state') in ('failed','interrupted','stopped'):self.finish(item);continue

@@ -200,3 +200,33 @@ def test_interview_strict_containment_and_actual_segment_relocation():
     )
     with pytest.raises(ValueError, match='非候选人'):
         wrong_speaker.validate_sources(custom_segments, roles)
+
+
+@pytest.mark.parametrize('original,quote', [
+    ('我有1.5年经验。', '我有15年经验'),
+    ('本次变化为−5%。', '本次变化为5%'),
+    ('本次变化为−5%。', '5%'),
+])
+def test_numeric_punctuation_is_part_of_the_evidence(original, quote):
+    value = InterviewResult.model_validate({'summary': [{
+        'content': '面试摘要',
+        'evidence': [{'segment_id': 'a', 'quote': quote}],
+    }]})
+    with pytest.raises(ValueError, match='原文摘录不匹配'):
+        value.validate_sources([{'id': 'a', 'text': original}])
+
+
+def test_cross_segment_evidence_round_trips_and_rejects_discontinuous_audio():
+    a = {'id': 'a', 'text': '我负责迁移', 'speaker': '候选人', 'start': 0, 'end': 2}
+    b = {'id': 'b', 'text': '并签字', 'speaker': '候选人', 'start': 2.5, 'end': 3}
+    value = InterviewResult.model_validate({'summary': [{
+        'content': '面试摘要',
+        'evidence': [{'segment_id': 'b', 'quote': '我负责迁移，并签字'}],
+    }]})
+    value.validate_sources([a, b])
+    restored = InterviewResult.model_validate(value.model_dump())
+    assert restored.summary[0].evidence[0].source_ids() == ['a', 'b']
+    assert restored.summary[0].evidence[0].segment_id == 'a'
+    for invalid in ({**b, 'start': 180}, {**b, 'speaker': '面试官'}, {**b, 'source_track': 'microphone'}):
+        with pytest.raises(ValueError, match='原文摘录不匹配'):
+            restored.validate_sources([a, invalid])

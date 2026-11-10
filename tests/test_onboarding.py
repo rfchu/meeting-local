@@ -64,8 +64,12 @@ def test_native_probe_does_not_create_recordings_and_caps_mixed_audio_at_ten_sec
     assert not (app.state.store.root/'recordings'/key).exists()
     assert not app.state.store.one('SELECT id FROM meetings')
     assert client.get(f'/api/capture-tests/{key}/audio').status_code==409
-    (item['folder']/'capture.json').write_text(json.dumps({'state':'recording','duration':11.2}))
+    path = item['folder']/'capture.json'
+    path.write_text(json.dumps({'state':'recording','duration':2,'system_levels':[.04],'microphone_levels':[.08]}))
+    assert client.get(f'/api/capture-tests/{key}').json()['levels'] == {'system':.04,'microphone':.08}
+    path.write_text(json.dumps({'state':'recording','duration':11.2,'system_levels':[0],'microphone_levels':[0]}))
     status=client.get(f'/api/capture-tests/{key}').json();assert status['state']=='completed' and status['duration']==10
+    assert status['levels'] == {'system':.04,'microphone':.08}
     audio=client.get(f'/api/capture-tests/{key}/audio');assert audio.status_code==200
     assert audio.headers['cache-control']=='no-store'
     with wave.open(io.BytesIO(audio.content),'rb') as wav:

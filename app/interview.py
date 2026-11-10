@@ -38,6 +38,11 @@ class InterviewPreparation(BaseModel):
 class Evidence(BaseModel):
     segment_id:str=Field(min_length=1,max_length=100)
     quote:str=Field(min_length=1,max_length=1000)
+    span_segment_ids:list[str]=Field(default_factory=list,max_length=5)
+
+    def source_ids(self):
+        return self.span_segment_ids or [self.segment_id]
+
 class InterviewItem(BaseModel):
     content:str=Field(min_length=1,max_length=2000)
     evidence:list[Evidence]=Field(min_length=1,max_length=8)
@@ -56,77 +61,73 @@ class InterviewAction(InterviewItem):
     owner:str|None=Field(default=None,max_length=200)
     due_date:str|None=Field(default=None,max_length=200)
 def _clean_text(s: str) -> str:
-    return re.sub(r'[^\w\u4e00-\u9fff]+', '', (s or '').lower())
+    value = (s or '').lower().translate(str.maketrans('．＋－％−', '.+-%-'))
+    # Retain punctuation that carries meaning within or next to a number.
+    return ''.join(re.findall(r'\w+|(?<=\d)[.,:/](?=\d)|[+~-](?=\d)|(?<=\d)%', value))
 
-def _locate_in_window(clean_q: str, window: list[dict]) -> tuple[str, list[str]] | tuple[None, None]:
-    """If clean_q is fully contained within a window of segments, return (primary_segment_id, spanned_segment_ids)."""
-    for s in window:
-        if clean_q in _clean_text(s.get('text', '')):
-            return s['id'], [s['id']]
-    if len(window) > 1:
-        combined_clean = _clean_text(''.join(s.get('text', '') for s in window))
-        if clean_q in combined_clean:
-            start_pos = combined_clean.index(clean_q)
-            end_pos = start_pos + len(clean_q)
-            cur = 0
-            spanned = []
-            for s in window:
-                seg_clean = _clean_text(s.get('text', ''))
-                seg_start = cur
-                seg_end = cur + len(seg_clean)
-                cur = seg_end
-                if seg_end > start_pos and seg_start < end_pos:
-                    spanned.append(s['id'])
-            if spanned:
-                return spanned[0], spanned
-    return None, None
+def _quote_position(quote: str, text: str) -> int:
+    for match in re.finditer(re.escape(quote), text):
+        start, end = match.span()
+        if quote[0].isdigit() and start and (text[start-1].isdigit() or text[start-1] in '.+-~/:,'):
+            continue
+        if quote[-1].isdigit() and end < len(text) and (text[end].isdigit() or text[end] in '.%,/:~'):
+            continue
+        return start
+    return -1
 
-def _match_or_locate_evidence(evidence, segments: list[dict], by_id: dict[str, str], seg_index_map: dict[str, int]) -> bool:
-    sid = evidence.segment_id
-    quote = (evidence.quote or '').strip()
+
+def _continuous(left, right):
+    if left.get('speaker') != right.get('speaker') or left.get('source_track') != right.get('source_track'):
+        return False
+    end, start = left.get('end'), right.get('start')
+    return isinstance(end, (int,float)) and isinstance(start, (int,float)) and -0.5 <= start-end <= 2
+
+
+def _locate_in_window(quote, window, normalized):
+    for segment in window:
+        sid = segment['id']
+        if _quote_position(quote, normalized[sid]) >= 0:
+            return [sid]
+    for first in range(len(window)):
+        span = window[first:first+1]
+        for segment in window[first+1:]:
+            if not _continuous(span[-1], segment):
+                break
+            span.append(segment)
+            pieces = [normalized[item['id']] for item in span]
+            if not all(pieces):
+                break
+            position = _quote_position(quote, ''.join(pieces))
+            if 0 <= position < len(pieces[0]) and position + len(quote) > sum(map(len, pieces[:-1])):
+                return [item['id'] for item in span]
+    return []
+
+
+def _match_or_locate_evidence(evidence, segments, normalized, segment_index):
+    quote = _clean_text(evidence.quote)
     if not quote:
         return False
-    
-    clean_q = _clean_text(quote)
-    if not clean_q:
-        return False
-
-    # 1. Exact or normalized match in claimed segment
-    if sid in by_id and clean_q in _clean_text(by_id[sid]):
-        setattr(evidence, '_spanned_segment_ids', [sid])
+    sid = evidence.segment_id
+    if sid in normalized and _quote_position(quote, normalized[sid]) >= 0:
+        evidence.span_segment_ids = []
         return True
+    ids = []
+    if sid in segment_index:
+        index = segment_index[sid]
+        ids = _locate_in_window(quote, segments[max(0,index-2):index+3], normalized)
+    if not ids:
+        ids = next(([item['id']] for item in segments if _quote_position(quote, normalized[item['id']]) >= 0), [])
+    if not ids:
+        for index in range(len(segments)-1):
+            ids = _locate_in_window(quote, segments[index:index+5], normalized)
+            if ids:
+                break
+    if not ids:
+        return False
+    evidence.segment_id = ids[0]
+    evidence.span_segment_ids = ids if len(ids) > 1 else []
+    return True
 
-    # 2. Check adjacent segments in small window (+-2 segments around claimed sid)
-    if sid in seg_index_map:
-        idx = seg_index_map[sid]
-        for offset_range in ((-1, 2), (-2, 3)):
-            win_start = max(0, idx + offset_range[0])
-            win_end = min(len(segments), idx + offset_range[1])
-            window = segments[win_start:win_end]
-            prim_id, spanned = _locate_in_window(clean_q, window)
-            if prim_id:
-                evidence.segment_id = prim_id
-                setattr(evidence, '_spanned_segment_ids', spanned)
-                return True
-
-    # 3. Search single segments across entire meeting
-    for s in segments:
-        if clean_q in _clean_text(s.get('text', '')):
-            evidence.segment_id = s['id']
-            setattr(evidence, '_spanned_segment_ids', [s['id']])
-            return True
-
-    # 4. Search 2-3 segment windows across entire meeting
-    for k in (2, 3):
-        for i in range(len(segments) - k + 1):
-            window = segments[i : i + k]
-            prim_id, spanned = _locate_in_window(clean_q, window)
-            if prim_id:
-                evidence.segment_id = prim_id
-                setattr(evidence, '_spanned_segment_ids', spanned)
-                return True
-
-    return False
 
 class InterviewResult(BaseModel):
     background:list[InterviewItem]=Field(default_factory=list,max_length=20)
@@ -142,7 +143,7 @@ class InterviewResult(BaseModel):
             yield from item.evidence
             if isinstance(item,InterviewQA):yield from item.question_evidence
     def validate_sources(self,segments,roles=None,*,require_questions=False):
-        by_id={s['id']:s['text'] for s in segments}
+        by_id={s['id']:_clean_text(s['text']) for s in segments}
         seg_index_map={s['id']:i for i,s in enumerate(segments)}
         for item in self.items():
             if isinstance(item,Competency) and item.coverage!='not_discussed' and not item.evidence:raise ValueError('能力证据缺少原文依据')
@@ -151,20 +152,18 @@ class InterviewResult(BaseModel):
                 raise ValueError('面试结果引用或原文摘录不匹配，请重新生成或核对')
         if require_questions and any(not item.question_evidence for item in self.qa):
             raise ValueError('面试问题缺少原文依据，请核对后重新生成')
-        def _get_spanned(source):
-            return getattr(source, '_spanned_segment_ids', None) or [source.segment_id]
         if roles is not None:
             for item in [*self.background,*self.qa]:
-                if any(any(roles.get(sid)!='candidate' for sid in _get_spanned(source)) for source in item.evidence):
+                if any(any(roles.get(sid)!='candidate' for sid in source.source_ids()) for source in item.evidence):
                     raise ValueError('候选人自述或回答引用了非候选人片段，请核对后重新生成')
             for item in self.qa:
-                if not item.question_evidence or any(any(roles.get(sid)!='interviewer' for sid in _get_spanned(source)) for source in item.question_evidence):
+                if not item.question_evidence or any(any(roles.get(sid)!='interviewer' for sid in source.source_ids()) for source in item.question_evidence):
                     raise ValueError('面试问题缺少已确认面试官的原文依据，请核对后重新生成')
         if not self.qa and not self.summary:raise ValueError('模型未返回有效的面试问答或总结')
     def analysis_items(self):
         from .analysis import AnalysisItem
         for item in self.items():
-            if item.evidence:yield AnalysisItem(content=item.content,source_segment_ids=list(dict.fromkeys(e.segment_id for e in item.evidence)))
+            if item.evidence:yield AnalysisItem(content=item.content,source_segment_ids=list(dict.fromkeys(sid for e in item.evidence for sid in e.source_ids())))
 
 def response_schema(valid_ids,basic_info):
     schema=InterviewResult.model_json_schema()
@@ -175,6 +174,7 @@ def response_schema(valid_ids,basic_info):
             for child in value.values():strict(child)
         elif isinstance(value,list):
             for child in value:strict(child)
+    schema['$defs']['Evidence']['properties'].pop('span_segment_ids')
     strict(schema)
     schema['$defs']['Evidence']['properties']['segment_id']['enum']=sorted(valid_ids)
     defs=schema.pop('$defs')
@@ -191,7 +191,7 @@ def project(document):
     data=document.interview
     english=document.output_language=='en'
     if not document.interviewer_evaluation.strip():document.interview_evaluation_needs_review=False
-    def item(value,text=None):return MinutesItem(content=(text or value.content),source_segment_ids=list(dict.fromkeys(e.segment_id for e in [*getattr(value,'question_evidence',[]),*value.evidence])),owner=getattr(value,'owner',None),due_date=getattr(value,'due_date',None))
+    def item(value,text=None):return MinutesItem(content=(text or value.content),source_segment_ids=list(dict.fromkeys(sid for e in [*getattr(value,'question_evidence',[]),*value.evidence] for sid in e.source_ids())),owner=getattr(value,'owner',None),due_date=getattr(value,'due_date',None))
     document.overview=[item(x) for x in data.background]
     context=document.interview_context
     if context:

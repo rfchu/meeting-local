@@ -129,7 +129,7 @@ def validate_minutes_citations(document: MeetingMinutes, valid_ids: set[str]):
         raise ValueError("会议纪要基本信息包含不存在的原文引用")
     if document.interview:
         for evidence in document.interview.evidence():
-            if evidence.segment_id not in valid_ids:raise ValueError('面试纪要包含不存在的原文引用')
+            if evidence.segment_id not in valid_ids or not set(evidence.source_ids()).issubset(valid_ids):raise ValueError('面试纪要包含不存在的原文引用')
     for item in document.all_items():
         if not set(item.source_segment_ids).issubset(valid_ids):
             raise ValueError("会议纪要包含不存在的原文引用")

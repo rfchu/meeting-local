@@ -1,5 +1,6 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 import { browserCaptureAllowed } from "../../preferences/nativeHost";
+import AudioCheck from "../onboarding/AudioCheck";
 import { clock } from "../../utils";
 import type { Environment } from "../../types";
 import type { RecordingViewModel } from "./useRecordingController";
@@ -25,8 +26,7 @@ export type RecordingSetupViewProps = Pick<
   | "setAutoProcess"
   | "preflight"
   | "engines"
-  | "microphoneLevels"
-  | "systemLevels"
+  | "setEchoMode"
   | "onModels"
   | "termsOpen"
   | "setTermsOpen"
@@ -37,7 +37,6 @@ export type RecordingSetupViewProps = Pick<
   requesting?: boolean;
   onStart: () => void;
   onClose: () => void;
-  onOpenSettings?: () => void;
   echoMode?: "standard" | "aec3";
   environment?: Environment;
   minutesModel?: string;
@@ -61,8 +60,8 @@ export default function RecordingSetupView({
   autoProcess,
   setAutoProcess,
   preflight,
-  microphoneLevels,
-  systemLevels,
+  setEchoMode,
+  engines,
   onModels,
   setTermsOpen,
   recognitionTerms = "",
@@ -71,7 +70,6 @@ export default function RecordingSetupView({
   requesting = false,
   onStart,
   onClose,
-  onOpenSettings,
   echoMode = "standard",
   environment,
   minutesModel,
@@ -86,111 +84,17 @@ export default function RecordingSetupView({
     "agenda",
   );
 
-  // 独立试音监听状态（Web Audio 驱动）
-  const [testState, setTestState] = useState<"idle" | "testing" | "done">("idle");
-  const [testLevel, setTestLevel] = useState(0);
-  const [testCountdown, setTestCountdown] = useState(5);
-  const testStreamRef = useRef<MediaStream | null>(null);
-  const testCtxRef = useRef<AudioContext | null>(null);
-  const testAnimRef = useRef<number | null>(null);
-  const testTimerRef = useRef<number | null>(null);
-  const peakLevelRef = useRef<number>(0);
-
-  const stopMicTest = () => {
-    if (testAnimRef.current) {
-      cancelAnimationFrame(testAnimRef.current);
-      testAnimRef.current = null;
-    }
-    if (testTimerRef.current) {
-      window.clearInterval(testTimerRef.current);
-      testTimerRef.current = null;
-    }
-    if (testStreamRef.current) {
-      testStreamRef.current.getTracks().forEach((t) => t.stop());
-      testStreamRef.current = null;
-    }
-    if (testCtxRef.current) {
-      void testCtxRef.current.close().catch(() => {});
-      testCtxRef.current = null;
-    }
-    setTestState("done");
-    setTestLevel(0);
-  };
-
-  useEffect(() => {
-    return () => {
-      stopMicTest();
-    };
-  }, []);
-
-  const startMicTest = async () => {
-    stopMicTest();
-    if (!navigator.mediaDevices?.getUserMedia) {
-      alert("当前浏览器环境不支持麦克风采集");
-      return;
-    }
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      testStreamRef.current = stream;
-      const AudioContextClass =
-        window.AudioContext ||
-        (window as unknown as { webkitAudioContext: typeof AudioContext })
-          .webkitAudioContext;
-      const ctx = new AudioContextClass();
-      testCtxRef.current = ctx;
-      await ctx.resume();
-
-      const sourceNode = ctx.createMediaStreamSource(stream);
-      const analyser = ctx.createAnalyser();
-      analyser.fftSize = 256;
-      analyser.smoothingTimeConstant = 0.3;
-      sourceNode.connect(analyser);
-
-      peakLevelRef.current = 0;
-      setTestLevel(0);
-      setTestCountdown(5);
-      setTestState("testing");
-
-      const dataArray = new Uint8Array(analyser.frequencyBinCount);
-      const updateLevel = () => {
-        analyser.getByteFrequencyData(dataArray);
-        let sum = 0;
-        for (let i = 0; i < dataArray.length; i++) {
-          sum += dataArray[i];
-        }
-        const avg = sum / dataArray.length / 255;
-        const currentLevel = Math.min(1, Math.sqrt(avg) * 1.8);
-        setTestLevel(currentLevel);
-        if (currentLevel > peakLevelRef.current) {
-          peakLevelRef.current = currentLevel;
-        }
-        testAnimRef.current = requestAnimationFrame(updateLevel);
-      };
-      testAnimRef.current = requestAnimationFrame(updateLevel);
-
-      let left = 5;
-      testTimerRef.current = window.setInterval(() => {
-        left -= 1;
-        setTestCountdown(left);
-        if (left <= 0) {
-          stopMicTest();
-        }
-      }, 1000);
-    } catch (err) {
-      console.error("Mic test error:", err);
-      alert("无法访问麦克风，请检查系统或浏览器麦克风权限。");
-      setTestState("idle");
-    }
-  };
+  const [testSource, setTestSource] = useState<typeof captureSource>();
 
   const selectedMinutesProfile = environment?.analysis?.profiles?.find(
     (p) => p.id === minutesModel,
   );
   const isCloudMinutes =
-    postGoal === "minutes" &&
+    postGoal === "minutes" && completionMode !== "none" && autoProcess &&
     selectedMinutesProfile?.provider_type === "cloud";
 
   const startDisabled =
+    !!testSource ||
     !briefReady ||
     preflight?.storage.writable === false ||
     (captureSource === "browser" &&
@@ -217,15 +121,6 @@ export default function RecordingSetupView({
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [startDisabled, requesting, onStart]);
-
-  const tracks = [
-    ...(captureSource !== "browser" && captureSource !== "macos-microphone"
-      ? [{ label: "电脑声音", levels: systemLevels }]
-      : []),
-    ...(captureSource !== "macos-system"
-      ? [{ label: "麦克风", levels: microphoneLevels }]
-      : []),
-  ];
 
   return (
     <div className="recording-setup-view">
@@ -585,7 +480,7 @@ export default function RecordingSetupView({
                   <span className="setup-card-icon">🎙️</span>
                   <div>
                     <h3>录音音源与即时试音</h3>
-                    <p>选择参会形式，说话或播放音频即可确认音量正常。</p>
+                    <p>选择参会形式，可按当前音源试录并回听。</p>
                   </div>
                 </div>
               </div>
@@ -596,7 +491,7 @@ export default function RecordingSetupView({
                   type="button"
                   className={`setup-source-card ${captureSource === "macos-both" ? "selected" : ""}`}
                   disabled={!nativeCapability?.available}
-                  onClick={() => setCaptureSource("macos-both")}
+                  onClick={() => { setTestSource(undefined); setCaptureSource("macos-both"); }}
                 >
                   <div className="setup-source-card-top">
                     <span className="setup-source-icon">🎧</span>
@@ -616,7 +511,7 @@ export default function RecordingSetupView({
                     !nativeCapability?.available ||
                     !nativeCapability.microphone_only_supported
                   }
-                  onClick={() => setCaptureSource("macos-microphone")}
+                  onClick={() => { setTestSource(undefined); setCaptureSource("macos-microphone"); }}
                 >
                   <div className="setup-source-card-top">
                     <span className="setup-source-icon">🎙️</span>
@@ -633,7 +528,7 @@ export default function RecordingSetupView({
                   type="button"
                   className={`setup-source-card ${captureSource === "macos-system" ? "selected" : ""}`}
                   disabled={!nativeCapability?.available}
-                  onClick={() => setCaptureSource("macos-system")}
+                  onClick={() => { setTestSource(undefined); setCaptureSource("macos-system"); }}
                 >
                   <div className="setup-source-card-top">
                     <span className="setup-source-icon">💻</span>
@@ -650,7 +545,7 @@ export default function RecordingSetupView({
                   <button
                     type="button"
                     className={`setup-source-card ${captureSource === "browser" ? "selected" : ""}`}
-                    onClick={() => setCaptureSource("browser")}
+                    onClick={() => { setTestSource(undefined); setCaptureSource("browser"); }}
                   >
                     <div className="setup-source-card-top">
                       <span className="setup-source-icon">🌐</span>
@@ -675,125 +570,37 @@ export default function RecordingSetupView({
               </div>
 
               {/* 高级音频配置入口（双轨回声消除、硬件权限） */}
-              <div className="setup-source-advanced-row">
-                <span className="setup-source-advanced-info">
-                  {captureSource === "macos-both"
-                    ? `双轨回声消除：${echoMode === "aec3" ? "WebRTC AEC3 声学消回声" : "标准处理"}`
-                    : "高级音频：硬件检查、静音提醒与回声设置"}
-                </span>
-                {onOpenSettings && (
-                  <button
-                    type="button"
-                    className="btn-setup-advanced-audio"
-                    onClick={onOpenSettings}
-                    title="配置双轨回声消除、系统音频权限与静音提醒"
-                  >
-                    ⚙️ 高级音频与回声设置
-                  </button>
-                )}
-              </div>
-
-              {/* 实时电平反馈条 */}
-              <div className="setup-meters-strip">
-                <div className="setup-meter-header">
-                  <div className="setup-meter-header-info">
-                    <span>🔊 实时试音监听</span>
-                    <small>
-                      {testState === "testing"
-                        ? "正在试音，请对着麦克风说话观察电平跳动…"
-                        : "点击右侧按钮测试麦克风音量与收音状态"}
-                    </small>
-                  </div>
-                  <div className="setup-meter-header-actions">
-                    {testState === "idle" && (
-                      <button
-                        type="button"
-                        className="btn-mic-test"
-                        onClick={() => void startMicTest()}
-                      >
-                        🎙️ 开始试音 (5秒)
-                      </button>
-                    )}
-                    {testState === "testing" && (
-                      <button
-                        type="button"
-                        className="btn-mic-test active"
-                        onClick={stopMicTest}
-                      >
-                        ⏹️ 正在试音 ({testCountdown}s)
-                      </button>
-                    )}
-                    {testState === "done" && (
-                      <button
-                        type="button"
-                        className="btn-mic-test"
-                        onClick={() => void startMicTest()}
-                      >
-                        🔄 重新试音
-                      </button>
-                    )}
-                  </div>
-                </div>
-                <div className="setup-meter-tracks">
-                  {tracks.map((track) => {
-                    const isMic = track.label === "麦克风";
-                    const isLiveRecording = track.levels.length > 0;
-
-                    let level = 0;
-                    let statusText = "未试音";
-                    let isVoice = false;
-
-                    if (isLiveRecording) {
-                      const rawVal = track.levels.at(-1) || 0;
-                      level = Math.min(1, Math.sqrt(Math.max(0, rawVal)) * 2.4);
-                      isVoice = level > 0.05;
-                      statusText = isVoice ? "有输入" : "就绪";
-                    } else if (isMic) {
-                      if (testState === "testing") {
-                        level = testLevel;
-                        isVoice = testLevel > 0.05;
-                        statusText = isVoice ? "有输入" : "无信号";
-                      } else if (testState === "done") {
-                        const hadInput = peakLevelRef.current > 0.05;
-                        statusText = hadInput ? "有输入" : "无信号";
-                        isVoice = hadInput;
-                        level = hadInput ? Math.min(1, peakLevelRef.current) : 0;
-                      } else {
-                        statusText = "未试音";
-                        level = 0;
-                        isVoice = false;
-                      }
-                    } else {
-                      // 电脑声音 track
-                      statusText = "未试音";
-                      level = 0;
-                      isVoice = false;
+              {captureSource === "macos-both" && (
+                <label className="setup-field">
+                  双轨回声消除
+                  <select
+                    className="setup-select"
+                    value={echoMode}
+                    disabled={requesting || !!testSource}
+                    onChange={(event) =>
+                      setEchoMode(event.target.value === "aec3" ? "aec3" : "standard")
                     }
-
-                    return (
-                      <div className="setup-meter-item" key={track.label}>
-                        <span className="meter-label">{track.label}</span>
-                        <div className="meter-bar-container">
-                          <div
-                            className={`meter-bar-fill ${isVoice ? "active" : ""}`}
-                            style={{ width: `${Math.round(level * 100)}%` }}
-                          />
-                        </div>
-                        <span
-                          className={`meter-val-text ${
-                            isVoice
-                              ? "active"
-                              : testState === "done" && isMic && !isVoice
-                                ? "muted"
-                                : "untested"
-                          }`}
-                        >
-                          {statusText}
-                        </span>
-                      </div>
-                    );
-                  })}
-                </div>
+                  >
+                    <option value="standard">标准处理</option>
+                    <option value="aec3">WebRTC AEC3（实验）</option>
+                  </select>
+                </label>
+              )}
+              <div className="setup-meters-strip">
+                <button
+                  type="button"
+                  disabled={requesting || (captureSource !== "browser" && !nativeCapability?.available)}
+                  onClick={() => setTestSource(testSource ? undefined : captureSource)}
+                >
+                  {testSource ? "关闭试录" : "检查所选音源"}
+                </button>
+                {testSource && (
+                  <AudioCheck
+                    source={testSource}
+                    engine={draftEngine}
+                    engineReady={!!engines.find((engine) => engine.id === draftEngine)?.ready}
+                  />
+                )}
               </div>
             </div>
 

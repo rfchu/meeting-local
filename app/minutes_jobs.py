@@ -181,7 +181,7 @@ class MinutesJobs:
                 provenance['chinese_record']=identity
                 cited=set(document.basic_info_source_segment_ids)
                 cited.update(sid for item in document.all_items() for sid in item.source_segment_ids)
-                if document.interview:cited.update(e.segment_id for e in document.interview.evidence())
+                if document.interview:cited.update(sid for e in document.interview.evidence() for sid in e.source_ids())
                 provenance['citation_translations']={sid:translations[sid] for sid in sorted(cited & translations.keys())}
             if config['operation']=='polish':
                 provenance['llm_polished']=True

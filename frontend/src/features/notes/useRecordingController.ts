@@ -100,10 +100,17 @@ export function useRecordingController({
   onMinutesModel,
 }: RecordingDialogProps) {
   const mountedRef = useRef(true);
+  const pendingStartCleanup = useRef<(() => void) | null>(null);
+  const cancelPendingStart = () => {
+    const cleanup = pendingStartCleanup.current;
+    pendingStartCleanup.current = null;
+    cleanup?.();
+  };
   useEffect(() => {
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
+      cancelPendingStart();
     };
   }, []);
 
@@ -120,6 +127,7 @@ export function useRecordingController({
       .catch(() => {})
       .then(() => api.savePreparation(briefRef.current))
       .then(() => {
+        if (stateRef.current !== "idle") return;
         toast("已自动保存备会草稿");
         onClose();
       })
@@ -180,10 +188,6 @@ export function useRecordingController({
     setNativeCapability(value.native);
   }, []);
   const [termsOpen, setTermsOpen] = useState(false);
-  const [settingsOpen, setSettingsOpen] = useState(false),
-    [settingsTab, setSettingsTab] = useState<
-      "recording" | "model" | "outcome" | "preparation"
-    >("recording");
   const [keepAwake, setKeepAwake] = useState(preferences.keepAwake);
   const [silenceReminder, setSilenceReminder] = useState(
     preferences.silenceReminder,
@@ -861,6 +865,7 @@ export function useRecordingController({
         setMicrophoneLevels(status.microphone_levels || []);
         const nextPhase = reconcileNativePhase(stateRef.current, status.state);
         if (nextPhase !== stateRef.current) {
+          pendingStartCleanup.current = null;
           stateRef.current = nextPhase as "recording" | "paused";
           setState(nextPhase as "recording" | "paused");
         }
@@ -878,6 +883,7 @@ export function useRecordingController({
           ["failed", "interrupted", "stopped"].includes(status.state) &&
           stateRef.current !== "saving"
         ) {
+          pendingStartCleanup.current = null;
           stateRef.current = "failed";
           setState("failed");
           setSaveStatus(status.error || "采集已停止，请核对已保存音轨");
@@ -1261,7 +1267,7 @@ export function useRecordingController({
   };
 
   const start = async () => {
-    if (targetRecordingId) return;
+    if (targetRecordingId || stateRef.current !== "idle") return;
     setAttachedEchoMode(undefined);
     if (captureSource === "browser" && !browserCaptureAllowed())
       return toast(
@@ -1298,7 +1304,6 @@ export function useRecordingController({
     if (liveChoice.ready) setDraftEngine(draftEngine);
     if (correctionEnabled && correctionProfileId)
       setCorrectionProfileId(correctionProfileId);
-    setSettingsOpen(false);
     persistPreferences();
     setPartialDraft(null);
     setDecodeReport({});
@@ -1321,15 +1326,21 @@ export function useRecordingController({
           keepAwake,
           captureSource === "macos-microphone",
         );
+        pendingStartCleanup.current = () => {
+          void Promise.allSettled([
+            api.recordingKeepAwake(session.id, false),
+            api.nativeCommand(session.id, "stop"),
+          ]);
+        };
         if (!mountedRef.current) {
-          void api.recordingKeepAwake(session.id, false).catch(() => {});
-          await api.nativeCommand(session.id, "stop").catch(() => {});
+          cancelPendingStart();
           return;
         }
         session.brief = briefRef.current;
         sessionRef.current = session;
-        setNativeSessionId(session.id);
         await bufferRecording(session);
+        if (!mountedRef.current) return;
+        setNativeSessionId(session.id);
         accruedRef.current = 0;
         activeSinceRef.current = performance.now();
         draftEnabledRef.current = !recordOnlyRef.current;
@@ -1340,13 +1351,8 @@ export function useRecordingController({
             : `${draftEngine === "qwen" ? "Qwen-ASR" : "Whisper"} ${draftEngine === "qwen" && responsiveMode && streamEnabled ? "短片段预览与修订" : "约 15 秒识别"}，仅作会议跟随参考`,
         );
       } catch (error) {
-        if (sessionRef.current?.source === "macos") {
-          const rid = sessionRef.current.id;
-          void queueAwake(rid, () => api.recordingKeepAwake(rid, false)).catch(
-            () => {},
-          );
-          await api.nativeCommand(rid, "stop").catch(() => {});
-        }
+        cancelPendingStart();
+        if (!mountedRef.current) return;
         stateRef.current = "idle";
         setState("idle");
         toast((error as Error).message);
@@ -1380,11 +1386,16 @@ export function useRecordingController({
       const session = await api.createRecording(
         recorder.mimeType || mimeType || "audio/webm",
       );
+      pendingStartCleanup.current = () => {
+        stream.getTracks().forEach((track) => track.stop());
+        void api.captureState(session.id, "interrupted").catch(() => {});
+      };
       if (!mountedRef.current) {
-        stream.getTracks().forEach((t) => t.stop());
+        cancelPendingStart();
         return;
       }
       await bufferRecording(session);
+      if (!mountedRef.current) return;
       session.brief = briefRef.current;
       sessionRef.current = session;
       recorder.ondataavailable = (event) => {
@@ -1429,7 +1440,6 @@ export function useRecordingController({
       );
       accruedRef.current = 0;
       activeSinceRef.current = performance.now();
-      stateRef.current = "recording";
       draftEnabledRef.current = !recordOnlyRef.current;
       try {
         await startDraftCapture(stream);
@@ -1437,10 +1447,15 @@ export function useRecordingController({
         setDraftStatus(`实时草稿不可用 · ${(error as Error).message}`);
         await closeDraftCapture();
       }
+      if (!mountedRef.current) return;
       recorder.start(5000);
+      pendingStartCleanup.current = null;
+      stateRef.current = "recording";
       void reportBrowserState("recording");
       setState("recording");
     } catch (error) {
+      cancelPendingStart();
+      if (!mountedRef.current) return;
       stateRef.current = "idle";
       streamRef.current?.getTracks().forEach((track) => track.stop());
       await closeDraftCapture();
@@ -1800,13 +1815,9 @@ export function useRecordingController({
     setPrefixEnabled,
     setRecognitionTerms,
     setResponsiveMode,
-    setSettingsOpen,
-    setSettingsTab,
     setSilenceReminder,
     setStreamEnabled,
     setTermsOpen,
-    settingsOpen,
-    settingsTab,
     silenceReminder,
     sourceLabel,
     start,

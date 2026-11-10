@@ -11,14 +11,14 @@ export function projectInterview(doc: MeetingMinutes): MeetingMinutes {
   const row = (
     x: {
       content: string;
-      evidence: { segment_id: string }[];
+      evidence: { segment_id: string; span_segment_ids?: string[] }[];
       owner?: string | null;
       due_date?: string | null;
     },
     content = x.content,
   ) => ({
     content,
-    source_segment_ids: [...new Set(x.evidence.map((e) => e.segment_id))],
+    source_segment_ids: [...new Set(x.evidence.flatMap((e) => e.span_segment_ids?.length ? e.span_segment_ids : [e.segment_id]))],
     owner: x.owner || null,
     due_date: x.due_date || null,
     status: null,
@@ -286,6 +286,7 @@ export default function InterviewMinutesBody({
                     })),
                   ].map((e, i) => {
                     const segment = segments.find((s) => s.id === e.segment_id);
+                    const ids = e.span_segment_ids?.length ? e.span_segment_ids : [e.segment_id];
                     return (
                       <blockquote key={i}>
                         <small>
@@ -296,16 +297,18 @@ export default function InterviewMinutesBody({
                         {translations?.[e.segment_id] && (
                           <p>生成时的中文译文：{translations[e.segment_id]}</p>
                         )}
-                        {!segment && <small>原文依据待核对</small>}
-                        <button
-                          disabled={!segment}
-                          onClick={() =>
-                            segment &&
-                            onSeek(segment.start, segment.source_track)
-                          }
-                        >
-                          定位并回听原文
-                        </button>
+                        {ids.map((id, index) => {
+                          const source = segments.find((s) => s.id === id);
+                          return (
+                            <button
+                              key={id}
+                              disabled={!source}
+                              onClick={() => source && onSeek(source.start, source.source_track)}
+                            >
+                              {!source ? "原文依据待核对" : ids.length > 1 ? `回听片段 ${index + 1}` : "定位并回听原文"}
+                            </button>
+                          );
+                        })}
                       </blockquote>
                     );
                   })}
