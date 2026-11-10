@@ -1,3 +1,4 @@
+import ActionMenu from "./components/ActionMenu";
 import MeetingLibrary from "./features/meeting/MeetingLibrary";
 import RuntimeManagement, {
   type ManagementPage,
@@ -1116,39 +1117,38 @@ export default function App({ browserWorkspace = false }: { browserWorkspace?: b
                     return true;
                   }}
                 />
-                <select
-                  value=""
-                  aria-label="导出格式"
-                  onChange={async (e) => {
-                    const format = e.target.value;
-                    if (!format) return;
-                    await saveTranscript();
-                    download(`/meetings/${meeting.id}/export/${format}`);
-                  }}
-                >
-                  <option value="">导出文字稿 ↓</option>
-                  <option value="txt">纯文本 TXT</option>
-                  <option value="md">Markdown</option>
-                  <option value="srt">字幕 SRT</option>
-                  <option value="json">结构化 JSON</option>
-                </select>
-                <details className="meeting-more-menu">
-                  <summary aria-label="更多操作">···</summary>
-                  <div className="more-menu-dropdown">
-                    {meeting.revision > 0 && (
-                      <button
-                        onClick={(e) => {
-                          e.currentTarget.closest("details")!.open = false;
-                          setRetranscribeOpen(true);
-                        }}
-                      >
-                        重新转写设置…
-                      </button>
-                    )}
-                    <button
-                      className="danger-text"
-                      onClick={async (e) => {
-                        e.currentTarget.closest("details")!.open = false;
+                <ActionMenu
+                  key={meeting.id + ":export"}
+                  label="导出文字稿 ↓"
+                  actions={([
+                    ["txt", "纯文本 TXT"],
+                    ["md", "Markdown"],
+                    ["srt", "字幕 SRT"],
+                    ["json", "结构化 JSON"],
+                  ] as const).map(([format, label]) => ({
+                    label,
+                    run: async () => {
+                      try {
+                        await saveTranscript();
+                      } catch {
+                        return; // saveTranscript already reports the error.
+                      }
+                      download(`/meetings/${meeting.id}/export/${format}`);
+                    },
+                  }))}
+                />
+                <ActionMenu
+                  key={meeting.id + ":more"}
+                  label="···"
+                  accessibleLabel="更多操作"
+                  actions={[
+                    ...(meeting.revision > 0
+                      ? [{ label: "重新转写设置…", run: () => setRetranscribeOpen(true) }]
+                      : []),
+                    {
+                      label: "删除会议",
+                      danger: true,
+                      run: async () => {
                         if (
                           !confirm(
                             "删除此会议的录音、所有文稿版本和分析结果？此操作无法撤销。",
@@ -1165,12 +1165,10 @@ export default function App({ browserWorkspace = false }: { browserWorkspace?: b
                         } catch (error) {
                           toast((error as Error).message);
                         }
-                      }}
-                    >
-                      删除会议
-                    </button>
-                  </div>
-                </details>
+                      },
+                    },
+                  ]}
+                />
               </div>
             </div>
             {!meeting.revision && (

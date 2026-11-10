@@ -1,3 +1,4 @@
+import ActionMenu from "../../components/ActionMenu";
 import InterviewRolesForm from "./InterviewRolesForm";
 import InterviewMinutesBody from "./InterviewMinutesBody";
 import {
@@ -372,20 +373,18 @@ export default function MinutesView(props: Props) {
             {dirty ? "保存为新版本" : "已保存"}
           </button>
           <button onClick={props.onPreview}>导出预览</button>
-          <select
-            aria-label="导出会议纪要"
-            value=""
-            disabled={!draft}
-            onChange={(e) => {
-              if (e.target.value)
-                props.onExport(e.target.value as "docx" | "pdf" | "md");
-            }}
-          >
-            <option value="">导出当前显示版本 ↓</option>
-            <option value="docx">Word 文档</option>
-            <option value="pdf">PDF 文档</option>
-            <option value="md">Markdown</option>
-          </select>
+          <ActionMenu
+            key={artifact?.id ?? meeting.id}
+            label="导出当前显示版本 ↓"
+            actions={([
+              ["docx", "Word 文档"],
+              ["pdf", "PDF 文档"],
+              ["md", "Markdown"],
+            ] as const).map(([format, label]) => ({
+              label,
+              run: () => props.onExport(format),
+            }))}
+          />
         </div>
       )}
       <div className={draft ? "minutes-secondary-actions" : undefined}>

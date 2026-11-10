@@ -482,43 +482,34 @@ h1 {
   gap: 8px;
   flex-shrink: 0;
 }
-.meeting-header-actions select {
-  min-height: 32px;
-  padding: 4px 8px;
-  font-size: 12px;
-  border: 1px solid var(--line, #e2e8f0);
-  border-radius: 6px;
-  background: #fff;
-  cursor: pointer;
-}
-.meeting-more-menu {
+.action-menu {
   position: relative;
 }
-.meeting-more-menu > summary {
+.action-menu > summary {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 32px;
-  height: 32px;
-  border-radius: 6px;
+  min-width: 36px;
+  padding: 8px 12px;
+  border-radius: 8px;
   border: 1px solid var(--line, #e2e8f0);
   background: #fff;
+  color: var(--text-heading, #0f172a);
   cursor: pointer;
   list-style: none;
-  font-size: 16px;
-  font-weight: bold;
-  letter-spacing: 1px;
-  color: var(--muted, #64748b);
-  user-select: none;
+  white-space: nowrap;
 }
-.meeting-more-menu > summary::-webkit-details-marker {
+.action-menu > summary::-webkit-details-marker {
   display: none;
 }
-.meeting-more-menu > summary:hover {
+.action-menu > summary:hover,
+.action-menu[open] > summary {
   background: var(--bg-hover, #f8fafc);
-  color: var(--text-heading, #0f172a);
 }
-.more-menu-dropdown {
+.action-menu:not([open]) > .action-menu-dropdown {
+  display: none;
+}
+.action-menu-dropdown {
   position: absolute;
   top: calc(100% + 4px);
   right: 0;
@@ -532,7 +523,7 @@ h1 {
   display: flex;
   flex-direction: column;
 }
-.more-menu-dropdown button {
+.action-menu-dropdown button {
   display: block;
   width: 100%;
   text-align: left;
@@ -544,13 +535,13 @@ h1 {
   color: var(--text-heading, #0f172a);
   cursor: pointer;
 }
-.more-menu-dropdown button:hover {
+.action-menu-dropdown button:hover {
   background: var(--bg-hover, #f1f5f9);
 }
-.more-menu-dropdown button.danger-text {
+.action-menu-dropdown button.danger-text {
   color: #dc2626;
 }
-.more-menu-dropdown button.danger-text:hover {
+.action-menu-dropdown button.danger-text:hover {
   background: #fef2f2;
 }
 
