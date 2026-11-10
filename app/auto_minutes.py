@@ -82,7 +82,7 @@ def process(worker,job):
             if not any(result.all_items()) and not (result.interview and result.interview.pending_review):raise ValueError('模型没有返回有效纪要内容，请检查模型后重试纪要步骤')
             document=build_from_ai(row['created'],result,settings,template=template)
             validate_minutes_citations(document,{s['id'] for s in segments})
-            if document.interview:document.interview.validate_sources(segments,confirmed_speaker_roles(context,segments),require_questions=True)
+            if document.interview:document.interview.validate_sources(segments,confirmed_speaker_roles(context,segments),require_questions=True,retain_pending=True,raise_on_error=False)
             return result
         result=checkpoints.load('minutes',identity,validate_result)
         if result is None:
@@ -94,7 +94,7 @@ def process(worker,job):
         document=build_from_ai(row['created'],result,settings,template=template)
         if document.interview:
             from .interview import InterviewPreparation,project
-            document.interview.validate_sources(segments)
+            document.interview.validate_sources(segments,retain_pending=True,raise_on_error=False)
             document.interview_context=InterviewPreparation.model_validate(context['preparation']['interview']) if context['preparation'].get('interview') else None
             from .minutes import set_output_language
             document=set_output_language(project(document),settings.output_language or 'zh')

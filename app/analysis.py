@@ -363,8 +363,8 @@ class LMStudioProvider:
             pending_sources = (source for entry in result.interview.pending_review
                                for source in [*entry.evidence, *entry.question_evidence])
             for evidence in [*result.interview.evidence(), *pending_sources]:
-                evidence.segment_id=originals[evidence.segment_id]
-                evidence.span_segment_ids=[originals[sid] for sid in evidence.span_segment_ids]
+                evidence.segment_id=originals.get(evidence.segment_id,evidence.segment_id)
+                evidence.span_segment_ids=[originals.get(sid,sid) for sid in evidence.span_segment_ids]
         result.basic_info.attendees=[name for name in result.basic_info.attendees if name in speakers]
         return result
 

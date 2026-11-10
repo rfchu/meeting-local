@@ -149,7 +149,7 @@ class MinutesJobs:
                 document=build_from_ai(row['created'],result,settings,source_document if settings.method=='current' else None,template)
                 if document.interview:
                     from .interview import InterviewPreparation,project,confirmed_speaker_roles
-                    document.interview.validate_sources(segments,confirmed_speaker_roles(context,segments),require_questions=True)
+                    document.interview.validate_sources(segments,confirmed_speaker_roles(context,segments),require_questions=True,retain_pending=True,raise_on_error=False)
                     document.interview_context=InterviewPreparation.model_validate(context['preparation']['interview']) if context['preparation'].get('interview') else None
                     from .minutes import set_output_language
                     document=set_output_language(project(document),settings.output_language or 'zh')

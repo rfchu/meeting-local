@@ -1,4 +1,5 @@
 """Structured interview evidence and human-owned review, independent of hiring decisions."""
+import difflib
 import re
 from typing import Literal
 from pydantic import BaseModel,Field
@@ -68,6 +69,76 @@ def _clean_text(s: str) -> str:
     return ''.join(_QUOTE_CHARACTERS.findall((s or '').translate(_QUOTE_TRANSLATION))).lower()
 
 
+_NUMBERS = re.compile(r'[+~-]?\d+(?:[.,:/]\d+)?%?')
+
+def _clean_blocks(blocks, max_target_gap=15):
+    if not blocks:
+        return []
+    largest = max(blocks, key=lambda m: m.size)
+    kept = [largest]
+    curr_a = largest.a
+    curr_b = largest.b
+    for m in reversed([b for b in blocks if b.b < largest.b]):
+        gap_t = curr_a - (m.a + m.size)
+        gap_q = curr_b - (m.b + m.size)
+        if gap_t <= max_target_gap or (gap_t - gap_q <= 8):
+            kept.insert(0, m)
+            curr_a = m.a
+            curr_b = m.b
+    curr_a_end = largest.a + largest.size
+    curr_b_end = largest.b + largest.size
+    for m in [b for b in blocks if b.b > largest.b]:
+        gap_t = m.a - curr_a_end
+        gap_q = m.b - curr_b_end
+        if gap_t <= max_target_gap or (gap_t - gap_q <= 8):
+            kept.append(m)
+            curr_a_end = m.a + m.size
+            curr_b_end = m.b + m.size
+    return kept
+
+
+def _extract_verbatim_span(sources, start_idx, end_idx):
+    texts = [source['text'] for source in sources]
+    positions = [(i, match.start()) for i, text in enumerate(texts)
+                 for match in _QUOTE_CHARACTERS.finditer(text.translate(_QUOTE_TRANSLATION))
+                 for _ in match.group().lower()]
+    if start_idx < 0 or end_idx > len(positions) or start_idx >= end_idx:
+        return None
+    first_doc, left = positions[start_idx]
+    last_doc, right = positions[end_idx - 1]
+    if first_doc == last_doc:
+        return texts[first_doc][left:right + 1]
+    return ' '.join([texts[first_doc][left:], *texts[first_doc + 1:last_doc], texts[last_doc][:right + 1]])
+
+
+def _fuzzy_align_quote(quote, text, threshold=0.75):
+    norm_q = _clean_text(quote)
+    norm_t = _clean_text(text)
+    if not norm_q or not norm_t:
+        return None
+    matcher = difflib.SequenceMatcher(None, norm_t, norm_q, autojunk=False)
+    raw_blocks = [m for m in matcher.get_matching_blocks() if m.size > 0]
+    blocks = _clean_blocks(raw_blocks)
+    if not blocks:
+        return None
+    matched_q = sum(m.size for m in blocks)
+    coverage = matched_q / len(norm_q)
+    max_block = max(m.size for m in blocks)
+    min_required_block = min(4, len(norm_q)) if len(norm_q) <= 8 else min(6, len(norm_q))
+    if coverage < threshold or max_block < min_required_block:
+        return None
+    first_t = blocks[0].a
+    last_t = blocks[-1].a + blocks[-1].size
+    target_span = norm_t[first_t:last_t]
+    if norm_q[0].isdigit() and first_t > 0 and (norm_t[first_t - 1].isdigit() or norm_t[first_t - 1] in '.+-~/:,'):
+        return None
+    if norm_q[-1].isdigit() and last_t < len(norm_t) and (norm_t[last_t].isdigit() or norm_t[last_t] in '.%,/:~'):
+        return None
+    if _NUMBERS.findall(norm_q) != _NUMBERS.findall(target_span):
+        return None
+    return (coverage, first_t, last_t)
+
+
 def _verbatim_quote(quote, sources):
     texts = [source['text'] for source in sources]
     positions = [(i, match.start()) for i, text in enumerate(texts)
@@ -126,25 +197,85 @@ def _match_or_locate_evidence(evidence, segments, normalized, segment_index):
     if not quote:
         return False
     sid = evidence.segment_id
-    ids = [sid] if sid in normalized and _quote_position(quote, normalized[sid]) >= 0 else []
-    if not ids and sid in segment_index:
-        index = segment_index[sid]
-        ids = _locate_in_window(quote, segments[max(0,index-2):index+3], normalized)
+
+    # 1. Exact match in stated segment
+    if sid in normalized and _quote_position(quote, normalized[sid]) >= 0:
+        original = _verbatim_quote(quote, [segments[segment_index[sid]]])
+        if original and len(original) <= 1000:
+            evidence.quote = original
+        evidence.span_segment_ids = []
+        return True
+
+    # 2. Exact match in window around stated segment
+    if sid in segment_index:
+        idx = segment_index[sid]
+        ids = _locate_in_window(quote, segments[max(0, idx - 2):idx + 3], normalized)
+        if ids:
+            original = _verbatim_quote(quote, [segments[segment_index[source_id]] for source_id in ids])
+            if original and len(original) <= 1000:
+                evidence.quote = original
+            evidence.segment_id = ids[0]
+            evidence.span_segment_ids = ids if len(ids) > 1 else []
+            return True
+
+    # 3. Fuzzy match in stated segment
+    if sid in segment_index:
+        idx = segment_index[sid]
+        align = _fuzzy_align_quote(quote, normalized[sid])
+        if align:
+            verbatim = _extract_verbatim_span([segments[idx]], align[1], align[2])
+            if verbatim and len(verbatim) <= 1000:
+                evidence.quote = verbatim
+                evidence.span_segment_ids = []
+                return True
+
+    # 4. Fuzzy match in continuous window around stated segment
+    if sid in segment_index:
+        idx = segment_index[sid]
+        win_segs = segments[max(0, idx - 1): min(len(segments), idx + 3)]
+        for first in range(len(win_segs)):
+            span = win_segs[first:first + 1]
+            for next_seg in win_segs[first + 1:]:
+                if not _continuous(span[-1], next_seg):
+                    break
+                span.append(next_seg)
+                combined = ''.join(normalized[item['id']] for item in span)
+                align = _fuzzy_align_quote(quote, combined)
+                if align:
+                    verbatim = _extract_verbatim_span(span, align[1], align[2])
+                    if verbatim and len(verbatim) <= 1000:
+                        evidence.quote = verbatim
+                        evidence.segment_id = span[0]['id']
+                        evidence.span_segment_ids = [item['id'] for item in span] if len(span) > 1 else []
+                        return True
+
+    # 5. Global exact search fallback across all segments
+    ids = next(([item['id']] for item in segments if _quote_position(quote, normalized[item['id']]) >= 0), [])
     if not ids:
-        ids = next(([item['id']] for item in segments if _quote_position(quote, normalized[item['id']]) >= 0), [])
-    if not ids:
-        for index in range(len(segments)-1):
-            ids = _locate_in_window(quote, segments[index:index+5], normalized)
+        for idx in range(len(segments) - 1):
+            ids = _locate_in_window(quote, segments[idx:idx + 5], normalized)
             if ids:
                 break
-    if not ids:
-        return False
-    original = _verbatim_quote(quote, [segments[segment_index[source_id]] for source_id in ids])
-    if original and len(original) <= 1000 and _clean_text(original) == quote:
-        evidence.quote = original
-    evidence.segment_id = ids[0]
-    evidence.span_segment_ids = ids if len(ids) > 1 else []
-    return True
+    if ids:
+        original = _verbatim_quote(quote, [segments[segment_index[source_id]] for source_id in ids])
+        if original and len(original) <= 1000:
+            evidence.quote = original
+        evidence.segment_id = ids[0]
+        evidence.span_segment_ids = ids if len(ids) > 1 else []
+        return True
+
+    # 6. Global fuzzy match fallback
+    for idx in range(len(segments)):
+        align = _fuzzy_align_quote(quote, normalized[segments[idx]['id']])
+        if align:
+            verbatim = _extract_verbatim_span([segments[idx]], align[1], align[2])
+            if verbatim and len(verbatim) <= 1000:
+                evidence.quote = verbatim
+                evidence.segment_id = segments[idx]['id']
+                evidence.span_segment_ids = []
+                return True
+
+    return False
 
 
 INTERVIEW_SECTIONS = ('background', 'qa', 'competencies', 'concerns', 'followups', 'summary')
@@ -180,7 +311,7 @@ class InterviewResult(BaseModel):
         for item in self.items():
             yield from item.evidence
             if isinstance(item,InterviewQA):yield from item.question_evidence
-    def validate_sources(self,segments,roles=None,*,require_questions=False,retain_pending=False):
+    def validate_sources(self,segments,roles=None,*,require_questions=False,retain_pending=False,raise_on_error=False):
         by_id={s['id']:_clean_text(s['text']) for s in segments}
         segment_index={s['id']:i for i,s in enumerate(segments)}
 

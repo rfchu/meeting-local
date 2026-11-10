@@ -79,7 +79,7 @@ def register_routes(app,services:ApplicationServices):
                 roles=body.document.interview_context.speaker_roles if body.document.interview_context else None
                 if roles and roles.revision!=row['revision']:
                     raise ValueError('发言人确认所用的文字稿已变化，请重新确认并生成面试纪要')
-                body.document.interview.validate_sources(segments,roles.segment_roles(segments) if roles else None)
+                body.document.interview.validate_sources(segments,roles.segment_roles(segments) if roles else None,raise_on_error=True)
                 body.document=project(body.document)
             validate_minutes_citations(body.document,valid_ids)
         except ValueError as error:raise HTTPException(400,str(error))
@@ -243,7 +243,7 @@ def register_routes(app,services:ApplicationServices):
             document=set_output_language(document,output_language)
             if template.id=='online-interview':
                 from ..interview import confirmed_speaker_roles
-                document.interview.validate_sources(segments,confirmed_speaker_roles(context,segments),require_questions=True)
+                document.interview.validate_sources(segments,confirmed_speaker_roles(context,segments),require_questions=True,retain_pending=True,raise_on_error=False)
                 document.interview_context=InterviewPreparation.model_validate(context['preparation']['interview']) if context['preparation'].get('interview') else None
                 from ..interview import project
                 document=project(document)
