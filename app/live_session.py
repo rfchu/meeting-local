@@ -7,7 +7,7 @@ from contextlib import aclosing
 from .db import encode
 from .live_batch import whisper_events
 from .live_policy import sentence_hint,update_load
-from .live_stream import qwen_events,inspect_audio
+from .live_stream import OUTPUT_LIMIT,qwen_events,inspect_audio
 from .live_results import RATE,plan_ranges
 from .live_segmentation import acoustic_pause,elastic_plan,HARD_SECONDS,PAUSE_SECONDS
 from .track_audio import StreamingEchoCanceller
@@ -281,7 +281,9 @@ class LiveSessions:
                         async for line in iterator:
                             event=json.loads(line)
                             if event['type']=='error':
-                                if AUTO_LANGUAGE_ERROR in event['message']:
+                                if OUTPUT_LIMIT in event['message'] and not confirmed:
+                                    return None,event['message']
+                                if AUTO_LANGUAGE_ERROR in event['message'] or OUTPUT_LIMIT in event['message']:
                                     failed_tracks.append(track)
                                     break
                                 raise RuntimeError(event['message'])
@@ -330,6 +332,7 @@ class LiveSessions:
 
     async def run(self,rid):
         previous='';stable='';preview_end=0;preview_start=None;next_target=3;errors=0
+        confirm_retry_at=None
         dual_preview={}
         previous_tracks={}
         echo=StreamingEchoCanceller() if json.loads(self.row(rid)['config']).get('echo_mode')=='aec3' else None
@@ -395,6 +398,8 @@ class LiveSessions:
                 if draining:
                     window['confirmed']=True
                     if window.get('boundary_reason')=='preview':window.update(boundary_reason='stop',extending=False)
+                if confirm_retry_at==start:
+                    window['confirmed']=True
                 dual_window='track_payloads' in window
                 if dual_window:
                     def publish_track(part):
@@ -434,10 +439,21 @@ class LiveSessions:
                                 last_sent=time.monotonic()
                             elif event['type']=='final':result=event['result']
                             elif event['type']=='error':failure=event['message']
+                if result is None and failure and OUTPUT_LIMIT in failure:
+                    if not window['confirmed']:
+                        confirm_retry_at=start
+                        preview_end=0
+                        continue
+                    self.checkpoint(rid,cursor=end,partial={})
+                    self.emit(rid,'status',message='本段拆短重试未完成，已留待会后补识别；实时识别继续')
+                    confirm_retry_at=None
+                    previous='';stable='';preview_end=0;preview_start=None
+                    continue
                 if result is None:
                     errors+=1;self.emit(rid,'status',message=failure or '实时识别未完成，原音已保留')
                     if draining:break
                     await asyncio.sleep(min(8,2**min(errors,3)));continue
+                confirm_retry_at=None
                 errors=0;text=''.join(s['text'] for s in result['segments'])
                 stable=stable_prefix(previous,text);previous=text;preview_end=end
                 metrics={k:result.get(k) for k in ('processing_ms','first_text_ms','duration','confirmed','skipped_seconds','decoder','boundary_reason','extending')}
@@ -465,7 +481,7 @@ class LiveSessions:
                     self.emit(rid,'final',result=result)
                     if result.get('failed_tracks'):
                         labels='、'.join('电脑声音' if track=='system' else '麦克风' for track in result['failed_tracks'])
-                        self.emit(rid,'status',message=f'{labels}有一段语言未识别，原音已保留。'+AUTO_LANGUAGE_ERROR)
+                        self.emit(rid,'status',message=f'{labels}有一段未识别，原音已保留，可在会后补识别')
                     previous='';stable='';preview_end=0;preview_start=None;next_target=max(3,load['preview_step_seconds'])
                 else:
                     if dual_window:

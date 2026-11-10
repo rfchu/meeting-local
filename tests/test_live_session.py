@@ -365,3 +365,64 @@ def test_dual_forced_boundary_links_only_contiguous_same_track_audio(tmp_path,br
     assert next_parts[0]['continues_previous']==expected
     assert (next_parts[0]['continuation_id']==parts[0]['continuation_id'])==expected
     assert not next_parts[0]['continues_next']
+
+
+@pytest.mark.parametrize('split_succeeds', [True, False])
+def test_dual_output_limit_splits_only_failed_track_and_advances(tmp_path, monkeypatch, split_succeeds):
+    from app.live_stream import OUTPUT_LIMIT
+
+    async def run():
+        manager, recordings, rid, _, _ = setup(tmp_path)
+        folder = recordings.folder(rid)
+        recordings.write(folder/'session.json', recordings.read(rid) | {
+            'source': 'macos', 'include_microphone': True,
+        })
+        calls = []
+
+        class OverflowResident:
+            supports_continuation = True
+
+            async def generate(self, provider, path, context='', continuation=None):
+                with wave.open(str(path), 'rb') as wav:
+                    duration = wav.getnframes()/16000
+                    sample = wav.readframes(1)
+                calls.append((sample, duration))
+                if sample == b'\x00\x08' and (duration == 25 or (duration > 3 and not split_succeeds)):
+                    raise RuntimeError(OUTPUT_LIMIT)
+                yield {'type': 'qwen_final', 'segments': [
+                    {'start': 0, 'end': duration, 'text': '现场发言' if sample == b'\x00\x08' else '线上发言'},
+                ]}
+
+        manager.resident = OverflowResident()
+        monkeypatch.setattr(manager.native, 'status', lambda *args, **kwargs: {'state': 'recording', 'duration': 28})
+        monkeypatch.setattr('app.track_audio.reduce_echo_wav', lambda _, microphone: microphone)
+        monkeypatch.setattr('app.track_audio.wav_echo_evidence', lambda *_: 'independent')
+
+        def window(rid, start, *args, **kwargs):
+            if start >= 28:
+                return {'ready': False}
+            duration = 25 if start == 0 else 3
+            return {'ready': True, 'offset': start, 'next_offset': start+duration,
+                    'confirmed': True, 'boundary_reason': 'hard_limit', 'skipped_seconds': 0,
+                    'track_payloads': {'system': audio(duration), 'microphone': pcm_wav(b'\x00\x08'*round(duration*16000))}}
+
+        monkeypatch.setattr(manager.native, 'draft_window', window)
+        try:
+            await manager.start(rid, CONFIG)
+            await until(lambda: manager.row(rid)['cursor'] == 28*16000)
+            first, later = sorted(manager.cache.snapshot(rid, 'qwen'), key=lambda row: row['start_frame'])
+            assert later['state'] == 'completed' and later['start_frame'] == 25*16000
+            assert calls.count((b'\x70\x17', 25)) == calls.count((b'\x00\x08', 25)) == 1
+            assert calls.count((b'\x00\x08', 12.5)) == (2 if split_succeeds else 1)
+            assert len([part for part in first['segments'] if part['source_track'] == 'system']) == 1
+            if split_succeeds:
+                assert first['state'] == 'completed'
+                assert [part['start'] for part in first['segments'] if part['source_track'] == 'microphone'] == [0, 12.5]
+            else:
+                assert first['state'] == 'partial' and first['failed_tracks'] == ['microphone']
+                assert all(part['source_track'] == 'system' for part in first['segments'])
+                assert manager.cache.overview(rid, 'qwen', 28)['gaps'] == [{'start': 0, 'end': 25}]
+        finally:
+            await manager.close()
+
+    asyncio.run(run())

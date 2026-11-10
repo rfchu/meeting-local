@@ -7,6 +7,27 @@ from .resources import request_for
 from .db import uid
 from .live_context import recognition_context
 
+OUTPUT_LIMIT = '流式草稿达到输出上限'
+
+
+def split_audio(payload):
+    """Divide PCM at an exact frame boundary, respecting the minimum decoder input."""
+    with wave.open(io.BytesIO(payload), 'rb') as source:
+        count = source.getnframes()
+        if count < 16000:
+            return []
+        parts = []
+        offset = 0
+        for length in (count // 2, count - count // 2):
+            output = io.BytesIO()
+            with wave.open(output, 'wb') as target:
+                target.setparams(source.getparams())
+                target.writeframes(source.readframes(length))
+            parts.append((offset / 16000, output.getvalue()))
+            offset += length
+        return parts
+
+
 def inspect_audio(payload):
     if not payload or len(payload)>4*1024*1024:raise ValueError('实时音频为空或超过 4MB')
     try:
@@ -73,25 +94,54 @@ async def qwen_events(provider,cache,lock,payload,offset,rid,source,root,window=
             if not provider.ready():raise RuntimeError('Qwen 实时模型尚未就绪')
             with tempfile.TemporaryDirectory(prefix='meeting-stream-',dir=root) as folder_name:
                 folder=Path(folder_name);audio=folder/'chunk.wav';output=folder/'result.qwen.json';audio.write_bytes(payload)
+                async def decode(piece, state):
+                    audio.write_bytes(piece)
+                    iterator=resident.generate(provider,audio,context=context,**({'continuation':state} if getattr(resident,'supports_continuation',False) else {})) if resident and hasattr(provider,'resident_command') else disposable_events(provider,audio,output,context)
+                    async with aclosing(iterator):
+                        async for item in iterator:
+                            yield item
+
+                def verified_segments(result, last, start, length, require_full):
+                    if result is None:raise RuntimeError('流式识别缺少最终结果')
+                    report=result.get('decoder',{})
+                    if require_full and report and (report.get('mode')!='full' or not report.get('final_verified')):
+                        raise RuntimeError('本段尚未完成全量复核，临时文字不能计入确认覆盖')
+                    if last is not None and ''.join(s['text'] for s in result['segments']).strip()!=last.strip():
+                        raise RuntimeError('流式文字与最终结果不一致，不能确认为完整覆盖')
+                    return [{'start':start+max(0,min(length,s['start'])),
+                             'end':start+max(0,min(length,s['end'])),'text':s['text'],
+                             **{key:window[key] for key in ('continuation_id','continues_previous','continues_next','boundary_reason') if window and key in window}} for s in result['segments'] if s['text'].strip()]
+
                 result=None
-                iterator=resident.generate(provider,audio,context=context,**({'continuation':continuation} if getattr(resident,'supports_continuation',False) else {})) if resident and hasattr(provider,'resident_command') else disposable_events(provider,audio,output,context)
-                async with aclosing(iterator):
-                    async for item in iterator:
-                        if item['type']=='qwen_partial':
-                            text=item.get('text')
-                            if not isinstance(text,str) or len(text)>20000:raise RuntimeError('流式文字超出有效范围')
-                            if text and first_text_ms is None:first_text_ms=round((time.monotonic()-started)*1000)
-                            last_text=text;yield event('partial',text=text)
-                        elif item['type']=='qwen_final':result=item
-                if result is None:raise RuntimeError('流式识别缺少最终结果')
-                decoder_report=result.get('decoder',{})
-                if confirmed and decoder_report and (decoder_report.get('mode')!='full' or not decoder_report.get('final_verified')):
-                    raise RuntimeError('本段尚未完成全量复核，临时文字不能计入确认覆盖')
-                if last_text is not None and ''.join(s['text'] for s in result['segments']).strip()!=last_text.strip():
-                    raise RuntimeError('流式文字与最终结果不一致，不能确认为完整覆盖')
-                segments=[{'start':offset+max(0,min(duration,s['start'])),
-                           'end':offset+max(0,min(duration,s['end'])),'text':s['text'],
-                           **{key:window[key] for key in ('continuation_id','continues_previous','continues_next','boundary_reason') if window and key in window}} for s in result['segments'] if s['text'].strip()]
+                try:
+                    async with aclosing(decode(payload, continuation)) as iterator:
+                        async for item in iterator:
+                            if item['type']=='qwen_partial':
+                                text=item.get('text')
+                                if not isinstance(text,str) or len(text)>20000:raise RuntimeError('流式文字超出有效范围')
+                                if text and first_text_ms is None:first_text_ms=round((time.monotonic()-started)*1000)
+                                last_text=text;yield event('partial',text=text)
+                            elif item['type']=='qwen_final':result=item
+                    segments=verified_segments(result,last_text,offset,duration,confirmed)
+                except RuntimeError as error:
+                    if OUTPUT_LIMIT not in str(error):raise
+                    halves=split_audio(payload)
+                    if not halves:raise
+                    segments=[]
+                    try:
+                        for relative,piece in halves:
+                            length,silent_piece=inspect_audio(piece)
+                            if silent_piece:continue
+                            final=None
+                            last_piece_text=None
+                            async with aclosing(decode(piece, {'confirmed':True,'enabled':False})) as iterator:
+                                async for item in iterator:
+                                    if item['type']=='qwen_final':final=item
+                                    elif item['type']=='qwen_partial':last_piece_text=item.get('text')
+                            segments.extend(verified_segments(final,last_piece_text,offset+relative,length,True))
+                    except (RuntimeError,TimeoutError,ValueError) as retry_error:
+                        raise RuntimeError(f'{OUTPUT_LIMIT}，拆短重试未完成') from retry_error
+                    result={}
         if aid:
             if confirmed:
                 cache.complete(aid,segments)

@@ -97,4 +97,4 @@ class LiveResults:
         return {'engine':engine,'duration':duration,'covered_seconds':sum((r['end_frame']-r['start_frame'])/RATE for r in reused),
                 'completed_ranges':len(reused),'gaps':[{'start':a,'end':b} for a,b in gaps],
                 'attempts':{row['state']:row['count'] for row in states},
-                'recent_failures':[{'start':r['start_frame']/RATE,'end':r['end_frame']/RATE,'state':r['state'],'error':('部分音轨语言未识别，原音已保留' if r['state']=='partial' else r['error'])} for r in attempts]}
+                'recent_failures':[{'start':r['start_frame']/RATE,'end':r['end_frame']/RATE,'state':r['state'],'error':('部分音轨未识别，原音已保留' if r['state']=='partial' else r['error'])} for r in attempts]}
