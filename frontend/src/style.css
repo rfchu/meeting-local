@@ -485,7 +485,11 @@ h1 {
 .action-menu {
   position: relative;
 }
-.action-menu > summary {
+.action-menu.open {
+  z-index: 55;
+}
+.action-menu > summary,
+.action-menu-trigger {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -498,15 +502,19 @@ h1 {
   cursor: pointer;
   list-style: none;
   white-space: nowrap;
+  font-size: 13px;
+  line-height: 1.2;
 }
 .action-menu > summary::-webkit-details-marker {
   display: none;
 }
 .action-menu > summary:hover,
-.action-menu[open] > summary {
+.action-menu[open] > summary,
+.action-menu-trigger:hover,
+.action-menu.open > .action-menu-trigger {
   background: var(--bg-hover, #f8fafc);
 }
-.action-menu:not([open]) > .action-menu-dropdown {
+.action-menu:not([open]):not(.open) > .action-menu-dropdown {
   display: none;
 }
 .action-menu-dropdown {

@@ -15,59 +15,84 @@ export default function ActionMenu({
   accessibleLabel?: string;
   actions: Action[];
 }) {
-  const menu = useRef<HTMLDetailsElement>(null);
-  const trigger = useRef<HTMLElement>(null);
   const [open, setOpen] = useState(false);
-
-  function close(restoreFocus = false) {
-    if (menu.current) menu.current.open = false;
-    if (restoreFocus) trigger.current?.focus();
-  }
+  const containerRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     if (!open) return;
-    const dismissOutside = (event: PointerEvent) => {
-      if (event.target instanceof Node && !menu.current?.contains(event.target))
-        close();
+
+    const handleOutside = (event: MouseEvent | TouchEvent) => {
+      if (
+        containerRef.current &&
+        !containerRef.current.contains(event.target as Node)
+      ) {
+        setOpen(false);
+      }
     };
-    document.addEventListener("pointerdown", dismissOutside, true);
-    return () =>
-      document.removeEventListener("pointerdown", dismissOutside, true);
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        setOpen(false);
+        triggerRef.current?.focus();
+      }
+    };
+
+    document.addEventListener("mousedown", handleOutside, true);
+    document.addEventListener("pointerdown", handleOutside, true);
+    document.addEventListener("touchstart", handleOutside, true);
+    window.addEventListener("keydown", handleKeyDown, true);
+
+    return () => {
+      document.removeEventListener("mousedown", handleOutside, true);
+      document.removeEventListener("pointerdown", handleOutside, true);
+      document.removeEventListener("touchstart", handleOutside, true);
+      window.removeEventListener("keydown", handleKeyDown, true);
+    };
   }, [open]);
 
   return (
-    <details
-      className="action-menu"
-      ref={menu}
-      onToggle={(event) => setOpen(event.currentTarget.open)}
+    <div
+      className={`action-menu ${open ? "open" : ""}`}
+      ref={containerRef}
       onBlur={(event) => {
-        if (event.relatedTarget && !event.currentTarget.contains(event.relatedTarget))
-          close();
-      }}
-      onKeyDown={(event) => {
-        if (event.key === "Escape" && event.currentTarget.open) {
-          event.preventDefault();
-          event.stopPropagation();
-          close(true);
+        if (!containerRef.current?.contains(event.relatedTarget as Node)) {
+          setOpen(false);
         }
       }}
     >
-      <summary ref={trigger} aria-label={accessibleLabel}>{label}</summary>
-      <div className="action-menu-dropdown">
-        {actions.map(({ label, run, danger }) => (
-          <button
-            key={label}
-            type="button"
-            className={danger ? "danger-text" : undefined}
-            onClick={() => {
-              close(true);
-              run();
-            }}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
-    </details>
+      <button
+        ref={triggerRef}
+        type="button"
+        className="action-menu-trigger"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-label={accessibleLabel}
+        onClick={() => setOpen((prev) => !prev)}
+      >
+        {label}
+      </button>
+
+      {open && (
+        <div className="action-menu-dropdown" role="menu">
+          {actions.map(({ label: actionLabel, run, danger }) => (
+            <button
+              key={actionLabel}
+              type="button"
+              role="menuitem"
+              className={danger ? "danger-text" : undefined}
+              onClick={() => {
+                setOpen(false);
+                run();
+              }}
+            >
+              {actionLabel}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
