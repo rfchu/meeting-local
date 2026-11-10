@@ -5416,137 +5416,270 @@ button.note-options-trigger {
   flex-shrink: 0;
 }
 
-/* 高级音频设置条 */
-.setup-source-advanced-row {
+/* ========================================================
+   会前音源配置与拟真试音工作台 (Studio Audio Check Suite)
+   ======================================================== */
+
+/* 双轨回声消除分段控制条 */
+.setup-echo-control-bar {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
-  padding: 6px 10px;
-  background: #f1f5f9;
-  border: 1px solid #e2e8f0;
-  border-radius: 6px;
-  margin-top: 8px;
-  margin-bottom: 12px;
-}
-
-.setup-source-advanced-info {
-  font-size: 11.5px;
-  color: #475569;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.btn-setup-advanced-audio {
-  border: 1px solid #cbd5e1;
-  background: #ffffff;
-  color: #334155;
-  font-size: 11px;
-  font-weight: 500;
-  padding: 3px 8px;
-  border-radius: 4px;
-  cursor: pointer;
-  white-space: nowrap;
-  transition: all 0.15s ease;
-}
-
-.btn-setup-advanced-audio:hover {
-  background: #f8fafc;
-  border-color: #94a3b8;
-  color: #0f172a;
-}
-
-/* 实时试音电平条 */
-.setup-meters-strip {
+  gap: 12px;
+  padding: 8px 12px;
   background: #f8fafc;
   border: 1px solid #e2e8f0;
-  border-radius: 9px;
-  padding: 10px 12px;
-}
-
-.setup-meter-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
+  border-radius: 8px;
+  margin-top: 10px;
   margin-bottom: 8px;
 }
 
-.setup-meter-header-info {
+.echo-bar-label {
   display: flex;
-  flex-direction: column;
-  gap: 2px;
+  align-items: center;
+  gap: 8px;
 }
 
-.setup-meter-header-info span {
+.echo-icon {
+  font-size: 15px;
+  line-height: 1;
+}
+
+.echo-label-group {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.echo-label-group strong {
   font-size: 12px;
   font-weight: 600;
   color: #334155;
 }
 
-.setup-meter-header-info small {
-  font-size: 11px;
-  color: #94a3b8;
+.echo-label-group small {
+  font-size: 10.5px;
+  color: #64748b;
 }
 
-.setup-meter-header-actions {
-  display: flex;
+.echo-segmented-pills {
+  display: inline-flex;
   align-items: center;
+  background: #e2e8f0;
+  padding: 2px;
+  border-radius: 6px;
+  gap: 2px;
 }
 
-.btn-mic-test {
-  border: 1px solid #cbd5e1;
+.echo-pill-btn {
+  border: none;
+  background: transparent;
+  padding: 4px 10px;
+  font-size: 11.5px;
+  font-weight: 500;
+  color: #64748b;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.echo-pill-btn:hover:not(:disabled) {
+  color: #1e293b;
+}
+
+.echo-pill-btn.active {
   background: #ffffff;
   color: #2563eb;
+  font-weight: 600;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+}
+
+.echo-pill-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.pill-badge {
+  font-size: 9px;
+  padding: 1px 4px;
+  background: #eff6ff;
+  color: #2563eb;
+  border-radius: 3px;
+  font-weight: 600;
+}
+
+/* 拟真试音监听台 (AudioCheck Suite) */
+.audio-check-suite {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  padding: 12px 14px;
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.audio-check-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.audio-check-title-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.audio-check-indicator-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.audio-check-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.audio-check-dot.idle {
+  background: #94a3b8;
+}
+
+.audio-check-dot.recording {
+  background: #ef4444;
+  box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.25);
+  animation: pulse-dot 1.2s infinite;
+}
+
+.audio-check-dot.recognizing {
+  background: #3b82f6;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.25);
+  animation: pulse-dot 1.2s infinite;
+}
+
+.audio-check-dot.completed {
+  background: #10b981;
+}
+
+.audio-check-dot.failed {
+  background: #ef4444;
+}
+
+@keyframes pulse-dot {
+  0% { transform: scale(0.95); opacity: 0.8; }
+  50% { transform: scale(1.15); opacity: 1; }
+  100% { transform: scale(0.95); opacity: 0.8; }
+}
+
+.audio-check-heading {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: #1e293b;
+}
+
+.audio-check-sub {
   font-size: 11px;
-  font-weight: 500;
-  padding: 3px 9px;
-  border-radius: 5px;
+  color: #64748b;
+  line-height: 1.4;
+}
+
+.audio-check-actions {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.btn-audio-check-primary {
+  border: 1px solid #bfdbfe;
+  background: #eff6ff;
+  color: #1d4ed8;
+  font-size: 11.5px;
+  font-weight: 600;
+  padding: 4px 10px;
+  border-radius: 6px;
   cursor: pointer;
   white-space: nowrap;
   transition: all 0.15s ease;
 }
 
-.btn-mic-test:hover {
-  background: #eff6ff;
+.btn-audio-check-primary:hover:not(:disabled) {
+  background: #dbeafe;
   border-color: #93c5fd;
+  color: #1e40af;
 }
 
-.btn-mic-test.active {
+.btn-audio-check-danger {
+  border: 1px solid #fecaca;
   background: #fef2f2;
-  border-color: #fca5a5;
   color: #dc2626;
+  font-size: 11.5px;
   font-weight: 600;
+  padding: 4px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.15s ease;
 }
 
-.setup-meter-tracks {
+.btn-audio-check-danger:hover {
+  background: #fee2e2;
+  border-color: #f87171;
+}
+
+/* 试音频道条带 */
+.audio-check-tracks {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 7px;
+  background: #ffffff;
+  border: 1px solid #f1f5f9;
+  border-radius: 8px;
+  padding: 8px 10px;
 }
 
-.setup-meter-item {
+.audio-check-track-item {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
 }
 
-.meter-label {
-  font-size: 11.5px;
-  color: #475569;
-  width: 52px;
+.audio-track-info {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 82px;
   flex-shrink: 0;
 }
 
-.meter-bar-container {
+.audio-track-icon {
+  font-size: 12px;
+}
+
+.audio-track-name {
+  font-size: 11.5px;
+  font-weight: 500;
+  color: #334155;
+  white-space: nowrap;
+}
+
+.audio-track-bar-container {
   flex: 1;
   height: 6px;
   background: #e2e8f0;
   border-radius: 3px;
   overflow: hidden;
+  position: relative;
 }
 
-.meter-bar-fill {
+.audio-track-bar-fill {
   height: 100%;
   width: 0%;
   background: #10b981;
@@ -5554,30 +5687,125 @@ button.note-options-trigger {
   transition: width 0.08s ease;
 }
 
-.meter-bar-fill.active {
-  background: linear-gradient(90deg, #10b981 0%, #3b82f6 80%, #f59e0b 100%);
+.audio-track-bar-fill.active {
+  background: linear-gradient(90deg, #10b981 0%, #3b82f6 75%, #f59e0b 100%);
 }
 
-.meter-val-text {
+.audio-track-status-pill {
   font-size: 10.5px;
-  width: 44px;
-  text-align: right;
-  color: #94a3b8;
+  width: 52px;
+  text-align: center;
+  padding: 1px 4px;
+  border-radius: 4px;
   flex-shrink: 0;
 }
 
-.meter-val-text.active {
-  color: #10b981;
+.audio-track-status-pill.idle {
+  color: #94a3b8;
+  background: #f1f5f9;
+}
+
+.audio-track-status-pill.detecting {
+  color: #6366f1;
+  background: #eef2ff;
+}
+
+.audio-track-status-pill.voice {
+  color: #059669;
+  background: #ecfdf5;
   font-weight: 600;
 }
 
-.meter-val-text.untested {
-  color: #94a3b8;
+.audio-track-status-pill.quiet {
+  color: #d97706;
+  background: #fffbeb;
 }
 
-.meter-val-text.muted {
-  color: #f59e0b;
+/* 试录回放与识别区 */
+.audio-check-player-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+
+.audio-check-player-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.audio-check-native-player {
+  flex: 1;
+  height: 32px;
+  outline: none;
+}
+
+.btn-audio-check-transcribe {
+  border: 1px solid #cbd5e1;
+  background: #f8fafc;
+  color: #334155;
+  font-size: 11px;
   font-weight: 500;
+  padding: 4px 8px;
+  border-radius: 5px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.15s ease;
+}
+
+.btn-audio-check-transcribe:hover:not(:disabled) {
+  background: #ffffff;
+  border-color: #94a3b8;
+  color: #0f172a;
+}
+
+.btn-audio-check-transcribe:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.audio-check-result-box {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  padding: 6px 8px;
+}
+
+.result-tag {
+  font-size: 10px;
+  font-weight: 600;
+  color: #4338ca;
+  background: #e0e7ff;
+  padding: 1px 5px;
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+
+.result-content {
+  font-size: 11.5px;
+  color: #1e293b;
+  margin: 0;
+  line-height: 1.4;
+  word-break: break-all;
+}
+
+.audio-check-error-banner {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  color: #991b1b;
+  font-size: 11px;
+  padding: 6px 10px;
+  border-radius: 6px;
 }
 
 /* 个人术语库组件 */

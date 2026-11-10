@@ -15,11 +15,13 @@ export default function AudioCheck({
   engine,
   engineReady,
   onTested,
+  onActiveChange,
 }: {
   source: CaptureSource;
   engine: "qwen" | "whisper";
   engineReady: boolean;
   onTested?: () => void;
+  onActiveChange?: (active: boolean) => void;
 }) {
   const [state, setState] = useState("idle"),
     [seconds, setSeconds] = useState(0),
@@ -64,6 +66,7 @@ export default function AudioCheck({
       generation.current++;
       cleanup();
       clearAudio();
+      onActiveChange?.(false);
     },
     [],
   );
@@ -246,87 +249,180 @@ export default function AudioCheck({
     }
   };
   const active = ["requesting", "recording", "recognizing"].includes(state);
+
+  useEffect(() => {
+    onActiveChange?.(active);
+  }, [active, onActiveChange]);
+
+  const tracks =
+    source === "macos-both"
+      ? [
+          { key: "system", name: "电脑声音", icon: "💻" },
+          { key: "microphone", name: "麦克风", icon: "🎙️" },
+        ]
+      : source === "macos-system"
+        ? [{ key: "system", name: "电脑声音", icon: "💻" }]
+        : source === "macos-microphone"
+          ? [{ key: "microphone", name: "麦克风", icon: "🎙️" }]
+          : [{ key: "browser", name: "浏览器麦克风", icon: "🌐" }];
+
   return (
-    <section className="audio-check" aria-label="十秒录音测试">
-      <h3>十秒试录</h3>
-      <p>
-        请
-        {(source === "browser" || source === "macos-microphone")
-          ? "对着麦克风说一句话"
-          : source === "macos-both"
-            ? "播放一段电脑声音，并对着麦克风说一句话"
-            : "播放一段电脑声音"}
-        ，完成后回放检查。
-      </p>
-      <p className="muted">
-        测试不创建会议，不进入恢复中心；本次试录只在本机处理，关闭后清理。
-      </p>
-      {state === "recording" && (
-        <div role="status">
-          <strong>{seconds}/10 秒</strong>
-          {source === "browser" && (
-            <meter min={0} max={1} value={level} aria-label="麦克风测试音量" />
+    <div className="audio-check-suite" aria-label="音源试录与电平监听">
+      {/* 头部状态与操作 */}
+      <div className="audio-check-header">
+        <div className="audio-check-title-group">
+          <div className="audio-check-indicator-row">
+            <span
+              className={`audio-check-dot ${
+                state === "recording"
+                  ? "recording"
+                  : state === "recognizing"
+                    ? "recognizing"
+                    : state === "completed"
+                      ? "completed"
+                      : state === "failed"
+                        ? "failed"
+                        : "idle"
+              }`}
+            />
+            <span className="audio-check-heading">
+              {state === "recording"
+                ? `正在试录 (${seconds}/10 秒)`
+                : state === "requesting"
+                  ? "正在等待权限…"
+                  : state === "recognizing"
+                    ? "正在识别测试录音…"
+                    : state === "completed"
+                      ? "试录完成，可回放试听"
+                      : state === "failed"
+                        ? "试录异常"
+                        : "信号监听与试录"}
+            </span>
+          </div>
+          <small className="audio-check-sub">
+            {state === "recording"
+              ? source === "macos-both"
+                ? "请播放电脑声音，并对着麦克风说话观察跳动…"
+                : source === "macos-system"
+                  ? "请播放一段电脑声音观察电平跳动…"
+                  : "请对着麦克风说话观察电平跳动…"
+              : state === "completed"
+                ? "试听确认声音清晰后，即可在右上角正式起录"
+                : "会前试录 10 秒样本并回听，提前确认收音正常"}
+          </small>
+        </div>
+
+        <div className="audio-check-actions">
+          {!active && (
+            <button
+              type="button"
+              className="btn-audio-check-primary"
+              onClick={() => void start()}
+            >
+              {audio ? "🔄 重新试录" : "🎙️ 开始试录 (10s)"}
+            </button>
+          )}
+          {active && (
+            <button
+              type="button"
+              className="btn-audio-check-danger"
+              onClick={() => {
+                generation.current++;
+                pending.current = false;
+                cleanup();
+                setState(audio ? "completed" : "idle");
+              }}
+            >
+              ⏹️ 停止 / 取消
+            </button>
           )}
         </div>
-      )}
-      {source !== "browser" && ["recording", "completed"].includes(state) && (
-        <div aria-label="原生试录电平">
-          {(source === "macos-both" ? ["system", "microphone"] as const
-            : source === "macos-system" ? ["system"] as const : ["microphone"] as const
-          ).map((track) => {
-            const name = track === "system" ? "电脑声音" : "麦克风";
-            const rms = nativeLevels?.[track];
-            return <div key={track}>
-              {name} <meter min={0} max={1} value={Math.min(1, Math.sqrt(rms ?? 0) * 2.4)} aria-label={name + "测试音量"} />
-              {" "}{rms == null ? "等待输入" : rms >= 0.002 ? "有输入" : "无信号"}
-            </div>;
-          })}
-        </div>
-      )}
-      {state === "requesting" && <p role="status">等待采集权限…</p>}
-      <div className="guide-actions">
-        <button disabled={active} onClick={() => void start()}>
-          {audio ? "重新试录" : "开始十秒试录"}
-        </button>
-        {active && (
-          <button
-            onClick={() => {
-              generation.current++;
-              pending.current = false;
-              cleanup();
-              setState(audio ? "completed" : "idle");
-            }}
-          >
-            取消测试
-          </button>
-        )}
       </div>
+
+      {/* 音轨与电平条 */}
+      <div className="audio-check-tracks">
+        {tracks.map((track) => {
+          let rms: number | undefined;
+          let levelRatio = 0;
+          let statusText = "待试音";
+          let statusClass = "idle";
+
+          if (source !== "browser") {
+            rms = nativeLevels?.[track.key as "system" | "microphone"];
+            if (rms !== undefined) {
+              levelRatio = Math.min(1, Math.sqrt(rms) * 2.4);
+              const isVoice = rms >= 0.002;
+              statusText = isVoice ? "有输入" : "等待输入";
+              statusClass = isVoice ? "voice" : "quiet";
+            } else if (state === "recording") {
+              statusText = "检测中…";
+              statusClass = "detecting";
+            }
+          } else {
+            // browser
+            if (state === "recording") {
+              levelRatio = level;
+              const isVoice = level > 0.05;
+              statusText = isVoice ? "有输入" : "等待输入";
+              statusClass = isVoice ? "voice" : "quiet";
+            } else if (state === "completed") {
+              statusText = "已采录";
+              statusClass = "voice";
+              levelRatio = 0.35;
+            }
+          }
+
+          return (
+            <div className="audio-check-track-item" key={track.key}>
+              <div className="audio-track-info">
+                <span className="audio-track-icon">{track.icon}</span>
+                <span className="audio-track-name">{track.name}</span>
+              </div>
+              <div className="audio-track-bar-container">
+                <div
+                  className={`audio-track-bar-fill ${levelRatio > 0.02 ? "active" : ""}`}
+                  style={{ width: `${Math.round(levelRatio * 100)}%` }}
+                />
+              </div>
+              <span className={`audio-track-status-pill ${statusClass}`}>
+                {statusText}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* 试录完成后的回放与文字识别 */}
       {audio && (
-        <>
-          <audio controls src={audio} aria-label="回放测试录音" />
-          <p className="muted">
-            听到预期音源后，才能确认采集正常；获取到音频不代表声音内容正确。
-          </p>
-          <button
-            disabled={active || !engineReady}
-            onClick={() => void transcribe()}
-          >
-            {state === "recognizing" ? "正在识别测试音频…" : "识别这段测试录音"}
-          </button>
-          {!engineReady && (
-            <small>识别模型尚未就绪，仍可先回放确认录音。</small>
+        <div className="audio-check-player-section">
+          <div className="audio-check-player-row">
+            <audio controls src={audio} className="audio-check-native-player" />
+            <button
+              type="button"
+              className="btn-audio-check-transcribe"
+              disabled={active || !engineReady}
+              onClick={() => void transcribe()}
+              title={engineReady ? "使用所选引擎转写这段测试音频" : "识别引擎尚未就绪"}
+            >
+              {state === "recognizing" ? "正在识别…" : "📝 验证转写"}
+            </button>
+          </div>
+          {text && (
+            <div className="audio-check-result-box">
+              <span className="result-tag">识别结果</span>
+              <p className="result-content">{text}</p>
+            </div>
           )}
-          {text && <p className="audio-test-result">测试识别结果：{text}</p>}
-          {state === "completed" && !text && (
-            <p className="muted">识别为可选步骤，不会创建或保存正式文字稿。</p>
-          )}
-        </>
+        </div>
       )}
+
+      {/* 错误提示 */}
       {error && (
-        <p role="alert" className="error">
-          {error}
-        </p>
+        <div className="audio-check-error-banner" role="alert">
+          <span className="error-icon">⚠️</span>
+          <span>{error}</span>
+        </div>
       )}
-    </section>
+    </div>
   );
 }

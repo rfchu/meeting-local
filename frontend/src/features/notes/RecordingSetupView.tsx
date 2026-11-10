@@ -84,7 +84,7 @@ export default function RecordingSetupView({
     "agenda",
   );
 
-  const [testSource, setTestSource] = useState<typeof captureSource>();
+  const [testingAudio, setTestingAudio] = useState(false);
 
   const selectedMinutesProfile = environment?.analysis?.profiles?.find(
     (p) => p.id === minutesModel,
@@ -94,7 +94,7 @@ export default function RecordingSetupView({
     selectedMinutesProfile?.provider_type === "cloud";
 
   const startDisabled =
-    !!testSource ||
+    testingAudio ||
     !briefReady ||
     preflight?.storage.writable === false ||
     (captureSource === "browser" &&
@@ -491,7 +491,7 @@ export default function RecordingSetupView({
                   type="button"
                   className={`setup-source-card ${captureSource === "macos-both" ? "selected" : ""}`}
                   disabled={!nativeCapability?.available}
-                  onClick={() => { setTestSource(undefined); setCaptureSource("macos-both"); }}
+                  onClick={() => setCaptureSource("macos-both")}
                 >
                   <div className="setup-source-card-top">
                     <span className="setup-source-icon">🎧</span>
@@ -511,7 +511,7 @@ export default function RecordingSetupView({
                     !nativeCapability?.available ||
                     !nativeCapability.microphone_only_supported
                   }
-                  onClick={() => { setTestSource(undefined); setCaptureSource("macos-microphone"); }}
+                  onClick={() => setCaptureSource("macos-microphone")}
                 >
                   <div className="setup-source-card-top">
                     <span className="setup-source-icon">🎙️</span>
@@ -528,7 +528,7 @@ export default function RecordingSetupView({
                   type="button"
                   className={`setup-source-card ${captureSource === "macos-system" ? "selected" : ""}`}
                   disabled={!nativeCapability?.available}
-                  onClick={() => { setTestSource(undefined); setCaptureSource("macos-system"); }}
+                  onClick={() => setCaptureSource("macos-system")}
                 >
                   <div className="setup-source-card-top">
                     <span className="setup-source-icon">💻</span>
@@ -545,7 +545,7 @@ export default function RecordingSetupView({
                   <button
                     type="button"
                     className={`setup-source-card ${captureSource === "browser" ? "selected" : ""}`}
-                    onClick={() => { setTestSource(undefined); setCaptureSource("browser"); }}
+                    onClick={() => setCaptureSource("browser")}
                   >
                     <div className="setup-source-card-top">
                       <span className="setup-source-icon">🌐</span>
@@ -569,39 +569,52 @@ export default function RecordingSetupView({
                 )}
               </div>
 
-              {/* 高级音频配置入口（双轨回声消除、硬件权限） */}
+              {/* 双轨高级处理选项（仅在混合会议时展开，Apple 风格分段控制） */}
               {captureSource === "macos-both" && (
-                <label className="setup-field">
-                  双轨回声消除
-                  <select
-                    className="setup-select"
-                    value={echoMode}
-                    disabled={requesting || !!testSource}
-                    onChange={(event) =>
-                      setEchoMode(event.target.value === "aec3" ? "aec3" : "standard")
-                    }
+                <div className="setup-echo-control-bar">
+                  <div className="echo-bar-label">
+                    <span className="echo-icon">🎛️</span>
+                    <div className="echo-label-group">
+                      <strong>双轨回声消除</strong>
+                      <small>佩戴耳机推荐标准处理；外放扬声器推荐 AEC3</small>
+                    </div>
+                  </div>
+                  <div
+                    className="echo-segmented-pills"
+                    role="radiogroup"
+                    aria-label="双轨回声消除模式"
                   >
-                    <option value="standard">标准处理</option>
-                    <option value="aec3">WebRTC AEC3（实验）</option>
-                  </select>
-                </label>
+                    <button
+                      type="button"
+                      className={`echo-pill-btn ${echoMode === "standard" ? "active" : ""}`}
+                      disabled={requesting || testingAudio}
+                      onClick={() => setEchoMode("standard")}
+                    >
+                      标准处理
+                    </button>
+                    <button
+                      type="button"
+                      className={`echo-pill-btn ${echoMode === "aec3" ? "active" : ""}`}
+                      disabled={requesting || testingAudio}
+                      onClick={() => setEchoMode("aec3")}
+                    >
+                      WebRTC AEC3
+                      <span className="pill-badge">实验</span>
+                    </button>
+                  </div>
+                </div>
               )}
-              <div className="setup-meters-strip">
-                <button
-                  type="button"
-                  disabled={requesting || (captureSource !== "browser" && !nativeCapability?.available)}
-                  onClick={() => setTestSource(testSource ? undefined : captureSource)}
-                >
-                  {testSource ? "关闭试录" : "检查所选音源"}
-                </button>
-                {testSource && (
-                  <AudioCheck
-                    source={testSource}
-                    engine={draftEngine}
-                    engineReady={!!engines.find((engine) => engine.id === draftEngine)?.ready}
-                  />
-                )}
-              </div>
+
+              {/* 专业拟真音源试录与电平监听台 */}
+              <AudioCheck
+                key={captureSource}
+                source={captureSource}
+                engine={draftEngine}
+                engineReady={
+                  !!engines.find((engine) => engine.id === draftEngine)?.ready
+                }
+                onActiveChange={setTestingAudio}
+              />
             </div>
 
             {/* 卡片 2: 语言、识别引擎与会后交付 */}
