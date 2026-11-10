@@ -309,3 +309,26 @@ def test_review_can_save_draft_and_export_only_after_confirming_source(setup, mo
     entry['evidence'] = answer
     saved = save(client, mid, draft, interview=interview)
     assert entry['content'] in client.get(path, params={'artifact_id': saved['id']}).text
+
+
+def test_generation_caps_excess_summary_citations_and_keeps_verified_sources(tmp_path):
+    segments = [
+        dict(id=f'actual-{i}', start=i, end=i+1, speaker='候选人', text=f'我完成了第{i}项工作。')
+        for i in range(1, 14)
+    ]
+    quotes = [{'segment_id': f's{i}', 'quote': segment['text']} for i, segment in enumerate(segments, 1)]
+    quotes[0]['quote'] = '没有出现在任何片段中的内容'
+
+    def run(args, extra):
+        output = {'basic_info': {'topic': '面试'}, 'interview': {
+            'summary': [{'content': '候选人介绍了自己的工作。', 'evidence': quotes}],
+        }}
+        (tmp_path/'result.response.json').write_text(encode(output))
+
+    actual = LMStudioProvider().generate_ai_minutes(
+        'synthetic', segments, {'minutes_template': semantic_template('online-interview').model_dump()},
+        tmp_path/'result', run,
+    ).interview
+    assert len(actual.summary[0].evidence) == 8
+    assert [e.segment_id for e in actual.summary[0].evidence] == [f'actual-{i}' for i in range(2, 10)]
+    assert not actual.pending_review

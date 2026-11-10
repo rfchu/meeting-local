@@ -303,7 +303,7 @@ class LMStudioProvider:
         if section_titles:
             instruction+=f'\n输出内容应便于后续组织为这些章节：{section_titles}。'
         if template.get('id')=='online-interview':
-            from .interview import INSTRUCTION
+            from .interview import INSTRUCTION, MAX_EVIDENCE_PER_ITEM
             from .interview import confirmed_speaker_roles
             roles=confirmed_speaker_roles(metadata,segments)
             if roles is None:
@@ -317,6 +317,7 @@ class LMStudioProvider:
                 instruction=INSTRUCTION+('\n以 interview_role 为准。background 和 qa 的 evidence 仅引用 candidate；'
                                          'qa 的 question_evidence 必须独立引用 interviewer 的问题原话。'
                                          '缺少任一角色的原话就省略该条，unknown 不可作为问答依据。')
+            instruction+=f'\n每条内容的 evidence 和 question_evidence 各最多 {MAX_EVIDENCE_PER_ITEM} 条，优先引用最能支持该条内容的原话。'
         if 'chinese_record_coverage' in metadata:
             instruction+='\ntranslation_zh 是对应原文的中文辅助译文。优先用可用中文记录理解内容，缺译文时保留原文供核对；原文 text 和 id 是唯一引用依据。原文与译文不一致时，以原文为准。不得补造负责人、日期或承诺。'
         if any(segment.get('source_track') for segment in segments):
@@ -346,11 +347,16 @@ class LMStudioProvider:
         extra={'MEETING_LLM_API_KEY':self.token} if isinstance(self,OpenAICompatibleProvider) else None
         if 'qwen' in model.lower() and getattr(self,'provider_type','local')=='local':extra={**(extra or {}),'MEETING_LMSTUDIO_REASONING_OFF':'1'}
         run([sys.executable,str(BASE/'scripts/lmstudio_analyze.py'),'--base-url',self.base_url,'--request',str(request_path),'--output',str(output_path)],extra)
-        result=AIMinutesResult.model_validate(json.loads(output_path.read_text()))
+        raw_result=json.loads(output_path.read_text())
         if template.get('id')=='online-interview':
-            if not result.interview:raise ValueError('模型未返回结构化面试纪要')
+            from .interview import cap_generated_evidence
             alias_roles={item['id']:item['interview_role'] for item in data} if roles is not None else None
             source_segments=[{**segment,'id':aliases[segment['id']]} for segment in segments]
+            if isinstance(raw_result, dict):
+                cap_generated_evidence(raw_result.get('interview'),source_segments,alias_roles)
+        result=AIMinutesResult.model_validate(raw_result)
+        if template.get('id')=='online-interview':
+            if not result.interview:raise ValueError('模型未返回结构化面试纪要')
             result.interview.omitted_items=0
             result.interview.pending_review=[]
             result.interview.validate_sources(source_segments,alias_roles,require_questions=True,retain_pending=True)

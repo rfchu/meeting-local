@@ -36,6 +36,9 @@ class InterviewPreparation(BaseModel):
     questions:str=Field(default='',max_length=3000)
     job_description:str=Field(default='',max_length=6000)
     speaker_roles:InterviewSpeakerRoles|None=None
+MAX_EVIDENCE_PER_ITEM = 8
+
+
 class Evidence(BaseModel):
     segment_id:str=Field(min_length=1,max_length=100)
     quote:str=Field(default="",max_length=1000)
@@ -46,15 +49,15 @@ class Evidence(BaseModel):
 
 class InterviewItem(BaseModel):
     content:str=Field(min_length=1,max_length=2000)
-    evidence:list[Evidence]=Field(min_length=1,max_length=8)
+    evidence:list[Evidence]=Field(min_length=1,max_length=MAX_EVIDENCE_PER_ITEM)
 class InterviewQA(InterviewItem):
     question:str=Field(min_length=1,max_length=1000)
-    question_evidence:list[Evidence]=Field(default_factory=list,max_length=8)
+    question_evidence:list[Evidence]=Field(default_factory=list,max_length=MAX_EVIDENCE_PER_ITEM)
 class Competency(BaseModel):
     dimension:str=Field(min_length=1,max_length=200)
     coverage:Literal['covered','needs_examples','not_discussed','unclear']
     content:str=Field(min_length=1,max_length=2000)
-    evidence:list[Evidence]=Field(default_factory=list,max_length=8)
+    evidence:list[Evidence]=Field(default_factory=list,max_length=MAX_EVIDENCE_PER_ITEM)
 class Concern(InterviewItem):
     reason:str=Field(min_length=1,max_length=1000)
     followup:str=Field(min_length=1,max_length=1000)
@@ -285,8 +288,8 @@ class PendingInterviewItem(BaseModel):
     section:Literal['background','qa','competencies','concerns','followups','summary']
     issue:str=Field(min_length=1,max_length=300)
     content:str=Field(min_length=1,max_length=2000)
-    evidence:list[Evidence]=Field(default_factory=list,max_length=8)
-    question_evidence:list[Evidence]=Field(default_factory=list,max_length=8)
+    evidence:list[Evidence]=Field(default_factory=list,max_length=MAX_EVIDENCE_PER_ITEM)
+    question_evidence:list[Evidence]=Field(default_factory=list,max_length=MAX_EVIDENCE_PER_ITEM)
     question:str|None=Field(default=None,max_length=1000)
     dimension:str|None=Field(default=None,max_length=200)
     coverage:Literal['covered','needs_examples','not_discussed','unclear']|None=None
@@ -373,6 +376,47 @@ class InterviewResult(BaseModel):
         from .analysis import AnalysisItem
         for item in self.items():
             if item.evidence:yield AnalysisItem(content=item.content,source_segment_ids=list(dict.fromkeys(sid for e in item.evidence for sid in e.source_ids())))
+
+def cap_generated_evidence(interview, segments, roles):
+    """Bound overlong model output before validating the persisted document schema."""
+    if not isinstance(interview, dict):
+        return
+    original = {segment['id']: _clean_text(segment['text']) for segment in segments}
+    for section in INTERVIEW_SECTIONS:
+        items = interview.get(section)
+        if not isinstance(items, list):
+            continue
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            fields = ('evidence', 'question_evidence') if section == 'qa' else ('evidence',)
+            for field in fields:
+                sources = item.get(field)
+                if not isinstance(sources, list) or len(sources) <= MAX_EVIDENCE_PER_ITEM:
+                    continue
+                role = 'interviewer' if field == 'question_evidence' else 'candidate' if section in ('qa', 'background') else None
+                verified, remaining = [], []
+                seen = set()
+                for source in sources:
+                    if not isinstance(source, dict):
+                        remaining.append(source)
+                        continue
+                    sid, quote = source.get('segment_id'), source.get('quote', '')
+                    if not isinstance(sid, str) or not isinstance(quote, str):
+                        remaining.append(source)
+                        continue
+                    normalized = _clean_text(quote)
+                    key = (sid, normalized)
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    correct_role = roles is None or role is None or roles.get(sid) == role
+                    if correct_role and normalized and sid in original and _quote_position(normalized, original[sid]) >= 0:
+                        verified.append(source)
+                    else:
+                        remaining.append(source)
+                item[field] = (verified + remaining)[:MAX_EVIDENCE_PER_ITEM]
+
 
 def response_schema(valid_ids,basic_info):
     schema=InterviewResult.model_json_schema()
