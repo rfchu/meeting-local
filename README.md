@@ -1,51 +1,115 @@
 # 听记 · 本地会议工作台
 
-听记支持中文和英文会议。在 Mac 上录音或导入已有录音，选择自动识别、中文或英文转写，回听核对后整理成可交付的会议纪要。原文语言与 AI 纪要输出语言可以分别设置。
+> 面向 Apple Silicon Mac 的专业本地会议与访谈工作台。支持双轨原生音频采集、端侧实时语音转写、带原文证据链的智能纪要分析，以及完全离线的本地会议资料库。所有音频与会议数据均保存在本机。
 
-## 能做什么
+---
 
-- **录音与转写**：会中记录重点和待办，在同一个工作台切换实时文字、概览和简记。会后可复用已保存的识别片段快速完成，也可重新精细转写。支持 Whisper 和可选的 Qwen3-ASR。原生宿主还提供只读伴随窗。
-- **核对与交付**：对照原文和录音，检查发言人、引用和行动项。生成纪要后可比较版本、选用差异并保留交付版本，支持 Word、PDF 和 Markdown 导出。
-- **会议资料库**：按项目、客户或系列归类，跟进未完成事项。支持中英文关键词、本地语义检索与带来源的跨会议问答；回答可独立选择中文或英文，引用保持原文。
+![录音工作台与实时识别](assets/screenshots/01-recording-workbench.png)
+*图 1：会议录音工作台 — 双轨音源试音就绪舱、实时语音转写与要点记录*
 
-日语可通过 Qwen3-ASR 生成实验性会后草稿，使用本机模型生成中文译文，并按音频块回听。适用范围见[使用指南](docs/USER_GUIDE.md#原文与纪要语言)。
+![智能纪要与交付成果](assets/screenshots/03-meeting-outcomes.png)
+*图 2：智能纪要与交付成果 — 议题总结、行动项跟踪与原文逐句核对*
 
-## 快速开始
+---
 
-本项目目前以 Apple Silicon Mac 上的源码部署为主。准备 Python 3.12 或 3.13、Xcode 命令行工具和 FFmpeg。使用 macOS 15 或更新版本可构建原生双音轨采集器。仓库包含构建好的网页资源，直接使用时无需 Node.js。
+## 核心特性
 
-获取仓库后，在仓库根目录运行：
+- **双轨原生采集与会前就绪舱**
+  - 支持电脑系统声音与麦克风双轨独立采集，内置硬件级与 WebRTC AEC3 回声消除。
+  - 会前提供设备检测、实时声压跳动与试录回放验证，确保音质清晰后再正式起录。
+  - 原生提供置顶轻量伴随窗（快捷键 `Ctrl + Option + N`），录音状态一目了然且不遮挡主屏操作。
 
+- **端侧多引擎实时转写**
+  - 支持中英文双语自动识别与分离，本地离线运行，无需外发音频。
+  - 提供高速高精度的 **Whisper large-v3-turbo** 与针对口语优化的 **Qwen3-ASR (1.7B-8bit)** 引擎，支持会中实时流式出字与会后整轨精细补转写。
+  - 自动运行 Pyannote 说话人分离、3DSpeaker 声纹特征对齐与上下文标点恢复。
+
+- **带真实证据链的智能纪要**
+  - 内置标准商务会议、头脑风暴、技术研讨及结构化**在线面试**纪要模版。
+  - **杜绝模型幻觉**：纪要总结与问答结论均严格锚定原文音轨片段与发言人身份，点击证据秒级定位回听。
+  - 支持多版本纪要对比（Diff View），可自由选用不同版本并一键导出 Word (docx)、PDF 与 Markdown 文档。
+
+- **桌面级运行管理控制中心**
+  - 统一查看与切换本地模型包，提供模型文件完整性校验与离线能力探测。
+  - 包含服务状态诊断、存储空间监控、未结任务队列管理与意外中断录音一键自愈。
+
+- **跨会议资料库与检索问答**
+  - 会议按项目、标签与日期归档，轻松跟踪跨场次行动项与责任人。
+  - 支持本地中英文关键词与向量语义检索，提供带引用来源的跨会议 AI 问答。
+
+---
+
+## 快速上手
+
+### 方式一：下载预编译应用与模型包（推荐）
+
+1. 从 [Releases 页面](../../releases) 下载最新版本的 `Tingji-v0.4.0-macOS.zip` 与完整模型包 `Tingji-Models-v0.1.0.zip`。
+2. 解压并将 `Tingji.app` 移动至 `/Applications` 应用程序目录。
+3. 双击打开 `Tingji.app`，在工作台「运行管理 → 模型」中选择导入下载的模型包 ZIP，即可完成离线就绪。
+
+### 方式二：本机源码运行（开发者）
+
+#### 环境准备
+- 操作系统：macOS 15.0+（推荐 Apple Silicon 芯片 M1/M2/M3/M4）
+- 基础依赖：Python 3.12 或 3.13、Xcode Command Line Tools、FFmpeg
+
+#### 启动服务
 ```bash
+# 克隆仓库
+git clone https://github.com/rfchu/meeting-local.git
+cd meeting-local
+
+# 初始化环境与依赖
 bash scripts/setup.sh
+
+# 启动后台服务
 ./service.command start
 ```
 
-安装脚本需要联网下载依赖和模型。启动后打开 [本地工作台](http://127.0.0.1:8765/)，可以先导入一段音频，或从录音工作台开始。
-
-按需安装 Qwen3-ASR 和原生采集器：
-
+服务就绪后，在浏览器中访问 [http://127.0.0.1:8765/](http://127.0.0.1:8765/)，或直接构建并打开原生桌面宿主：
 ```bash
-bash scripts/setup_qwen.sh
-bash scripts/build_capture.sh
+# 构建原生桌面宿主
+bash scripts/build_host.sh
+
+# 启动原生应用
+open ~/Library/Caches/cn.seeknow.tingji/Tingji.app
 ```
 
-使用原生采集时，请按 macOS 提示授权所选音源。日常可从 Mac 宿主菜单栏的「服务状态」查看、启动或重启后台。命令行使用 `./service.command status`、`./service.command restart` 或 `./service.command stop`。重启前会检查录音和后台任务。
+#### 按需扩展能力
+- **Qwen3-ASR 扩展引擎**：`bash scripts/setup_qwen.sh`
+- **原生双轨采集器构建**：`bash scripts/build_capture.sh`
 
-## 模型与数据
+---
 
-语音转写使用本机模型。会议分析、AI 纪要和引用问答可在「运行管理」配置本地或云端的 OpenAI 兼容模型。若选择云端模型，相关功能会按所选服务处理提交的会议内容。希望内容留在本机时，可配置本地模型。
+## 模型与数据隐私
 
-会议数据默认保存在 `data/`，服务默认监听本机回环地址。备份、迁移和恢复使用项目提供的离线命令，参见[本机维护指南](docs/engineering/WORKSPACE.md)。
+1. **音频与转写纯本地运行**：语音转写、说话人聚类、标点预测与声纹嵌入全部在 Mac 本机端侧芯片运行，无任何音频上传。
+2. **AI 纪要与分析模型可选**：
+   - 默认支持连接本地大模型（如 [LM Studio](https://lmstudio.ai/) 或 [Ollama](https://ollama.ai/)），实现 100% 离线脱网运行。
+   - 亦可按需在「运行管理」配置商业 OpenAI 兼容 API 密钥。使用云端模型时需经用户明确确认，仅提交文字稿与提纲。
+3. **数据自主可控**：会议数据库及所有音频原件保存在 `data/` 目录，支持离线备份与无损物理迁移。
 
-## 开发与文档
+---
 
-后端使用 Python、FastAPI 和 SQLite，前端使用 React、TypeScript 和 Vite。修改前端后可在项目根目录运行 `bash scripts/build_frontend.sh` 生成静态资源。
+## 技术架构
 
-- [使用指南](docs/USER_GUIDE.md)
-- [开发与验证](docs/engineering/DEVELOPMENT.md)
-- [文档索引](docs/README.md)
-- [项目路线图](docs/PROJECT_ROADMAP.md)
-- [本机工作空间与桌面维护](docs/engineering/WORKSPACE.md)
+- **前端**：React 19 + TypeScript + Vite + TanStack Query + Virtual Scrolling
+- **后端**：Python + FastAPI + SQLite (WAL 模式) + Uvicorn
+- **模型推理**：`whisper.cpp` (Metal 加速) + `MLX` (Apple Silicon 深度学习框架) + `sherpa-onnx`
+- **桌面原生**：Swift 5 + AppKit + WebKit + ScreenCaptureKit (原生系统音频捕获)
 
-原生宿主依赖本机的项目源码、Python 环境和模型。第三方依赖和模型适用各自的许可条款。
+---
+
+## 文档索引
+
+- [用户使用指南](docs/USER_GUIDE.md)
+- [开发与验证指南](docs/engineering/DEVELOPMENT.md)
+- [本机维护与数据迁移](docs/engineering/WORKSPACE.md)
+- [模型包设计规格](docs/specs/SPEC-model-packs.md)
+- [产品规划路线图](docs/PROJECT_ROADMAP.md)
+
+---
+
+## 开源许可
+
+本项目源码采用 MIT 许可。所包含或下载的第三方模型与工具（如 Whisper、Qwen、Pyannote、Sherpa-ONNX、FFmpeg 等）遵循各自的开源许可协议。
