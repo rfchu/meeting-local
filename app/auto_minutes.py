@@ -79,7 +79,7 @@ def process(worker,job):
         identity=[context_hash,segments,template.model_dump(),settings.model_dump()]
         def validate_result(value):
             result=AIMinutesResult.model_validate(value)
-            if not any(result.all_items()):raise ValueError('模型没有返回有效纪要内容，请检查模型后重试纪要步骤')
+            if not any(result.all_items()) and not (result.interview and result.interview.pending_review):raise ValueError('模型没有返回有效纪要内容，请检查模型后重试纪要步骤')
             document=build_from_ai(row['created'],result,settings,template=template)
             validate_minutes_citations(document,{s['id'] for s in segments})
             if document.interview:document.interview.validate_sources(segments,confirmed_speaker_roles(context,segments),require_questions=True)

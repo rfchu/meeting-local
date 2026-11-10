@@ -85,6 +85,15 @@ def test_http_contract_matches_pre_split_v22(tmp_path):
         for name in ('confirm_cloud', 'expected_provider'):
             assert schema['components']['schemas'][contract]['properties'].pop(name)
     assert schema['components']['schemas']['Evidence']['properties'].pop('span_segment_ids')['type']=='array'
+    interview_schema=schema['components']['schemas']['InterviewResult']['properties']
+    assert interview_schema.pop('omitted_items')['default']==0
+    assert interview_schema.pop('pending_review')['items']['$ref'].endswith('/PendingInterviewItem')
+    assert schema['components']['schemas'].pop('PendingInterviewItem')
+    evidence_schema=schema['components']['schemas']['Evidence']
+    quote=evidence_schema['properties']['quote']
+    assert quote.pop('default')==''
+    quote['minLength']=1
+    evidence_schema['required'].append('quote')
     payload=json.dumps(schema,sort_keys=True,separators=(',',':'),ensure_ascii=False)
     # Captured from the running v22 service before splitting: 116 paths, 135 operations.
     assert hashlib.sha256(payload.encode()).hexdigest()=='064f99aa11df348b95cf783850c5e4ccb8e4ec1a173fb36da51a9de6831946f2'

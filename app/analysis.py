@@ -350,14 +350,21 @@ class LMStudioProvider:
         if template.get('id')=='online-interview':
             if not result.interview:raise ValueError('模型未返回结构化面试纪要')
             alias_roles={item['id']:item['interview_role'] for item in data} if roles is not None else None
-            result.interview.validate_sources(data,alias_roles,require_questions=True)
+            source_segments=[{**segment,'id':aliases[segment['id']]} for segment in segments]
+            result.interview.omitted_items=0
+            result.interview.pending_review=[]
+            result.interview.validate_sources(source_segments,alias_roles,require_questions=True,retain_pending=True)
         for item in result.all_items():
             if not set(item.source_segment_ids).issubset(valid_ids):raise ValueError('AI 会议纪要包含不存在的原文引用')
         if not set(result.basic_info.source_segment_ids).issubset(valid_ids):raise ValueError('AI 会议纪要基本信息包含不存在的原文引用')
         result.basic_info.source_segment_ids=[originals[sid] for sid in result.basic_info.source_segment_ids]
         for item in result.all_items():item.source_segment_ids=[originals[sid] for sid in item.source_segment_ids]
         if result.interview:
-            for evidence in result.interview.evidence():evidence.segment_id=originals[evidence.segment_id]
+            pending_sources = (source for entry in result.interview.pending_review
+                               for source in [*entry.evidence, *entry.question_evidence])
+            for evidence in [*result.interview.evidence(), *pending_sources]:
+                evidence.segment_id=originals[evidence.segment_id]
+                evidence.span_segment_ids=[originals[sid] for sid in evidence.span_segment_ids]
         result.basic_info.attendees=[name for name in result.basic_info.attendees if name in speakers]
         return result
 

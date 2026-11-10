@@ -145,7 +145,7 @@ class MinutesJobs:
                 document=set_output_language(apply_polished_minutes(source_document,result),settings.output_language or 'zh')
             else:
                 result=AIMinutesResult.model_validate(value)
-                if not any(result.all_items()):raise ValueError('模型未返回有效纪要')
+                if not any(result.all_items()) and not (result.interview and result.interview.pending_review):raise ValueError('模型未返回有效纪要')
                 document=build_from_ai(row['created'],result,settings,source_document if settings.method=='current' else None,template)
                 if document.interview:
                     from .interview import InterviewPreparation,project,confirmed_speaker_roles

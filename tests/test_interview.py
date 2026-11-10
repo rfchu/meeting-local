@@ -122,6 +122,8 @@ def test_provider_uses_dedicated_schema_exact_quotes_and_aliases(tmp_path):
  def run(args,extra):
   request_path=tmp_path/'result.request.json';payload=json.loads(request_path.read_text());seen.update(payload)
   value=expected.model_dump();value['basic_info']['source_segment_ids']=['s1']
+  value['interview'].pop('omitted_items')
+  value['interview'].pop('pending_review')
   for e in value['interview'].values():
    for item in e:
     for ev in item['evidence']:ev['segment_id']='s2'
@@ -230,3 +232,80 @@ def test_cross_segment_evidence_round_trips_and_rejects_discontinuous_audio():
     for invalid in ({**b, 'start': 180}, {**b, 'speaker': '面试官'}, {**b, 'source_track': 'microphone'}):
         with pytest.raises(ValueError, match='原文摘录不匹配'):
             restored.validate_sources([a, invalid])
+
+
+def test_generated_interview_omits_invalid_items_and_keeps_real_span_ids(tmp_path):
+    segments = [
+        SEGMENTS[0],
+        {**SEGMENTS[1], 'text': '我负责接口实现', 'source_track': 'microphone'},
+        {**SEGMENTS[1], 'id': 'b', 'start': 20, 'end': 24, 'text': '并负责上线', 'source_track': 'microphone'},
+    ]
+
+    def run(args, extra):
+        value = result().model_dump()
+        value['basic_info']['source_segment_ids'] = ['s1']
+        interview = value['interview']
+        interview.pop('omitted_items')
+        interview.pop('pending_review')
+        for items in interview.values():
+            for item in items:
+                for evidence in item['evidence']:
+                    evidence.update(segment_id='s2', quote='我负责接口实现')
+                for evidence in item.get('question_evidence', []):
+                    evidence['segment_id'] = 's1'
+        interview['background'][0]['evidence'][0]['quote'] = '我负责接口实现并节省了一亿元'
+        interview['qa'][0]['evidence'][0]['quote'] = '我负责接口实现，并负责上线'
+        (tmp_path/'result.response.json').write_text(encode(value))
+
+    actual = LMStudioProvider().generate_ai_minutes(
+        'synthetic', segments, {'minutes_template': semantic_template('online-interview').model_dump()},
+        tmp_path/'result', run,
+    ).interview
+    assert actual.background == []
+    assert len(actual.pending_review) == 1
+    assert actual.qa[0].evidence[0].quote == '我负责接口实现 并负责上线'
+    assert actual.qa[0].evidence[0].source_ids() == ['a', 'b']
+    actual.validate_sources(segments, require_questions=True)
+
+
+def test_unmatched_generated_claim_remains_internal_until_review():
+    segments = [SEGMENTS[0], {**SEGMENTS[1], 'text': '我，我负责接口实现。具体基线我需要补充。'}]
+    interview = result().interview
+    interview.qa[0].evidence[0].quote = '我负责接口实现，并节省一亿元'
+    interview.summary[0].evidence[0].quote = ''
+    interview.validate_sources(segments, require_questions=True, retain_pending=True)
+    assert not interview.qa and not interview.summary
+    restored = InterviewResult.model_validate(interview.model_dump())
+    assert [entry.section for entry in restored.pending_review] == ['qa', 'summary']
+    assert restored.pending_review[0].evidence[0].quote == '我，我负责接口实现。具体基线我需要补充。'
+    assert restored.pending_review[0].question_evidence[0].segment_id == 'q'
+    document = build_from_ai('2026-11-09', AIMinutesResult(basic_info=AIMinutesBasicInfo(topic='面试'), interview=restored),
+                             CompositionSettings(), template=semantic_template('online-interview'))
+    assert not document.conclusions and not document.summary
+    assert restored.pending_review[0].content not in minutes_markdown(document, segments)
+
+
+def test_review_can_save_draft_and_export_only_after_confirming_source(setup, monkeypatch):
+    client, _, mid, _ = setup
+    generated = result()
+    generated.interview.qa[0].content = '待核对断言'
+    generated.interview.qa[0].evidence[0].quote = '我独立完成全部项目'
+    generated.interview.validate_sources(SEGMENTS, require_questions=True, retain_pending=True)
+    monkeypatch.setattr('app.main.LMStudioProvider.generate_ai_minutes', lambda *args: generated)
+    draft = generate(client, mid)
+    path = f'/api/meetings/{mid}/minutes/export/md'
+    assert '待核对断言' not in client.get(path, params={'artifact_id': draft['id']}).text
+    interview = draft['payload']['interview']
+    entry = interview['pending_review'].pop()
+    entry['content'] = '本人负责接口实现，其他职责待核对。'
+    interview['qa'].append(entry)
+    answer = entry['evidence']
+    entry['evidence'] = entry['question_evidence']
+    rejected = client.put(f'/api/meetings/{mid}/minutes', json={
+        'source_minutes_id': draft['id'], 'allow_branch': True, 'document': {**draft['payload'], 'interview': interview},
+    })
+    assert rejected.status_code == 400
+    assert '非候选人' in rejected.json()['detail']
+    entry['evidence'] = answer
+    saved = save(client, mid, draft, interview=interview)
+    assert entry['content'] in client.get(path, params={'artifact_id': saved['id']}).text

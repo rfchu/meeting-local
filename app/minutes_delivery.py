@@ -22,6 +22,8 @@ def prepare(db,mid,aid,include_citations):
     status=[{'action_index':int(index),'task_id':tid,'content':linked[tid]['content'],
              'status':linked[tid]['status'],'owner':linked[tid]['owner'],'due_date':linked[tid]['due_date']}
             for index,tid in bindings.items() if tid in linked]
+    if document.interview:
+        document.interview.pending_review=[]
     return {'document':document.model_dump(),'segments':segments,'revision':row['revision'],
             'include_citations':include_citations,'task_status':status}
 

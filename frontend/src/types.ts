@@ -71,7 +71,22 @@ export interface InterviewItem {
   content: string;
   evidence: InterviewEvidence[];
 }
+export type InterviewSection = "background" | "qa" | "competencies" | "concerns" | "followups" | "summary";
+export interface PendingInterviewItem extends InterviewItem {
+  section: InterviewSection;
+  issue: string;
+  question_evidence: InterviewEvidence[];
+  question?: string | null;
+  dimension?: string | null;
+  coverage?: "covered" | "needs_examples" | "not_discussed" | "unclear" | null;
+  reason?: string | null;
+  followup?: string | null;
+  owner?: string | null;
+  due_date?: string | null;
+}
 export interface InterviewResult {
+  pending_review?: PendingInterviewItem[];
+  omitted_items?: number;
   background: InterviewItem[];
   qa: (InterviewItem & {
     question: string;

@@ -1,4 +1,5 @@
-import type { InterviewResult, MeetingMinutes, Segment } from "../../types";
+import { useState } from "react";
+import type { InterviewEvidence, InterviewSection, MeetingMinutes, PendingInterviewItem, Segment } from "../../types";
 export const coverageLabels = {
   covered: "已找到相关回答",
   needs_examples: "需要补充例证",
@@ -94,10 +95,11 @@ export default function InterviewMinutesBody({
   onSeek: (t: number, track?: Segment["source_track"]) => void;
   onPreparation: () => void;
 }) {
+  const [sourcePicker, setSourcePicker] = useState<string | null>(null);
   const data = doc.interview!;
   const change = (next: MeetingMinutes) => onChange(projectInterview(next));
   const patch = (
-    key: keyof InterviewResult,
+    key: InterviewSection,
     index: number,
     values: Record<string, unknown>,
   ) => {
@@ -114,7 +116,7 @@ export default function InterviewMinutesBody({
       },
     });
   };
-  const headings: [keyof InterviewResult, string][] = [
+  const headings: [InterviewSection, string][] = [
     [
       "background",
       doc.interview_context?.speaker_roles ? "候选人经历与项目" : "经历与项目",
@@ -125,8 +127,97 @@ export default function InterviewMinutesBody({
     ["followups", "明确约定的后续动作"],
     ["summary", "面试总结"],
   ];
+  const pending = data.pending_review || [];
+  function updatePending(index: number, item?: PendingInterviewItem) {
+    if (!item) setSourcePicker(null);
+    change({
+      ...doc,
+      interview: {
+        ...data,
+        pending_review: item
+          ? pending.map((entry, i) => i === index ? item : entry)
+          : pending.filter((_, i) => i !== index),
+      },
+    });
+  }
+  function adoptPending(index: number, entry: PendingInterviewItem) {
+    const { section, issue, ...item } = entry;
+    setSourcePicker(null);
+    const concerns = { ...doc.interview_reviews };
+    if (section === "concerns") concerns[String(data.concerns.length)] = "kept";
+    change({
+      ...doc,
+      interview_reviews: concerns,
+      interview: {
+        ...data,
+        [section]: [...data[section], item],
+        pending_review: pending.filter((_, i) => i !== index),
+      },
+    });
+  }
+  function matchesRole(source: Segment, role?: string) {
+    const roles = doc.interview_context?.speaker_roles;
+    if (!roles || !role) return true;
+    const fallback = source.source_track === "system" ? "线上发言" : source.source_track === "microphone" ? "现场发言" : "";
+    const speaker = !source.speaker_locked && (!source.speaker?.trim() || source.speaker === "未分配")
+      ? fallback || source.speaker : source.speaker;
+    return role === "candidate" ? speaker === roles.candidate : roles.interviewers.includes(speaker);
+  }
+  function canAdopt(sources: InterviewEvidence[], role?: string) {
+    return sources.length > 0 && sources.every((source) =>
+      (source.span_segment_ids?.length ? source.span_segment_ids : [source.segment_id]).every((id) =>
+        segments.some((segment) => segment.id === id && matchesRole(segment, role)),
+      ),
+    );
+  }
+  function candidateSources(entry: PendingInterviewItem, index: number, key: "evidence" | "question_evidence", label: string, role?: string) {
+    const picker = `${index}:${key}`;
+    return (
+      <div>
+        <strong>{label}</strong>
+        {entry[key].length === 0 && <p>暂无可靠定位，请手动选择文字稿片段。</p>}
+        {entry[key].map((source, i) => (
+          <blockquote key={i}>
+            <p>{source.quote}</p>
+            {(source.span_segment_ids?.length ? source.span_segment_ids : [source.segment_id]).map((id) => {
+              const segment = segments.find((value) => value.id === id);
+              return segment && (
+                <button key={id} onClick={() => onSeek(segment.start, segment.source_track)}>
+                  回听 {Math.floor(segment.start / 60)}:{String(Math.floor(segment.start % 60)).padStart(2, "0")}
+                </button>
+              );
+            })}
+          </blockquote>
+        ))}
+        <button onClick={() => setSourcePicker(sourcePicker === picker ? null : picker)}
+          aria-expanded={sourcePicker === picker}>更换{label}</button>
+        {sourcePicker === picker && <label>
+          从文字稿选择
+          <select value="" onChange={(event) => {
+            const segment = segments.find((value) => value.id === event.target.value);
+            if (segment) {
+              updatePending(index, { ...entry, [key]: [{ segment_id: segment.id, quote: segment.text.trim().slice(0, 1000) }] });
+              setSourcePicker(null);
+            }
+          }}>
+            <option value="">选择文字稿片段</option>
+            {segments.filter((segment) => segment.text.trim() && matchesRole(segment, role)).map((segment) => (
+              <option key={segment.id} value={segment.id}>
+                {Math.floor(segment.start / 60)}:{String(Math.floor(segment.start % 60)).padStart(2, "0")} · {segment.speaker} · {segment.text.slice(0, 50)}
+              </option>
+            ))}
+          </select>
+        </label>}
+      </div>
+    );
+  }
   return (
     <div className="interview-body">
+      {!!data.omitted_items && (
+        <p className="interview-hint">
+          有 {data.omitted_items} 条 AI 生成内容未通过原文或角色校验，已从本版省略。
+        </p>
+      )}
       <div className="interview-context-card">
         <strong>{doc.interview_context?.candidate || "候选人未注明"}</strong>
         <span>
@@ -146,6 +237,39 @@ export default function InterviewMinutesBody({
           : "发言人角色未确认。可通过原文依据回听核对发言归属。"}
         AI 关注点经人工保留后进入导出。
       </p>
+      {!!pending.length && (
+        <details className="minutes-section" open={!data.qa.length && !data.summary.length}>
+          <summary>待人工核对 · {pending.length} 条</summary>
+          <p className="interview-hint">候选位置仅供回听。请确认原话支持条目内容，再采用并保存。待核对条目不进入导出。</p>
+          {pending.map((entry, index) => {
+            const answerRole = entry.section === "qa" || entry.section === "background" ? "candidate" : undefined;
+            return (
+              <article className="interview-item" key={index}>
+                <strong>{headings.find(([key]) => key === entry.section)?.[1]}{entry.dimension ? ` · ${entry.dimension}` : ""}</strong>
+                <p className="interview-hint">{entry.issue}</p>
+                {entry.section === "qa" && (
+                  <label>问题<textarea maxLength={1000} value={entry.question || ""} onChange={(event) => updatePending(index, { ...entry, question: event.target.value })} /></label>
+                )}
+                <label>待核对内容<textarea maxLength={2000} value={entry.content} onChange={(event) => updatePending(index, { ...entry, content: event.target.value })} /></label>
+                {entry.reason && <label>依据说明<textarea maxLength={1000} value={entry.reason} onChange={(event) => updatePending(index, { ...entry, reason: event.target.value })} /></label>}
+                {entry.followup && <label>建议追问<textarea maxLength={1000} value={entry.followup} onChange={(event) => updatePending(index, { ...entry, followup: event.target.value })} /></label>}
+                {entry.section === "followups" && (
+                  <>
+                    <label>负责人<input maxLength={200} value={entry.owner || ""} onChange={(event) => updatePending(index, { ...entry, owner: event.target.value || null })} /></label>
+                    <label>期限<input maxLength={200} value={entry.due_date || ""} onChange={(event) => updatePending(index, { ...entry, due_date: event.target.value || null })} /></label>
+                  </>
+                )}
+                {entry.section === "qa" && candidateSources(entry, index, "question_evidence", "问题候选原文", "interviewer")}
+                {candidateSources(entry, index, "evidence", entry.section === "qa" ? "回答候选原文" : "候选原文", answerRole)}
+                <button disabled={!entry.content.trim() || !canAdopt(entry.evidence, answerRole)
+                  || (entry.section === "qa" && (!entry.question?.trim() || !canAdopt(entry.question_evidence, "interviewer")))}
+                  onClick={() => adoptPending(index, entry)}>确认采用</button>
+                <button onClick={() => updatePending(index)}>忽略</button>
+              </article>
+            );
+          })}
+        </details>
+      )}
       {headings.map(([key, title]) => (
         <section className="minutes-section" key={key}>
           <h3>{title}</h3>
