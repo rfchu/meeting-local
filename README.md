@@ -4,11 +4,11 @@
 
 ---
 
-![录音工作台与实时识别](assets/screenshots/01-recording-workbench.png)
-*图 1：会议录音工作台 — 双轨音源试音就绪舱、实时语音转写与要点记录*
+![会前准备与就绪舱](assets/screenshots/01-recording-workbench.png)
+*图 1：会前准备与就绪舱 — 双轨音源即时试音、议程背景预设与交付策略配置*
 
 ![智能纪要与交付成果](assets/screenshots/03-meeting-outcomes.png)
-*图 2：智能纪要与交付成果 — 议题总结、行动项跟踪与原文逐句核对*
+*图 2：智能纪要与交付成果 — 双栏原文逐句回听核对、结构化结论分析与多版本导出*
 
 ---
 
@@ -43,9 +43,15 @@
 
 ### 方式一：下载预编译应用与模型包（推荐）
 
-1. 从 [Releases 页面](../../releases) 下载最新版本的 `Tingji-v0.4.0-macOS.zip` 与完整模型包 `Tingji-Models-v0.1.0.zip`。
-2. 解压并将 `Tingji.app` 移动至 `/Applications` 应用程序目录。
-3. 双击打开 `Tingji.app`，在工作台「运行管理 → 模型」中选择导入下载的模型包 ZIP，即可完成离线就绪。
+1. 从 Release 页面下载最新版本产物（提供 [Gitea 镜像](https://git.seeknow.cn:8010/crf/meeting-local/releases/tag/v0.4.0) 或 [GitHub Releases](https://github.com/rfchu/meeting-local/releases/tag/v0.4.0)）：
+   - `Tingji-v0.4.0-macOS.zip`（原生 macOS 桌面工作台，解压后拖入 `/Applications` 即可运行）
+   - `TingjiCapture-v0.4.0-macOS.zip`（双轨低延迟音频采集器）
+   - `Tingji-Models-v0.1.0.zip`（完整端侧离线模型包，由于单文件体积限制以 1.8GB 分卷提供 `part-aa`、`part-ab`、`part-ac`）
+2. 若下载了分卷模型包，可在终端合并为完整 ZIP：
+   ```bash
+   cat Tingji-Models-v0.1.0.zip.part-* > Tingji-Models-v0.1.0.zip
+   ```
+3. 打开 `Tingji.app`，进入「运行管理 → 智能模型 → 模型与服务」，点击导入已合并的模型包 ZIP，即可完成端侧离线就绪。
 
 ### 方式二：本机源码运行（开发者）
 
