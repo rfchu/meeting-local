@@ -5693,11 +5693,13 @@ button.note-options-trigger {
 
 .audio-track-status-pill {
   font-size: 10.5px;
-  width: 52px;
+  min-width: 54px;
+  width: auto;
   text-align: center;
-  padding: 1px 4px;
+  padding: 1px 6px;
   border-radius: 4px;
   flex-shrink: 0;
+  white-space: nowrap;
 }
 
 .audio-track-status-pill.idle {

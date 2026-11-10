@@ -28,8 +28,12 @@ class CaptureProbe:
                 gate.acquire()
                 process=(self.process_factory or subprocess.Popen)(args,stdin=subprocess.PIPE,stdout=log,stderr=log)
             except BaseException:gate.close();log.close();temporary.cleanup();raise
+            source_tracks={'macos-both':('system','microphone'),'macos-microphone':('microphone',),'macos-system':('system',)}
+            tracks=source_tracks.get(source,())
+            initial_levels={t:0.0 for t in tracks}
             self.items[key]={'id':key,'state':'starting','source':source,'duration':0,'error':'',
-                'created':time.monotonic(),'finished':None,'temporary':temporary,'folder':folder,'process':process,'log':log,'binary_guard':gate}
+                'created':time.monotonic(),'finished':None,'temporary':temporary,'folder':folder,'process':process,'log':log,'binary_guard':gate,
+                'levels':dict(initial_levels),'peaks':dict(initial_levels)}
             return self.public(self.items[key])
 
     @staticmethod
@@ -64,9 +68,11 @@ class CaptureProbe:
                         for track in ('system', 'microphone'):
                             samples = status.get(track + '_levels', [])
                             if isinstance(samples, list) and samples:
-                                peak = max((v for v in samples[-72:] if type(v) in (int, float) and math.isfinite(v) and 0 <= v <= 1), default=0)
-                                levels[track] = peak
-                                peaks[track] = max(peaks.get(track, 0), peak)
+                                recent = [v for v in samples[-4:] if type(v) in (int, float) and math.isfinite(v) and 0 <= v <= 1]
+                                levels[track] = max(recent, default=0.0)
+                                all_valid = [v for v in samples if type(v) in (int, float) and math.isfinite(v) and 0 <= v <= 1]
+                                if all_valid:
+                                    peaks[track] = max(peaks.get(track, 0.0), max(all_valid))
 
                         if status.get('error') or status.get('state') in ('failed','interrupted'):
                             item.update(state='failed',error=str(status.get('error') or '测试输入已中断')[:500])

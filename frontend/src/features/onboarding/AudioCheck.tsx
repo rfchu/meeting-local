@@ -28,8 +28,10 @@ export default function AudioCheck({
     [error, setError] = useState("");
   const [audio, setAudio] = useState(""),
     [text, setText] = useState(""),
-    [level, setLevel] = useState(0);
+    [level, setLevel] = useState(0),
+    [browserPeak, setBrowserPeak] = useState(0);
   const [nativeLevels, setNativeLevels] = useState<CaptureTest["levels"]>();
+  const [peakLevels, setPeakLevels] = useState<CaptureTest["levels"]>({});
   const generation = useRef(0),
     stream = useRef<MediaStream | null>(null),
     context = useRef<AudioContext | null>(null);
@@ -89,7 +91,9 @@ export default function AudioCheck({
     setError("");
     setSeconds(0);
     setLevel(0);
+    setBrowserPeak(0);
     setNativeLevels(undefined);
+    setPeakLevels({});
     setState("requesting");
     try {
       if (source !== "browser") {
@@ -108,12 +112,29 @@ export default function AudioCheck({
             const current = await api.captureTest(item.id);
             if (token !== generation.current) return;
             setSeconds(Math.floor(current.duration));
-            setNativeLevels(current.levels);
+            if (current.levels) {
+              setNativeLevels(current.levels);
+              setPeakLevels((prev) => {
+                const next = { ...prev };
+                for (const [k, v] of Object.entries(current.levels!)) {
+                  if (typeof v === "number") {
+                    next[k as "system" | "microphone"] = Math.max(
+                      next[k as "system" | "microphone"] ?? 0,
+                      v,
+                    );
+                  }
+                }
+                return next;
+              });
+            }
             if (current.state === "recording") setState("recording");
             if (current.state === "failed")
               throw new Error(current.error || "试录失败，请检查权限");
             if (current.state === "completed") {
               window.clearInterval(timer.current);
+              if (current.levels) {
+                setNativeLevels(current.levels);
+              }
               const value = await api.captureTestAudio(item.id);
               if (token !== generation.current) return;
               cleanup();
@@ -130,7 +151,7 @@ export default function AudioCheck({
             .finally(() => {
               polling = false;
             });
-        }, 600);
+        }, 250);
         return;
       }
       if (!navigator.mediaDevices?.getUserMedia)
@@ -163,14 +184,14 @@ export default function AudioCheck({
           frames.push(clipped);
           count += clipped.length;
         }
-        setLevel(
-          Math.min(
-            1,
-            Math.sqrt(
-              values.reduce((total, v) => total + v * v, 0) / values.length,
-            ) * 8,
-          ),
+        const curLevel = Math.min(
+          1,
+          Math.sqrt(
+            values.reduce((total, v) => total + v * v, 0) / values.length,
+          ) * 8,
         );
+        setLevel(curLevel);
+        setBrowserPeak((p) => Math.max(p, curLevel));
       };
       node.connect(capture);
       capture.connect(mute);
@@ -342,20 +363,42 @@ export default function AudioCheck({
       {/* 音轨与电平条 */}
       <div className="audio-check-tracks">
         {tracks.map((track) => {
-          let rms: number | undefined;
           let levelRatio = 0;
           let statusText = "待试音";
           let statusClass = "idle";
 
           if (source !== "browser") {
-            rms = nativeLevels?.[track.key as "system" | "microphone"];
-            if (rms !== undefined) {
-              levelRatio = Math.min(1, Math.sqrt(rms) * 2.4);
-              const isVoice = rms >= 0.002;
-              statusText = isVoice ? "有输入" : "等待输入";
-              statusClass = isVoice ? "voice" : "quiet";
-            } else if (state === "recording") {
-              statusText = "检测中…";
+            const currentRms =
+              nativeLevels?.[track.key as "system" | "microphone"];
+            const peakRms = peakLevels?.[track.key as "system" | "microphone"];
+
+            if (state === "recording") {
+              if (currentRms !== undefined) {
+                levelRatio = Math.min(1, Math.sqrt(currentRms) * 2.4);
+                const isVoice = currentRms >= 0.002;
+                statusText = isVoice ? "有输入" : "等待声音";
+                statusClass = isVoice ? "voice" : "quiet";
+              } else {
+                statusText = "正在监听…";
+                statusClass = "detecting";
+              }
+            } else if (state === "completed" || audio) {
+              const finalRms = peakRms ?? currentRms;
+              if (finalRms !== undefined && finalRms >= 0.002) {
+                levelRatio = Math.min(1, Math.sqrt(finalRms) * 2.4);
+                statusText = "✓ 正常";
+                statusClass = "voice";
+              } else if (finalRms !== undefined) {
+                levelRatio = 0;
+                statusText = "○ 无声音";
+                statusClass = "quiet";
+              } else {
+                statusText = "✓ 正常";
+                statusClass = "voice";
+                levelRatio = 0.35;
+              }
+            } else if (state === "requesting") {
+              statusText = "准备中…";
               statusClass = "detecting";
             }
           } else {
@@ -363,12 +406,15 @@ export default function AudioCheck({
             if (state === "recording") {
               levelRatio = level;
               const isVoice = level > 0.05;
-              statusText = isVoice ? "有输入" : "等待输入";
+              statusText = isVoice ? "有输入" : "等待声音";
               statusClass = isVoice ? "voice" : "quiet";
-            } else if (state === "completed") {
-              statusText = "已采录";
+            } else if (state === "completed" || audio) {
+              statusText = "✓ 已采录";
               statusClass = "voice";
-              levelRatio = 0.35;
+              levelRatio = Math.max(0.35, browserPeak);
+            } else if (state === "requesting") {
+              statusText = "等待权限…";
+              statusClass = "detecting";
             }
           }
 
