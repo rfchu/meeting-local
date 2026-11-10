@@ -68,7 +68,7 @@ final class WorkspaceController: NSObject, NSWindowDelegate, WKNavigationDelegat
     }
     func prepareAndLoad() {
         guard !preparing, !disposed else { return }
-        guard permissionBoundaryReady else { shield.stringValue = "权限边界未就绪，请返回宿主重新打开。"; return }
+        guard permissionBoundaryReady else { shield.stringValue = "权限边界未就绪，请在「听记」菜单重新载入工作区。"; return }
         preparing = true
         let ruleID = "tingji-e3-" + policy.storeIdentifier.uuidString
         WKContentRuleListStore.default().compileContentRuleList(forIdentifier: ruleID, encodedContentRuleList: policy.networkRules) { [weak self] rules, error in
@@ -80,7 +80,7 @@ final class WorkspaceController: NSObject, NSWindowDelegate, WKNavigationDelegat
             if configuration.portableRuntime != nil {
                 guard let authorization = configuration.workspaceAuthorization else {
                     self.preparing = false
-                    self.shield.stringValue = "工作空间授权不可用，请返回宿主重新打开。"
+                    self.shield.stringValue = "工作空间授权不可用，请在「听记」菜单重新载入工作区。"
                     return
                 }
                 credentials.append(("tingji_workspace_authorization", authorization))
@@ -103,8 +103,9 @@ final class WorkspaceController: NSObject, NSWindowDelegate, WKNavigationDelegat
         valid = verified
         webView.isHidden = !verified || !prepared || contentFailed
         shield.isHidden = verified && prepared && !contentFailed
-        if !verified { webView.stopLoading(); shield.stringValue = "服务连接无法核对，工作区已暂停。\n请在「听记」菜单选择「返回宿主」检查连接。" }
+        if !verified { webView.stopLoading(); shield.stringValue = "服务连接无法核对，工作区已暂停。\n请在「听记」菜单或菜单栏检查服务状态与连接设置。" }
         else if contentFailed { shield.stringValue = "页面进程已结束，请核对已保存内容，再明确重新载入。" }
+        else if prepared && webView.url == nil { webView.load(URLRequest(url: initialURL)) }
         previews.forEach { $0.updateConnection(verified) }
     }
     func show() { window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true) }

@@ -20,10 +20,11 @@ final class HostSettingsController: NSObject, NSTextFieldDelegate {
     }
     var isPresented: Bool { panel?.isVisible ?? false }
     var hasUnsavedChanges: Bool { (try? draft()) != load.configuration }
-    func present(on parent: NSWindow) {
+    func present(on parent: NSWindow? = nil) {
         self.parent = parent
-        panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 710, height: 480), styleMask: [.titled], backing: .buffered, defer: false)
+        panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 710, height: 480), styleMask: parent == nil ? [.titled, .closable] : [.titled], backing: .buffered, defer: false)
         panel.title = "连接设置"
+        panel.isReleasedWhenClosed = false
         let root = NSStackView(); root.orientation = .vertical; root.alignment = .leading; root.spacing = 12; root.translatesAutoresizingMaskIntoConstraints = false
         let content = panel.contentView!; content.addSubview(root)
         NSLayoutConstraint.activate([root.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 26), root.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -26), root.topAnchor.constraint(equalTo: content.topAnchor, constant: 22)])
@@ -46,7 +47,13 @@ final class HostSettingsController: NSObject, NSTextFieldDelegate {
         for (name, action) in [("填入构建默认", #selector(restoreDefaults)), ("测试连接", #selector(testConnection)), ("取消", #selector(cancel)), ("保存并切换", #selector(save))] {
             let button = NSButton(title: name, target: self, action: action); button.bezelStyle = .rounded; row.addArrangedSubview(button)
         }
-        root.addArrangedSubview(row); parent.beginSheet(panel)
+        root.addArrangedSubview(row)
+        if let parent {
+            parent.beginSheet(panel)
+        } else {
+            panel.center()
+            panel.makeKeyAndOrderFront(nil)
+        }
     }
     private func fill(_ value: HostConfiguration) {
         for (field, text) in zip(fields, [value.projectRoot, value.dataRoot, value.backupsRoot, String(value.port)]) { field.stringValue = text }
