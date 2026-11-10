@@ -101,9 +101,16 @@ class MacService:
             self.folder.mkdir(parents=True,exist_ok=True);os.chmod(self.folder,0o700)
             instance=uuid.uuid4().hex;env=os.environ.copy()
             env.update(MEETING_DATA=str(self.data),TINGJI_INSTANCE_ID=instance,TINGJI_SERVICE_MODE='detached',PYTHONUNBUFFERED='1')
+            # Finder can replace the app bundle while this detached process is alive.
+            # Keep its working directory outside the bundle and import from the trusted app path.
+            working_directory = self.data if self.portable else self.root
+            python_options = ['-P'] if self.portable else []
+            command = [str(python), *python_options, '-m', 'uvicorn', 'app.main:app',
+                       '--app-dir', str(self.root), '--host', '127.0.0.1', '--port', str(self.port),
+                       '--timeout-graceful-shutdown', '20']
             with (self.data/'server.log').open('ab') as log:
-                process=subprocess.Popen([str(python),'-m','uvicorn','app.main:app','--host','127.0.0.1','--port',str(self.port),'--timeout-graceful-shutdown','20'],
-                    cwd=self.root,stdin=subprocess.DEVNULL,stdout=log,stderr=log,env=env,start_new_session=True,close_fds=True)
+                process=subprocess.Popen(command,cwd=working_directory,stdin=subprocess.DEVNULL,
+                    stdout=log,stderr=log,env=env,start_new_session=True,close_fds=True)
             temporary=self.record.with_suffix('.tmp')
             with temporary.open('w') as handle:
                 json.dump({'pid':process.pid,'instance_id':instance,'started':time.time()},handle);handle.flush();os.fsync(handle.fileno())

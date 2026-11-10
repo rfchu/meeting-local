@@ -65,6 +65,22 @@ def test_detached_start_owns_new_session_and_never_serializes_environment(tmp_pa
     assert 'sentinel-secret' not in service.record.read_text()
     assert json.loads(service.record.read_text())['pid']==12345
 
+def test_portable_service_uses_workspace_as_working_directory(tmp_path, monkeypatch):
+    monkeypatch.setenv('TINGJI_PORTABLE_SERVICE', '1')
+    service = manager(tmp_path, monkeypatch)
+    calls = []
+    monkeypatch.setattr(service, 'occupied', lambda: False)
+    monkeypatch.setattr('scripts.manage_service.subprocess.Popen',
+                        lambda args, **kw: calls.append((args, kw)) or SimpleNamespace(pid=12345, poll=lambda: None))
+
+    service.start()
+
+    args, options = calls[0]
+    assert options['cwd'] == service.data
+    assert args[1] == '-P'
+    assert args[args.index('--app-dir') + 1] == str(service.root)
+
+
 def test_detached_stop_refuses_unverified_or_recycled_pid(tmp_path,monkeypatch):
     service=manager(tmp_path,monkeypatch)
     monkeypatch.setattr(service,'status',lambda:{'loaded':True,'running':True,'ready':False,'backend':'detached','pid':12345})
