@@ -16,6 +16,7 @@ export default function ChineseMeetingRecord({
   onSeek,
   activeSegment,
   onContinue,
+  embedded = false,
 }: {
   id: string;
   revision: number;
@@ -25,8 +26,9 @@ export default function ChineseMeetingRecord({
   activeSegment?: string;
   onSeek: (time: number) => void;
   onContinue?: (profileId: string) => void;
+  embedded?: boolean;
 }) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(embedded);
   const [selected, setSelected] = useState("");
   const [offset, setOffset] = useState(0);
   const profile = profiles.find((item) => item.id === selected) || profiles[0];
@@ -103,154 +105,172 @@ export default function ChineseMeetingRecord({
     };
   }, [id, revision, draftId, profileId, scope, nextId, nextOriginal, refetch]);
 
+  const recordBody = dirty ? (
+    <div className="bilingual-dirty-notice">
+      <p>⚠️ 文字稿正在编辑或有未保存修改，请先保存修改后再查看双语对照。</p>
+    </div>
+  ) : (
+    <section className="meeting-bilingual-record" aria-label="双语视图">
+      {draftId && (
+        <p className="bilingual-draft-hint">
+          译文依据实验性识别稿生成。请按音频块回听核对姓名、数字和日期。
+        </p>
+      )}
+      <div className="bilingual-model-bar">
+        <label>
+          本地翻译模型：{" "}
+          <select
+            value={profile?.id || ""}
+            onChange={(event) => {
+              setSelected(event.target.value);
+              setOffset(0);
+            }}
+          >
+            {!profiles.length && <option value="">未配置本地模型</option>}
+            {profiles.map((item) => (
+              <option key={item.id} value={item.id}>
+                {item.name}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+      {record.isError && (
+        <p role="alert" className="error">
+          {(record.error as Error).message}{" "}
+          <button
+            className="text-btn"
+            onClick={() => void record.refetch()}
+          >
+            重试读取
+          </button>
+        </p>
+      )}
+      {!data && !record.isError && (
+        <p role="status">
+          {record.isFetching
+            ? "正在读取双语记录…"
+            : "文字稿版本已变化，请刷新会议后查看。"}
+        </p>
+      )}
+      {data && counts && (
+        <>
+          <div className="bilingual-summary-badge">
+            中文原文 {counts.original} 段 · 译文 {counts.translated} 段 ·
+            待翻译 {counts.pending} 段 · 语言待确认 {counts.unknown} 段
+          </div>
+          {pending.length > 0 && (
+            <p role="status" className="bilingual-progress-status">
+              {!profile
+                ? "请选择本地模型以翻译本页。"
+                : next && waiting
+                  ? "本地模型忙碌，空闲后自动继续翻译。"
+                  : next
+                    ? "正在自动翻译本页待译片段…"
+                    : "本页仍有未完成的片段，可逐段重试。"}
+            </p>
+          )}
+          {!data.total && <p className="muted">生成文字稿后可打开双语视图。</p>}
+          {data.total > 0 && onContinue && (
+            <button
+              className="primary btn-sm bilingual-continue-btn"
+              onClick={() => onContinue(profile?.id || "")}
+            >
+              {missing
+                ? "使用当前可用内容，继续整理纪要"
+                : "继续整理纪要"}
+            </button>
+          )}
+          <div className="bilingual-items-list">
+            {data.items.map((item) => (
+              <article
+                className={
+                  activeSegment === item.id
+                    ? "bilingual-card bilingual-playing"
+                    : "bilingual-card"
+                }
+                key={JSON.stringify([
+                  revision,
+                  profile?.id,
+                  profile?.model,
+                  profile?.base_url,
+                  item.id,
+                ])}
+              >
+                <div className="bilingual-card-header">
+                  <button
+                    className="btn-timestamp"
+                    onClick={() => onSeek(item.start)}
+                  >
+                    ▶ {draftId ? "回听音频块" : "回听"} {clock(item.start)}–
+                    {clock(item.end)}
+                  </button>
+                </div>
+                <ChineseRecordLine
+                  original={item.original}
+                  result={
+                    item.status === "pending"
+                      ? undefined
+                      : { ...item, status: item.status }
+                  }
+                  status={
+                    item.status === "unknown"
+                      ? "语言待确认"
+                      : item.status === "pending" &&
+                          !errors[errorKey(item.id)]
+                        ? nextId === item.id && !waiting
+                          ? "翻译中"
+                          : "待翻译"
+                        : undefined
+                  }
+                  error={
+                    item.status === "pending"
+                      ? errors[errorKey(item.id)]
+                      : undefined
+                  }
+                  onRetry={() =>
+                    setErrors((old) => {
+                      const updated = { ...old };
+                      delete updated[errorKey(item.id)];
+                      return updated;
+                    })
+                  }
+                />
+              </article>
+            ))}
+          </div>
+          {data.total > pageSize && (
+            <div className="bilingual-pagination">
+              <button
+                disabled={!offset}
+                onClick={() => setOffset(offset - pageSize)}
+              >
+                上一页
+              </button>{" "}
+              <span>
+                {offset + 1}–{offset + data.items.length} / {data.total}
+              </span>{" "}
+              <button
+                disabled={offset + pageSize >= data.total}
+                onClick={() => setOffset(offset + pageSize)}
+              >
+                下一页
+              </button>
+            </div>
+          )}
+        </>
+      )}
+    </section>
+  );
+
+  if (embedded) {
+    return <div className="bilingual-embedded-container">{recordBody}</div>;
+  }
+
   return (
     <details onToggle={(event) => setOpen(event.currentTarget.open)}>
       <summary>{draftId ? "查看原文与中文译文" : "双语视图"}</summary>
-      {open &&
-        (dirty ? (
-          <p>请先保存文字稿修改，再打开双语视图。</p>
-        ) : (
-          <section className="meeting-bilingual-record" aria-label="双语视图">
-            {draftId && (
-              <p>
-                译文依据实验性识别稿生成。请按音频块回听核对姓名、数字和日期。
-              </p>
-            )}
-            <label>
-              本地翻译模型{" "}
-              <select
-                value={profile?.id || ""}
-                onChange={(event) => {
-                  setSelected(event.target.value);
-                  setOffset(0);
-                }}
-              >
-                {!profiles.length && <option value="">未配置本地模型</option>}
-                {profiles.map((item) => (
-                  <option key={item.id} value={item.id}>
-                    {item.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-            {record.isError && (
-              <p role="alert">
-                {(record.error as Error).message}{" "}
-                <button
-                  className="text-btn"
-                  onClick={() => void record.refetch()}
-                >
-                  重试读取
-                </button>
-              </p>
-            )}
-            {!data && !record.isError && (
-              <p role="status">
-                {record.isFetching
-                  ? "正在读取双语记录…"
-                  : "文字稿版本已变化，请刷新会议后查看。"}
-              </p>
-            )}
-            {data && counts && (
-              <>
-                <p>
-                  中文原文 {counts.original} 段 · 译文 {counts.translated} 段 ·
-                  待翻译 {counts.pending} 段 · 语言待确认 {counts.unknown} 段
-                </p>
-                {pending.length > 0 && (
-                  <p role="status">
-                    {!profile
-                      ? "请选择本地模型以翻译本页。"
-                      : next && waiting
-                        ? "本地模型忙碌，空闲后自动继续翻译。"
-                        : next
-                          ? "正在自动翻译本页待译片段。"
-                          : "本页仍有未完成的片段，可逐段重试。"}
-                  </p>
-                )}
-                {!data.total && <p>生成文字稿后可打开双语视图。</p>}
-                {data.total > 0 && onContinue && (
-                  <button onClick={() => onContinue(profile?.id || "")}>
-                    {missing
-                      ? "使用当前可用内容，继续整理纪要"
-                      : "继续整理纪要"}
-                  </button>
-                )}
-                {data.items.map((item) => (
-                  <article
-                    className={
-                      activeSegment === item.id
-                        ? "bilingual-playing"
-                        : undefined
-                    }
-                    key={JSON.stringify([
-                      revision,
-                      profile?.id,
-                      profile?.model,
-                      profile?.base_url,
-                      item.id,
-                    ])}
-                  >
-                    <button
-                      className="text-btn"
-                      onClick={() => onSeek(item.start)}
-                    >
-                      {draftId ? "回听音频块" : "回听"} {clock(item.start)}–
-                      {clock(item.end)}
-                    </button>
-                    <ChineseRecordLine
-                      original={item.original}
-                      result={
-                        item.status === "pending"
-                          ? undefined
-                          : { ...item, status: item.status }
-                      }
-                      status={
-                        item.status === "unknown"
-                          ? "语言待确认"
-                          : item.status === "pending" &&
-                              !errors[errorKey(item.id)]
-                            ? nextId === item.id && !waiting
-                              ? "翻译中"
-                              : "待翻译"
-                            : undefined
-                      }
-                      error={
-                        item.status === "pending"
-                          ? errors[errorKey(item.id)]
-                          : undefined
-                      }
-                      onRetry={() =>
-                        setErrors((old) => {
-                          const updated = { ...old };
-                          delete updated[errorKey(item.id)];
-                          return updated;
-                        })
-                      }
-                    />
-                  </article>
-                ))}
-                {data.total > pageSize && (
-                  <p>
-                    <button
-                      disabled={!offset}
-                      onClick={() => setOffset(offset - pageSize)}
-                    >
-                      上一页
-                    </button>{" "}
-                    {offset + 1}–{offset + data.items.length} / {data.total}{" "}
-                    <button
-                      disabled={offset + pageSize >= data.total}
-                      onClick={() => setOffset(offset + pageSize)}
-                    >
-                      下一页
-                    </button>
-                  </p>
-                )}
-              </>
-            )}
-          </section>
-        ))}
+      {open && recordBody}
     </details>
   );
 }

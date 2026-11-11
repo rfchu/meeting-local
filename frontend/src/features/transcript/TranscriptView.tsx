@@ -4,11 +4,13 @@ import { searchForms, type Term } from "../terminology/terms";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../../api";
 import Modal from "../../components/Modal";
-import type { Meeting, Revision, Segment } from "../../types";
+import ActionMenu from "../../components/ActionMenu";
+import type { LLMConfig, Meeting, Revision, Segment } from "../../types";
 import { clock, revisionLabel } from "../../utils";
 import LiveCorrectionReview from "../notes/LiveCorrectionReview";
 import TranscriptList from "./TranscriptList";
 import SpeakerReviewDialog from "./SpeakerReviewDialog";
+import ChineseMeetingRecord from "../meeting/ChineseMeetingRecord";
 
 interface Props {
   meeting: Meeting;
@@ -21,6 +23,9 @@ interface Props {
   onSave: () => Promise<void>;
   onRefresh: () => Promise<void>;
   toast: (text: string) => void;
+  transcriptDirty?: boolean;
+  bilingualProfiles?: LLMConfig[];
+  onContinueBilingualMinutes?: (profileId: string) => void;
 }
 
 function CompareDialog({
@@ -117,7 +122,12 @@ export default function TranscriptView({
   onSave,
   onRefresh,
   toast,
+  transcriptDirty = false,
+  bilingualProfiles = [],
+  onContinueBilingualMinutes,
 }: Props) {
+  const [viewMode, setViewMode] = useState<"original" | "bilingual">("original");
+  const [replaceBarOpen, setReplaceBarOpen] = useState(false);
   const [termsOpen, setTermsOpen] = useState(false);
   const [terms, setTerms] = useState<Term[]>([]);
   const loadTerms = useCallback(
@@ -278,73 +288,119 @@ export default function TranscriptView({
           }}
         />
       )}
-      <div className="tools">
-        <input
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          placeholder="搜索文字…"
-          aria-label="搜索文字"
-        />
-        <details className="transcript-tools-more">
-          <summary>校对工具</summary>
-          <div className="config-actions">
-            <button
-              onClick={() => {
-                setFind(search);
-                setReplaceOpen(true);
-              }}
-            >
-              替换
-            </button>
-            <button
-              onClick={() => {
-                const first = counts.keys().next().value || "";
-                if (!first) return toast("请先完成转写");
-                setSpeakerFrom(first);
-                setSpeakerTo(first);
-                setSpeakerOpen(true);
-              }}
-            >
-              管理发言人
-            </button>
-            <button
-              onClick={() => {
-                void onSave()
-                  .then(() => setTermsOpen(true))
-                  .catch((e) => toast(e.message));
-              }}
-            >
-              术语管理
-            </button>
-            <button onClick={mergeShort}>合并连续短句</button>
-            {hasLiveReview && (
-              <button onClick={() => setLiveReviewOpen(true)}>
-                实时纠错记录
+      <div className="transcript-pro-toolbar">
+        <div className="toolbar-main-row">
+          <div className="search-capsule">
+            <span className="search-icon">🔍</span>
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="搜索文字稿内容或发言人…"
+              aria-label="搜索文字稿"
+            />
+            {search.trim() ? (
+              <span className="search-badge">{shown.length} 条匹配</span>
+            ) : null}
+            {search ? (
+              <button
+                type="button"
+                className="btn-clear-search"
+                title="清空搜索"
+                onClick={() => setSearch("")}
+              >
+                ✕
               </button>
-            )}
+            ) : null}
             <button
-              disabled={!meeting.segments.length}
-              onClick={() => setReviewOpen(true)}
+              type="button"
+              className={`btn-toggle-replace ${replaceBarOpen ? "active" : ""}`}
+              title="展开或收起快速文本替换"
+              onClick={() => {
+                const nextState = !replaceBarOpen;
+                setReplaceBarOpen(nextState);
+                if (nextState && !find && search) setFind(search);
+              }}
             >
-              AI 校对发言人
+              ⇄ 替换
+            </button>
+          </div>
+
+          <div
+            className="transcript-view-switcher"
+            role="radiogroup"
+            aria-label="排版视图模式"
+          >
+            <button
+              type="button"
+              className={`view-pill ${viewMode === "original" ? "active" : ""}`}
+              onClick={() => setViewMode("original")}
+            >
+              📄 纯文本校对
             </button>
             <button
-              onClick={() =>
-                meeting.revisions.length < 2
-                  ? toast("先用另一个引擎重新转写，再对比两个版本")
-                  : setCompareOpen(true)
-              }
+              type="button"
+              className={`view-pill ${viewMode === "bilingual" ? "active" : ""}`}
+              onClick={() => setViewMode("bilingual")}
             >
-              对比版本
+              🌐 双语对照
             </button>
+          </div>
+
+          <div className="toolbar-actions">
+            <ActionMenu
+              label="🛠️ 批量校对工具 ▾"
+              actions={[
+                {
+                  label: `👤 批量管理发言人 (${counts.size} 人)…`,
+                  run: () => {
+                    const first = counts.keys().next().value || "";
+                    if (!first) return toast("请先完成转写");
+                    setSpeakerFrom(first);
+                    setSpeakerTo(first);
+                    setSpeakerOpen(true);
+                  },
+                },
+                {
+                  label: "📚 专业术语与热词库…",
+                  run: () => {
+                    void onSave()
+                      .then(() => setTermsOpen(true))
+                      .catch((e) => toast(e.message));
+                  },
+                },
+                {
+                  label: "✂️ 智能合并连续短句",
+                  run: mergeShort,
+                },
+                {
+                  label: "🤖 AI 校对发言人…",
+                  disabled: !meeting.segments.length,
+                  run: () => setReviewOpen(true),
+                },
+                {
+                  label: "⏱️ 对比识别版本…",
+                  disabled: meeting.revisions.length < 2,
+                  run: () => setCompareOpen(true),
+                },
+                ...(hasLiveReview
+                  ? [
+                      {
+                        label: "📝 实时纠错记录…",
+                        run: () => setLiveReviewOpen(true),
+                      },
+                    ]
+                  : []),
+              ]}
+            />
             <select
-              aria-label="文稿历史"
+              className="revision-history-select"
+              aria-label="文稿历史版本"
               value=""
               onChange={(e) => {
                 if (e.target.value) void restore(Number(e.target.value));
               }}
             >
-              <option value="">版本历史</option>
+              <option value="">版本历史 (v{meeting.revision}) ▾</option>
               {meeting.revisions.map((item) => (
                 <option key={item.revision} value={item.revision}>
                   v{item.revision} · {revisionLabel(item.source)}
@@ -352,28 +408,129 @@ export default function TranscriptView({
               ))}
             </select>
           </div>
-        </details>
-      </div>
-      <TranscriptList
-        activeSegment={activeSegment}
-        key={meeting.id}
-        segments={shown}
-        onEditingChange={setEditingId}
-        total={meeting.segments.length}
-        onUpdate={update}
-        onSeek={seek}
-        jumpSegmentId={jumpSegmentId}
-      />
-      {meeting.segments.length > 0 && shown.length === 0 && (
-        <div className="empty">没有匹配的文字</div>
-      )}
-      {!meeting.segments.length && (
-        <div className="empty">
-          <div>≋</div>
-          <h3>录音已就位</h3>
-          <p>点击“开始转写”，文字稿将在这里出现。</p>
         </div>
-      )}
+
+        {replaceBarOpen && (
+          <div className="inline-replace-panel">
+            <div className="replace-fields">
+              <label>
+                <span className="label-text">查找：</span>
+                <input
+                  value={find}
+                  placeholder="输入要查找的文本…"
+                  onChange={(e) => setFind(e.target.value)}
+                />
+              </label>
+              <label>
+                <span className="label-text">替换为：</span>
+                <input
+                  value={replacement}
+                  placeholder="输入替换后的文本…"
+                  onChange={(e) => setReplacement(e.target.value)}
+                />
+              </label>
+            </div>
+            <div className="replace-actions">
+              <button
+                type="button"
+                className="primary btn-sm"
+                onClick={() => {
+                  const target = find.trim();
+                  if (!target) return toast("请输入要查找的内容");
+                  const count = meeting.segments.reduce(
+                    (sum, item) => sum + item.text.split(target).length - 1,
+                    0,
+                  );
+                  if (!count) return toast(`未找到匹配“${target}”的内容`);
+                  if (
+                    !confirm(
+                      `确定将文字稿中全部 ${count} 处“${target}”替换为“${replacement}”？`,
+                    )
+                  )
+                    return;
+                  onChange(
+                    meeting.segments.map((item) =>
+                      item.text.includes(target)
+                        ? {
+                            ...item,
+                            text: item.text.replaceAll(target, replacement),
+                          }
+                        : item,
+                    ),
+                  );
+                  toast(`已完成 ${count} 处文本替换`);
+                  setReplaceBarOpen(false);
+                }}
+                disabled={!find.trim()}
+              >
+                全部替换
+              </button>
+              <button
+                type="button"
+                className="text-btn btn-sm"
+                onClick={() => setReplaceBarOpen(false)}
+              >
+                收起
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div
+        className={`transcript-workspace-scroll ${viewMode === "bilingual" ? "bilingual-mode" : ""}`}
+      >
+        {viewMode === "original" ? (
+          <div className="transcript-editor-container">
+            <div className="transcript-status-bar">
+              <span className="count-info">
+                共 {meeting.segments.length} 个片段
+                {search.trim() ? ` · 检索到 ${shown.length} 个匹配片段` : ""}
+              </span>
+              <div className="keyboard-shortcuts-hint">
+                <span className="hint-title">快捷操作：</span>
+                <kbd>Option+R</kbd> 重听本句
+                <span className="dot">·</span>
+                <kbd>Tab</kbd> 切至下一段
+              </div>
+            </div>
+            <TranscriptList
+              activeSegment={activeSegment}
+              key={meeting.id}
+              segments={shown}
+              onEditingChange={setEditingId}
+              total={meeting.segments.length}
+              onUpdate={update}
+              onSeek={seek}
+              jumpSegmentId={jumpSegmentId}
+            />
+            {meeting.segments.length > 0 && shown.length === 0 && (
+              <div className="empty">没有匹配的文字</div>
+            )}
+            {!meeting.segments.length && (
+              <div className="empty">
+                <div>≋</div>
+                <h3>录音已就位</h3>
+                <p>点击“开始转写”，文字稿将在这里出现。</p>
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className="transcript-bilingual-container">
+            <ChineseMeetingRecord
+              embedded
+              activeSegment={activeSegment}
+              key={`${meeting.id}-${meeting.revision}`}
+              id={meeting.id}
+              revision={meeting.revision}
+              dirty={transcriptDirty ?? false}
+              profiles={bilingualProfiles ?? []}
+              onSeek={seek}
+              onContinue={onContinueBilingualMinutes}
+            />
+          </div>
+        )}
+      </div>
       {liveReviewOpen && (
         <LiveCorrectionReview
           recordingId={meeting.id}

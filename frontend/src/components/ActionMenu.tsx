@@ -4,6 +4,7 @@ type Action = {
   label: string;
   run: () => void;
   danger?: boolean;
+  disabled?: boolean;
 };
 
 export default function ActionMenu({
@@ -77,13 +78,15 @@ export default function ActionMenu({
 
       {open && (
         <div className="action-menu-dropdown" role="menu">
-          {actions.map(({ label: actionLabel, run, danger }) => (
+          {actions.map(({ label: actionLabel, run, danger, disabled }) => (
             <button
               key={actionLabel}
               type="button"
               role="menuitem"
+              disabled={disabled}
               className={danger ? "danger-text" : undefined}
               onClick={() => {
+                if (disabled) return;
                 setOpen(false);
                 run();
               }}

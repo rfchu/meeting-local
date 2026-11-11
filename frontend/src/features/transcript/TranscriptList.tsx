@@ -17,6 +17,23 @@ function fitText(element: HTMLTextAreaElement | null) {
   element.style.height = `${element.scrollHeight + 2}px`;
 }
 
+const SPEAKER_PALETTES = [
+  { bg: "#eff6ff", text: "#1d4ed8", border: "#bfdbfe", dot: "#3b82f6" }, // blue
+  { bg: "#f5f3ff", text: "#6d28d9", border: "#ddd6fe", dot: "#8b5cf6" }, // violet
+  { bg: "#f0fdf4", text: "#15803d", border: "#bbf7d0", dot: "#22c55e" }, // green
+  { bg: "#fffbeb", text: "#b45309", border: "#fde68a", dot: "#f59e0b" }, // amber
+  { bg: "#fdf2f8", text: "#be185d", border: "#fbcfe8", dot: "#ec4899" }, // pink
+  { bg: "#f0fdfa", text: "#0f766e", border: "#99f6e4", dot: "#14b8a6" }, // teal
+];
+
+function getSpeakerPalette(name: string) {
+  let hash = 0;
+  for (let i = 0; i < name.length; i++) {
+    hash = (hash << 5) - hash + name.charCodeAt(i);
+  }
+  return SPEAKER_PALETTES[Math.abs(hash) % SPEAKER_PALETTES.length];
+}
+
 const Row = memo(function Row({
   segment,
   onUpdate,
@@ -31,6 +48,9 @@ const Row = memo(function Row({
   onSeek: (time: number, track?: SourceTrack) => void;
 }) {
   const textRef = useRef<HTMLTextAreaElement>(null);
+  const [copied, setCopied] = useState(false);
+  const palette = getSpeakerPalette(segment.speaker || "发言人");
+
   useLayoutEffect(() => fitText(textRef.current), [segment.text]);
   useEffect(() => {
     const element = textRef.current;
@@ -45,52 +65,116 @@ const Row = memo(function Row({
     observer.observe(element);
     return () => observer.disconnect();
   }, []);
+
+  const handleCopy = () => {
+    void navigator.clipboard?.writeText(segment.text);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  };
+
   return (
     <div
-      className={playing ? "segment playing" : "segment"}
+      className={`transcript-card segment ${playing ? "playing active-playback" : ""} ${segment.speaker_locked ? "speaker-locked" : ""}`}
       data-id={segment.id}
     >
-      <button
-        className="time"
-        title={
-          segment.boundary_review
-            ? "分段交界处，请回听确认重复或漏字"
-            : "回听这一段"
-        }
-        onClick={() => onSeek(segment.start, segment.source_track ?? undefined)}
-      >
-        {clock(segment.start)}
-        {segment.boundary_review ? " · 核对" : ""}
-      </button>
-      <div>
-        {segment.source_track && (
-          <small className="source-track-label">
-            {trackLabel(segment.source_track)}
-          </small>
-        )}
-        <input
-          readOnly={readOnly}
-          className="speaker"
-          aria-label="发言人"
-          value={segment.speaker}
-          onChange={(e) => onUpdate({ ...segment, speaker: e.target.value })}
-        />
-        <label className="speaker-confirmed">
-          <input
-            type="checkbox"
-            disabled={readOnly}
-            checked={!!segment.speaker_locked}
-            onChange={(e) =>
-              onUpdate({ ...segment, speaker_locked: e.target.checked })
+      <div className="card-meta-bar">
+        <div className="meta-left">
+          <button
+            type="button"
+            className="btn-timestamp"
+            title={
+              segment.boundary_review
+                ? "分段交界处，点击回听确认"
+                : "回听此句原声"
             }
-          />
-          已确认
-        </label>
-        {segment.alignment_warning && (
-          <p role="note" className="error">
-            时间待校准：{segment.alignment_warning}
-          </p>
-        )}
+            onClick={() =>
+              onSeek(segment.start, segment.source_track ?? undefined)
+            }
+          >
+            <span className="play-triangle">▶</span>
+            <span className="time-num">{clock(segment.start)}</span>
+          </button>
+          <div
+            className="speaker-badge"
+            style={{
+              backgroundColor: palette.bg,
+              borderColor: palette.border,
+              color: palette.text,
+            }}
+          >
+            <span
+              className="speaker-dot"
+              style={{ backgroundColor: palette.dot }}
+            />
+            <input
+              readOnly={readOnly}
+              className="speaker-input"
+              aria-label="发言人"
+              value={segment.speaker}
+              title="点击直接修改发言人名称"
+              onChange={(e) =>
+                onUpdate({ ...segment, speaker: e.target.value })
+              }
+            />
+          </div>
+          {segment.source_track && (
+            <span className="source-track-pill">
+              {trackLabel(segment.source_track)}
+            </span>
+          )}
+          {segment.boundary_review && (
+            <span
+              className="warning-pill boundary"
+              title="分段交界处，请回听确认重复或漏字"
+            >
+              ⚠️ 待核对边界
+            </span>
+          )}
+          {segment.alignment_warning && (
+            <span
+              className="warning-pill alignment"
+              title={segment.alignment_warning}
+            >
+              ⏱️ 时间待校准
+            </span>
+          )}
+        </div>
+        <div className="card-actions">
+          <button
+            type="button"
+            className="btn-card-action"
+            title="回听这一句原声 (Option+R)"
+            onClick={() =>
+              onSeek(segment.start, segment.source_track ?? undefined)
+            }
+          >
+            ▶ 回听
+          </button>
+          <button
+            type="button"
+            className="btn-card-action"
+            title="复制本句文字"
+            onClick={handleCopy}
+          >
+            {copied ? "✓ 已复制" : "📋 复制"}
+          </button>
+          <label
+            className={`speaker-lock-label ${segment.speaker_locked ? "is-locked" : ""}`}
+            title="锁定发言人声纹，防止重算覆盖"
+          >
+            <input
+              type="checkbox"
+              disabled={readOnly}
+              checked={!!segment.speaker_locked}
+              onChange={(e) =>
+                onUpdate({ ...segment, speaker_locked: e.target.checked })
+              }
+            />
+            <span>{segment.speaker_locked ? "已确认" : "确认发言人"}</span>
+          </label>
+        </div>
+      </div>
+      <div className="card-body">
         {readOnly ? (
           <>
             <p className="reading-paragraph">{segment.text}</p>
@@ -116,6 +200,7 @@ const Row = memo(function Row({
           <textarea
             readOnly={readOnly}
             ref={textRef}
+            className="transcript-textarea"
             aria-label={`转写文字 ${clock(segment.start)}`}
             rows={Math.max(1, Math.ceil(segment.text.length / 42))}
             value={segment.text}
@@ -215,6 +300,14 @@ export default function TranscriptList({
     return () => cancelAnimationFrame(frame);
   }, [pendingFocus, segments]);
   const keyboard = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (event.altKey && (event.key === "r" || event.key === "R")) {
+      event.preventDefault();
+      const target =
+        segments.find((s) => s.id === focused) ||
+        segments.find((s) => s.id === activeSegment);
+      if (target) onSeek(target.start, target.source_track ?? undefined);
+      return;
+    }
     if (
       !virtual ||
       event.key !== "Tab" ||
@@ -276,18 +369,17 @@ export default function TranscriptList({
   return (
     <>
       {total > 300 && (
-        <div className="transcript-list-info">
-          <span>
-            共 {total} 段 · 当前显示 {segments.length}{" "}
-            段。全文检索请使用上方搜索框。
+        <div className="transcript-virtual-mode-bar">
+          <span className="virtual-mode-hint">
+            💡 已启用大文稿流畅渲染（共 {total} 段，当前视图 {segments.length} 段）
           </span>
-          <label>
+          <label className="virtual-mode-toggle">
             <input
               type="checkbox"
               checked={full}
               onChange={(e) => setFull(e.target.checked)}
             />
-            完整显示（浏览器查找／辅助阅读）
+            <span>展开全部 DOM（支持浏览器原生 ⌘F 查找）</span>
           </label>
         </div>
       )}

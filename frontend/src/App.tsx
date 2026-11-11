@@ -1707,34 +1707,6 @@ export default function App({ browserWorkspace = false }: { browserWorkspace?: b
                   )}
                 </div>
                 {workspace === "transcript" && (
-                  <ChineseMeetingRecord
-                    activeSegment={activeSegment}
-                    key={`${meeting.id}-${meeting.revision}`}
-                    id={meeting.id}
-                    revision={meeting.revision}
-                    dirty={transcriptDirty}
-                    profiles={
-                      environment?.analysis.profiles.filter(
-                        (item) => item.provider_type === "local",
-                      ) || []
-                    }
-                    onSeek={(time) => seekRef.current?.(time)}
-                    onContinue={(profileId) => {
-                      setChineseMinutes({
-                        id: meeting.id,
-                        revision: meeting.revision,
-                        profileId,
-                      });
-                      setMinutesOptions((old) => ({
-                        ...old,
-                        method: "ai",
-                        output_language: "zh",
-                      }));
-                      setWorkspace("minutes");
-                    }}
-                  />
-                )}
-                {workspace === "transcript" && (
                   <TranscriptView
                     activeSegment={activeSegment}
                     qualityReviewView={qualityReviewRequest.view}
@@ -1761,6 +1733,25 @@ export default function App({ browserWorkspace = false }: { browserWorkspace?: b
                       });
                     }}
                     toast={toast}
+                    transcriptDirty={transcriptDirty}
+                    bilingualProfiles={
+                      environment?.analysis.profiles.filter(
+                        (item) => item.provider_type === "local",
+                      ) || []
+                    }
+                    onContinueBilingualMinutes={(profileId) => {
+                      setChineseMinutes({
+                        id: meeting.id,
+                        revision: meeting.revision,
+                        profileId,
+                      });
+                      setMinutesOptions((old) => ({
+                        ...old,
+                        method: "ai",
+                        output_language: "zh",
+                      }));
+                      setWorkspace("minutes");
+                    }}
                   />
                 )}
                 {workspace === "analysis" && (
