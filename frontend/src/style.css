@@ -620,7 +620,7 @@ h1 {
 }
 .workspace {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 210px;
+  grid-template-columns: minmax(0, 1fr);
   gap: 24px;
 }
 .transcript-panel {
@@ -764,6 +764,7 @@ h1 {
   bottom: 0;
   left: 248px;
   right: 0;
+  z-index: 60;
   background: #ffffffee;
   backdrop-filter: blur(12px);
   border-top: 1px solid var(--line);
@@ -1476,15 +1477,131 @@ dialog code {
   overflow: auto;
 }
 .analysis-notice {
-  margin: 18px 20px;
-  padding: 12px 14px;
+  margin: 16px 20px;
+  padding: 12px 16px;
   border-radius: 8px;
-  background: #fff6dd;
-  color: #86681e;
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+  color: #92400e;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.analysis-notice.failure-capsule {
+  background: #fff1f2;
+  border-color: #fecdd3;
+  color: #9f1239;
+}
+.notice-main {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  flex: 1;
+  min-width: 240px;
+}
+.notice-icon {
+  font-size: 16px;
+  line-height: 1.2;
+}
+.notice-content {
+  flex: 1;
+  line-height: 1.5;
+}
+.notice-hint {
+  font-size: 11px;
+  color: #64748b;
+  margin-top: 4px;
+}
+.notice-action-btn {
+  padding: 6px 14px;
+  border-radius: 6px;
   font-size: 12px;
+  font-weight: 500;
+  background: white;
+  border: 1px solid #cbd5e1;
+  color: #1e293b;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.15s ease;
+}
+.notice-action-btn:hover {
+  background: #f8fafc;
+  border-color: #94a3b8;
 }
 .analysis-sections {
   padding: 6px 24px 30px;
+}
+.analysis-empty-dashboard {
+  padding: 40px 24px 60px;
+  display: flex;
+  justify-content: center;
+}
+.analysis-empty-card {
+  max-width: 680px;
+  width: 100%;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 14px;
+  padding: 36px 32px;
+  text-align: center;
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.03);
+}
+.analysis-empty-badge {
+  display: inline-block;
+  padding: 4px 12px;
+  border-radius: 9999px;
+  background: #eff6ff;
+  color: #2563eb;
+  font-size: 12px;
+  font-weight: 500;
+  margin-bottom: 12px;
+}
+.analysis-empty-card h3 {
+  font-size: 20px;
+  font-weight: 600;
+  color: #0f172a;
+  margin: 0 0 10px;
+}
+.analysis-empty-desc {
+  font-size: 13px;
+  color: #64748b;
+  line-height: 1.6;
+  max-width: 520px;
+  margin: 0 auto 24px;
+}
+.analysis-value-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+  margin-bottom: 28px;
+  text-align: left;
+}
+.analysis-value-item {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.analysis-value-item strong {
+  font-size: 13px;
+  color: #1e293b;
+}
+.analysis-value-item span {
+  font-size: 11px;
+  color: #64748b;
+  line-height: 1.5;
+}
+.analysis-start-btn {
+  padding: 10px 24px;
+  font-size: 14px;
+  font-weight: 500;
+  border-radius: 8px;
 }
 .analysis-section {
   padding: 20px 0;
@@ -3077,10 +3194,54 @@ dialog code {
 }
 .meeting-review-workspace.split {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr);
-  gap: 16px;
+  grid-template-columns: minmax(360px, 45%) minmax(0, 55%);
+  gap: 20px;
   align-items: start;
-  padding: 16px;
+  padding: 16px 20px;
+}
+.btn-prepare-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: #f1f5f9;
+  color: #334155;
+  border: 1px solid #cbd5e1;
+  font-size: 13px;
+  padding: 6px 14px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.btn-prepare-trigger:hover {
+  background: #e2e8f0;
+  border-color: #94a3b8;
+  color: #0f172a;
+}
+.meeting-meta-pill.offline {
+  background: rgba(16, 185, 129, 0.1);
+  color: #059669;
+}
+.preparation-dialog {
+  width: min(860px, 92vw);
+  max-height: 85vh;
+  overflow-y: auto;
+  padding: 24px;
+}
+.preparation-dialog-header {
+  margin-bottom: 20px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--line);
+}
+.preparation-dialog-header h3 {
+  margin: 0 0 6px 0;
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text-heading, #0f172a);
+}
+.preparation-dialog-header p {
+  margin: 0;
+  font-size: 13px;
+  color: var(--muted, #64748b);
 }
 .review-source-toggle {
   grid-column: 1 / -1;

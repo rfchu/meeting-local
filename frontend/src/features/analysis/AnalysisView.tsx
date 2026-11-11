@@ -121,14 +121,43 @@ export default function AnalysisView({
         </div>
       )}
       {!artifact ? (
-        <div className="empty">
-          <div>◎</div>
-          <h3>还没有会议分析</h3>
-          <p>
-            {environment?.analysis.ready
-              ? "生成后可核对摘要、决定和待办。"
-              : "请先配置本地或云端分析模型。"}
-          </p>
+        <div className="analysis-empty-dashboard">
+          <div className="analysis-empty-card">
+            <div className="analysis-empty-badge">🧠 深度研判与洞察</div>
+            <h3>尚未运行会议深度分析</h3>
+            <p className="analysis-empty-desc">
+              深度研判结合全场文字稿，提炼议题演进脉络、观点立场透视、核心决议与行动项，并支持毫秒级精准溯源原声。
+            </p>
+            <div className="analysis-value-grid">
+              <div className="analysis-value-item">
+                <strong>议题脉络追踪</strong>
+                <span>对照原文推演讨论转折与共识形成</span>
+              </div>
+              <div className="analysis-value-item">
+                <strong>观点立场透视</strong>
+                <span>梳理各方诉求、核心关切与潜在分歧</span>
+              </div>
+              <div className="analysis-value-item">
+                <strong>决议闭环核对</strong>
+                <span>萃取确定事项、责任归属与待办计划</span>
+              </div>
+            </div>
+            {environment?.analysis.ready && meeting.revision ? (
+              <button
+                className="primary analysis-start-btn"
+                disabled={running}
+                onClick={onGenerate}
+              >
+                {running ? "正在研判中…" : "立即生成会议深度研判"}
+              </button>
+            ) : (
+              <p className="muted">
+                {!meeting.revision
+                  ? "请先完成录音转写，再生成深度研判。"
+                  : "请先在「运行管理」中配置可用的分析模型。"}
+              </p>
+            )}
+          </div>
         </div>
       ) : (
         <div className="analysis-sections">

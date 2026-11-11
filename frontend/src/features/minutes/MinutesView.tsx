@@ -302,12 +302,25 @@ export default function MinutesView(props: Props) {
     <div id="minutesView">
       {automaticJob && automaticJob.state !== "completed" && (
         <div
-          className="analysis-notice"
+          className={`analysis-notice ${automaticJob.state === "failed" ? "failure-capsule" : ""}`}
           role={automaticJob.state === "failed" ? "alert" : "status"}
         >
-          纪要任务：{automaticJob.stage}
-          {automaticJob.error ? ` · ${automaticJob.error}` : ""}
+          <div className="notice-main">
+            <span className="notice-icon">
+              {automaticJob.state === "failed" ? "⚠️" : "⏳"}
+            </span>
+            <div className="notice-content">
+              <strong>纪要任务：{automaticJob.stage}</strong>
+              {automaticJob.error ? (
+                <span className="notice-error"> · {automaticJob.error}</span>
+              ) : null}
+              <div className="notice-hint">
+                文字稿仍保留；来源已变化时请用当前文字稿重新生成。
+              </div>
+            </div>
+          </div>
           <button
+            className="notice-action-btn"
             onClick={() =>
               props.onJobAction(
                 automaticJob.id,
@@ -317,7 +330,6 @@ export default function MinutesView(props: Props) {
           >
             {automaticBusy ? "取消纪要任务" : "重试纪要任务"}
           </button>
-          <small>文字稿仍保留；来源已变化时请用当前文字稿重新生成。</small>
         </div>
       )}
       {generation?.state === "waiting" && !automaticBusy && (
@@ -332,11 +344,12 @@ export default function MinutesView(props: Props) {
           秒。完整结果返回后会自动保存；刷新页面可继续查看状态。
         </p>
       )}
-      {generation?.state === "failed" && (
-        <p role="alert" className="error">
-          上次 AI 纪要生成失败：{generation.error}
-        </p>
-      )}
+      {generation?.state === "failed" &&
+        (!automaticJob || automaticJob.state === "completed") && (
+          <p role="alert" className="error">
+            上次 AI 纪要生成失败：{generation.error}
+          </p>
+        )}
       {previousFollowup &&
         ["failed", "cancelled"].includes(previousFollowup.state) && (
           <p role="alert" className="error">

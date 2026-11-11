@@ -26,15 +26,9 @@ export function readMeetingView(
   const raw = read(storage)[id];
   if (!raw || typeof raw !== "object") return {};
   return {
-    workspace: [
-      "prepare",
-      "notes",
-      "minutes",
-      "transcript",
-      "analysis",
-    ].includes(raw.workspace)
+    workspace: ["minutes", "analysis", "transcript"].includes(raw.workspace)
       ? raw.workspace
-      : undefined,
+      : "minutes",
     minutesId:
       typeof raw.minutesId === "string" && raw.minutesId.length <= 100
         ? raw.minutesId
@@ -73,14 +67,15 @@ export function resolveMeetingView(meeting: Meeting, saved: MeetingView) {
     (a) => a.id === saved.minutesId && a.kind === "meeting_minutes",
   ) as Artifact<MeetingMinutes> | undefined;
   const selected = minutes || latestMinutes(meeting);
-  return {
-    workspace:
-      saved.workspace ||
-      ((selected
+  const targetWorkspace = saved.workspace && ["minutes", "analysis", "transcript"].includes(saved.workspace)
+    ? saved.workspace
+    : selected
+      ? "minutes"
+      : meeting.revision
         ? "minutes"
-        : meeting.revision
-          ? "transcript"
-          : "notes") as Workspace),
+        : "transcript";
+  return {
+    workspace: targetWorkspace as Workspace,
     minutes: selected,
     position: Math.min(
       saved.position || 0,

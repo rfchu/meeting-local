@@ -114,7 +114,9 @@ export default function App({ browserWorkspace = false }: { browserWorkspace?: b
     queryFn: api.minutesTemplates,
   });
   const [meeting, setMeeting] = useState<Meeting | null>(null),
-    [workspace, setWorkspace] = useState<Workspace>("copilot");
+    [workspace, setWorkspace] = useState<Workspace>("minutes");
+  const [prepareOpen, setPrepareOpen] = useState(false);
+  const [notesModalOpen, setNotesModalOpen] = useState(false);
   const [sessionExpired, setSessionExpired] = useState(false);
   useEffect(() => {
     if (!browserWorkspace) return;
@@ -313,7 +315,12 @@ export default function App({ browserWorkspace = false }: { browserWorkspace?: b
     view: "pending",
   });
   const navigateReview = (step: ReviewStep) => {
-    setWorkspace(step === "speakers" ? "transcript" : step);
+    if (step === "notes") {
+      setNotesModalOpen(true);
+      setWorkspace("minutes");
+    } else {
+      setWorkspace(step === "speakers" ? "transcript" : step);
+    }
     window.requestAnimationFrame(() =>
       document
         .getElementById("meeting-workspace")
@@ -530,7 +537,7 @@ export default function App({ browserWorkspace = false }: { browserWorkspace?: b
         setMinutesOptions((old) => ({ ...old, method: "ai" }));
       setShowCitations(artifact?.payload.style === "internal");
       setWorkspace(
-        readMeetingView(id, browserMeetingStorage()).workspace || "copilot",
+        readMeetingView(id, browserMeetingStorage()).workspace || "minutes",
       );
 
       meetingRef.current = value;
@@ -1064,6 +1071,7 @@ export default function App({ browserWorkspace = false }: { browserWorkspace?: b
                   {meeting.duration ? (
                     <span>· 时长 {clock(meeting.duration)}</span>
                   ) : null}
+                  <span>· {meeting.segments.length} 个片段</span>
                   {meeting.revision ? (
                     <span className="meeting-meta-pill">
                       {transcriptionJob
@@ -1076,6 +1084,7 @@ export default function App({ browserWorkspace = false }: { browserWorkspace?: b
                   ) : (
                     <span className="meeting-meta-pill pending">待转写</span>
                   )}
+                  <span className="meeting-meta-pill offline">🔒 本机离线</span>
                   <span
                     className="meeting-filename-hint"
                     title={`源音频文件：${meeting.filename}`}
@@ -1085,6 +1094,13 @@ export default function App({ browserWorkspace = false }: { browserWorkspace?: b
                 </div>
               </div>
               <div className="meeting-header-actions">
+                <button
+                  className="btn-prepare-trigger"
+                  onClick={() => setPrepareOpen(true)}
+                  title="查看或完善会前议程、目标与参会人"
+                >
+                  📋 备会背景
+                </button>
                 <button onClick={() => setRenameOpen(true)}>重命名</button>
                 <OverviewArchiveButton
                   openRequested={overviewFocus}
@@ -1370,6 +1386,77 @@ export default function App({ browserWorkspace = false }: { browserWorkspace?: b
                 </div>
               </Modal>
             )}
+            {prepareOpen && (
+              <Modal
+                ariaLabel="本次会议准备与背景"
+                className="preparation-dialog"
+                onClose={() => setPrepareOpen(false)}
+              >
+                <div className="preparation-dialog-header">
+                  <h3>📋 本次会议准备与背景</h3>
+                  <p>核对会前目标、议程与参会人。修改后自动同步至会议资料。</p>
+                </div>
+                <MeetingPreparation
+                  key={meeting.id}
+                  meeting={meeting}
+                  meetings={listQuery.data || []}
+                  onRefresh={async () => {
+                    setMeeting(await api.meeting(meeting.id));
+                  }}
+                  onOpen={(id) => {
+                    setPrepareOpen(false);
+                    void openMeeting(id);
+                  }}
+                  toast={toast}
+                />
+              </Modal>
+            )}
+            {notesModalOpen && (
+              <Modal
+                ariaLabel="会议关注点与会中速记"
+                className="preparation-dialog"
+                onClose={() => setNotesModalOpen(false)}
+              >
+                <div className="preparation-dialog-header">
+                  <h3>📌 会议关注点与会中速记</h3>
+                  <p>核对会中标记的重点、问题与待办，可关联至会议纪要与跟进项。</p>
+                </div>
+                <NotesView
+                  key={meeting.id}
+                  inlineReview
+                  onConfigureModel={() => {
+                    setNotesModalOpen(false);
+                    setManagementPage("models");
+                  }}
+                  focusNoteId={noteSourceId}
+                  onNoteFocused={() => setNoteSourceId(undefined)}
+                  onLocate={(time) => {
+                    locateReview(time);
+                    setReviewSourceOpen(true);
+                  }}
+                  meeting={meeting}
+                  onRefresh={async () => {
+                    const fresh = await api.meeting(meeting.id);
+                    setMeeting(fresh);
+                    if (!minutesDirty) {
+                      const artifact = latestMinutes(fresh);
+                      displayMinutes(artifact || null);
+                    }
+                  }}
+                  minutesDirty={minutesDirty}
+                  onMinutes={() => {
+                    setNotesModalOpen(false);
+                    setWorkspace("minutes");
+                  }}
+                  onPause={() => pausePlaybackRef.current?.()}
+                  onSeek={(time) => {
+                    locateReview(time);
+                    seekRef.current?.(time);
+                  }}
+                  toast={toast}
+                />
+              </Modal>
+            )}
             {transcriptionJob &&
               (transcriptionRunning ||
                 ["failed", "cancelled"].includes(transcriptionJob.state)) && (
@@ -1582,7 +1669,7 @@ export default function App({ browserWorkspace = false }: { browserWorkspace?: b
               onPreview={() => void openMinutesPreview()}
             />
             <div
-              className={`workspace ${workspace === "prepare" ? "workspace-focused" : ""}`}
+              className="workspace"
               id="meeting-workspace"
             >
               <div className="transcript-panel">
@@ -1590,15 +1677,9 @@ export default function App({ browserWorkspace = false }: { browserWorkspace?: b
                   <div className="tabs">
                     {(
                       [
-                        ["copilot", "伴随时间线"],
-                        ["minutes", "会议成果"],
-                        ["analysis", "深入分析"],
-                        [
-                          "notes",
-                          `会后整理${meeting.notes.length ? ` · ${meeting.notes.length}` : ""}`,
-                        ],
-                        ["transcript", "精细文字稿"],
-                        ["prepare", "会议准备"],
+                        ["minutes", "智能纪要"],
+                        ["analysis", "深度研判"],
+                        ["transcript", "精细校对"],
                       ] as [Workspace, string][]
                     ).map(([key, label]) => (
                       <button
@@ -1625,25 +1706,6 @@ export default function App({ browserWorkspace = false }: { browserWorkspace?: b
                     </button>
                   )}
                 </div>
-                <div hidden={workspace !== "prepare"}>
-                  <MeetingPreparation
-                    key={meeting.id}
-                    meeting={meeting}
-                    meetings={listQuery.data || []}
-                    onRefresh={async () => {
-                      setMeeting(await api.meeting(meeting.id));
-                    }}
-                    onOpen={(id) => void openMeeting(id)}
-                    toast={toast}
-                  />
-                </div>
-                {workspace === "copilot" && (
-                  <UnifiedTimeline
-                    meeting={meeting}
-                    activeSegment={activeSegment}
-                    onSeek={(time, track) => seekRef.current?.(time, track)}
-                  />
-                )}
                 {workspace === "transcript" && (
                   <ChineseMeetingRecord
                     activeSegment={activeSegment}
@@ -1715,61 +1777,6 @@ export default function App({ browserWorkspace = false }: { browserWorkspace?: b
                     transcriptDirty={transcriptDirty}
                   />
                 )}
-                {workspace === "notes" && (
-                  <div
-                    className={`meeting-review-workspace ${reviewSourceOpen ? "split" : ""}`}
-                  >
-                    <button
-                      className="review-source-toggle"
-                      onClick={() => setReviewSourceOpen(!reviewSourceOpen)}
-                    >
-                      {reviewSourceOpen ? "收起原文" : "展开原文与回听"}
-                    </button>
-                    {reviewSourceOpen && (
-                      <ReviewSourcePane
-                        activeSegment={activeSegment}
-                        key={meeting.id}
-                        meeting={meeting}
-                        focusTime={reviewFocus}
-                        focusVersion={reviewFocusVersion}
-                        onSeek={(time) => {
-                          seekRef.current?.(time);
-                        }}
-                        onEdit={() => setWorkspace("transcript")}
-                      />
-                    )}
-                    <div className="review-notes-pane">
-                      <NotesView
-                        key={meeting.id}
-                        inlineReview
-                        onConfigureModel={() => setManagementPage("models")}
-                        focusNoteId={noteSourceId}
-                        onNoteFocused={() => setNoteSourceId(undefined)}
-                        onLocate={(time) => {
-                          locateReview(time);
-                          setReviewSourceOpen(true);
-                        }}
-                        meeting={meeting}
-                        onRefresh={async () => {
-                          const fresh = await api.meeting(meeting.id);
-                          setMeeting(fresh);
-                          if (!minutesDirty) {
-                            const artifact = latestMinutes(fresh);
-                            displayMinutes(artifact || null);
-                          }
-                        }}
-                        minutesDirty={minutesDirty}
-                        onMinutes={() => setWorkspace("minutes")}
-                        onPause={() => pausePlaybackRef.current?.()}
-                        onSeek={(time) => {
-                          locateReview(time);
-                          seekRef.current?.(time);
-                        }}
-                        toast={toast}
-                      />
-                    </div>
-                  </div>
-                )}
                 {workspace === "minutes" && (
                   <div
                     className={`meeting-review-workspace ${reviewSourceOpen ? "split" : ""}`}
@@ -1838,7 +1845,7 @@ export default function App({ browserWorkspace = false }: { browserWorkspace?: b
                             old?.id === target.id ? { ...old, flow } : old,
                           );
                         }}
-                        onPreparation={() => setWorkspace("prepare")}
+                        onPreparation={() => setPrepareOpen(true)}
                         onSelect={(id) => void selectMinutes(id)}
                         onAdopt={() => void adoptMinutes()}
                         onCompare={(left, right) =>
@@ -1876,7 +1883,7 @@ export default function App({ browserWorkspace = false }: { browserWorkspace?: b
                         }}
                         minutesDirty={minutesDirty}
                         meeting={meeting}
-                        onNotes={() => setWorkspace("notes")}
+                        onNotes={() => setNotesModalOpen(true)}
                         onRefresh={async () =>
                           setMeeting(await api.meeting(meeting.id))
                         }
@@ -1902,36 +1909,6 @@ export default function App({ browserWorkspace = false }: { browserWorkspace?: b
                     </div>
                   </div>
                 )}
-              </div>
-              <div className="info-panel">
-                <div className="eyebrow">会议概览</div>
-                <dl>
-                  <dt>录音时长</dt>
-                  <dd>
-                    {meeting.duration ? clock(meeting.duration) : "转写后显示"}
-                  </dd>
-                  <dt>文字片段</dt>
-                  <dd>{meeting.segments.length}</dd>
-                  <dt>当前版本</dt>
-                  <dd>
-                    {meeting.revision ? `v${meeting.revision}` : "尚未生成"}
-                  </dd>
-                  <dt>最近识别引擎</dt>
-                  <dd>
-                    {revisionLabel(
-                      meeting.revisions.find((item) => item.source !== "manual")
-                        ?.source,
-                    )}
-                  </dd>
-                  <dt>转写方式</dt>
-                  <dd>本机离线</dd>
-                </dl>
-                <div className="tip">
-                  <b>校对小提示</b>
-                  <p>
-                    点击时间戳回听原音；直接编辑文字即可自动保存。发言人名称可逐段修改或批量合并。
-                  </p>
-                </div>
               </div>
             </div>
             <Player
