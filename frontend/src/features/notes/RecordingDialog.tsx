@@ -6,5 +6,5 @@ import {
 
 export default function RecordingDialog(props: RecordingDialogProps) {
   const recording = useRecordingController(props);
-  return <RecordingView {...recording} />;
+  return <RecordingView {...recording} onPhaseChange={props.onPhaseChange} />;
 }

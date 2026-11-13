@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 
 type Action = {
   label: string;
+  icon?: ReactNode;
   run: () => void;
   danger?: boolean;
   disabled?: boolean;
@@ -9,10 +10,12 @@ type Action = {
 
 export default function ActionMenu({
   label,
+  icon,
   accessibleLabel,
   actions,
 }: {
   label: string;
+  icon?: ReactNode;
   accessibleLabel?: string;
   actions: Action[];
 }) {
@@ -73,27 +76,39 @@ export default function ActionMenu({
         aria-label={accessibleLabel}
         onClick={() => setOpen((prev) => !prev)}
       >
-        {label}
+        {icon && <span className="action-menu-icon">{icon}</span>}
+        <span>{label}</span>
       </button>
 
       {open && (
         <div className="action-menu-dropdown" role="menu">
-          {actions.map(({ label: actionLabel, run, danger, disabled }) => (
-            <button
-              key={actionLabel}
-              type="button"
-              role="menuitem"
-              disabled={disabled}
-              className={danger ? "danger-text" : undefined}
-              onClick={() => {
-                if (disabled) return;
-                setOpen(false);
-                run();
-              }}
-            >
-              {actionLabel}
-            </button>
-          ))}
+          {actions.map(
+            ({
+              label: actionLabel,
+              icon: actionIcon,
+              run,
+              danger,
+              disabled,
+            }) => (
+              <button
+                key={actionLabel}
+                type="button"
+                role="menuitem"
+                disabled={disabled}
+                className={danger ? "danger-text" : undefined}
+                onClick={() => {
+                  if (disabled) return;
+                  setOpen(false);
+                  run();
+                }}
+              >
+                {actionIcon && (
+                  <span className="action-menu-icon">{actionIcon}</span>
+                )}
+                <span>{actionLabel}</span>
+              </button>
+            ),
+          )}
         </div>
       )}
     </div>

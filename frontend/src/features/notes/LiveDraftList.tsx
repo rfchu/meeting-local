@@ -175,7 +175,9 @@ export default function LiveDraftList({
               本场翻译模型
               <select
                 value={profile}
-                disabled={!recordingId || selection.isPending || selectProfile.isPending}
+                disabled={
+                  !recordingId || selection.isPending || selectProfile.isPending
+                }
                 onChange={(event) => selectProfile.mutate(event.target.value)}
               >
                 {!profile && (
@@ -194,7 +196,9 @@ export default function LiveDraftList({
               </select>
             </label>
             {!profiles.length && onConfigureModels && (
-              <button className="text-btn" onClick={onConfigureModels}>配置本地翻译模型</button>
+              <button className="text-btn" onClick={onConfigureModels}>
+                配置本地翻译模型
+              </button>
             )}
             {(selectProfile.error || selection.error) && (
               <small role="alert">

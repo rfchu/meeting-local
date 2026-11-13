@@ -1,309 +1,305 @@
 # 任务清单与进度跟踪 (Todo)
 
-**实施计划参考**：[`tasks/plan.md`](file:///Users/crf/Works/meeting-local/tasks/plan.md)  
-**规格文档**：[`docs/specs/PRD-foresight-in-meeting-copilot.md`](file:///Users/crf/Works/meeting-local/docs/specs/PRD-foresight-in-meeting-copilot.md)
+**实施计划**：[`tasks/plan.md`](plan.md)  
+**规格地图**：[`docs/specs/MAP-ui-architecture-redesign.md`](../docs/specs/MAP-ui-architecture-redesign.md)
 
 ---
 
-## 阶段 1：端侧速记扩写引擎 (Shorthand Engine)
+## 阶段 1：设计系统与样式基座 (`design-tokens`)
 
-### Task 1.1: 数据模型与速记存储适配
-**Description:** 在现有 `meeting_notes` 表结构与 `RecordingStore` 中扩展速记字段，增加 `raw_text`、`synthesized_text`、`anchor_start`、`anchor_end`、`speaker_hint` 和 `status`（`raw` / `synthesizing` / `ready` / `failed`），保证纯文本笔记即时落盘与后续增量扩写更新。
+### Task 1.1: 建立核心 Design Tokens 与排版/控件基准收口
+**Description:** 新建 `frontend/src/styles/tokens.css` 并在 `main.tsx` 最顶部引入，确立表面色、语义状态色、5 级字阶（≥12px）、4 级圆角（`6px/8px/12px/9999px`）、3 档控件高度（`28px/34px/40px`）与统一 `z-index` 层级，收口 `style.css` 基础按钮/输入/标签的离散圆角与微字号，降低嵌套边框视觉噪音。
 
 **Acceptance criteria:**
-- [x] 扩展会议笔记存储模式，向下兼容现有笔记数据结构。
-- [x] 保存普通速记时，`status='raw'` 且 `raw_text` 立即安全落盘，返回对应的 `note_id` 与精确时间戳。
-- [x] 支持按 `note_id` 更新扩写内容与锚定音频区间。
+- [x] `frontend/src/styles/tokens.css` 定义完整色彩、圆角、字阶、高度与层级变量并在 `main.tsx` 首行引入。
+- [x] 全站常规按钮、输入框、选择器圆角收敛至规范集（消除 `0px/4px` 等杂散圆角），业务文本与标签字号 `≥ 12px`（品牌微标除外）。
+- [x] 基础构建与类型检查通过。
 
 **Verification:**
-- [x] Tests pass: `PYTHONPATH=. .venv/bin/pytest -q tests/test_shorthand_storage.py`
-- [x] Manual check: 在 SQLite 中直接插入带扩展字段的速记数据，读取完整无损。
+- [ ] Tests pass: `npm --prefix frontend run typecheck && npm --prefix frontend run test:stream`
+- [ ] Build succeeds: `npm --prefix frontend run build -- --outDir /private/tmp/tingji-ui-build --emptyOutDir`
+- [ ] Manual check: CDP 采样 `borderRadius` 与 `fontSize` 确认杂散值清零
 
 **Dependencies:** None  
 **Files likely touched:**
-- `app/db.py`
-- `app/notes.py`
-- `app/recordings.py`
-- `tests/test_shorthand_storage.py` (新增)
+- `frontend/src/styles/tokens.css` (新增)
+- `frontend/src/main.tsx`
+- `frontend/src/style.css`
 
-**Estimated scope:** S (2–3 files)
+**Estimated scope:** S (3 files)
 
 ---
 
-### Task 1.2: 上下文对齐与端侧小模型扩写服务
-**Description:** 创建 `app/shorthand.py` 服务，根据速记打点时间戳 `T` 自动拉取前后窗口 $[T - 30s, T + 10s]$ 的实时转写记录（包含发言人与音轨），构造严格输出 JSON 的微型扩写 Prompt，通过本地 LLM Provider 进行异步扩写，提取结构化笔记与发言人引用。
+### Task 1.2: 构建本地单色线性 SVG 图标库并替换主工作区 Emoji
+**Description:** 新建 `frontend/src/styles/icons.tsx` 导出统一 `16px/18px`（1.5px 描边）本地 React SVG 图标组件；替换 `Sidebar.tsx`、`App.tsx`、`Workflow.tsx` 与 `TranscriptView.tsx` 中充当功能图标的彩色 Emoji（`🔍 ☑ 📁 📋 📌 💡 📄 🌐 🛠️`）及部分生硬符号，保证 100% 离线可用。
 
 **Acceptance criteria:**
-- [x] 准确检索对应时间段的双轨转写片段，若录音刚开始不足 30 秒则自动截取从头开始。
-- [x] 扩写输出结构符合格式契约（包含 `summary`、`details`、`speakers`、`evidence_quote`）。
-- [x] 当本地模型推理超时（> 3 秒）或显存争抢时，自动降级保留 `raw_text` 并标记 `status='failed'`，绝不抛出未捕获异常。
+- [x] `icons.tsx` 提供本地内联 SVG 组件，零外部 URL 引用。
+- [x] 侧边栏导航、工作流提示条、备会/速记触发器、精细校对工具条不再使用彩色系统 Emoji。
+- [x] `ActionMenu` 与现有按钮的可访问标签 `aria-label` 与文本提示完整保留。
 
 **Verification:**
-- [x] Tests pass: `PYTHONPATH=. .venv/bin/pytest -q tests/test_shorthand_synthesizer.py`
-- [x] Manual check: 模拟一组转写片段与碎词输入（如 `db RC 压测周五`），校验扩写条目的准确性。
+- [ ] Tests pass: `npm --prefix frontend run typecheck && npm --prefix frontend run format:check`
+- [ ] Build succeeds: `npm --prefix frontend run build -- --outDir /private/tmp/tingji-ui-build --emptyOutDir`
+- [ ] Manual check: 确认静态产物无任何外部请求
 
 **Dependencies:** Task 1.1  
 **Files likely touched:**
-- `app/shorthand.py` (新增)
-- `tests/test_shorthand_synthesizer.py` (新增)
+- `frontend/src/styles/icons.tsx` (新增)
+- `frontend/src/components/Sidebar.tsx`
+- `frontend/src/components/Workflow.tsx`
+- `frontend/src/features/transcript/TranscriptView.tsx`
+- `frontend/src/App.tsx`
 
-**Estimated scope:** M (2–3 files)
+**Estimated scope:** M (5 files)
 
 ---
 
-### Task 1.3: 速记 HTTP API 与实时 SSE 事件推送
-**Description:** 在后端暴露 `/api/recordings/{rid}/notes/shorthand` 接口（支持 `mode='raw'` 与 `mode='synthesize'`），并通过现有的 `live_session` SSE 广播通道（或独立事件流）向前端推送 `note.created` 与 `note.synthesized` 事件。
+### Task 1.3: 替换运行管理与会前准备页功能 Emoji
+**Description:** 将 `RuntimeManagement.tsx`、`RuntimeOverviewPage.tsx` 与 `RecordingSetupView.tsx` 中的 3D/彩色 Emoji（`📊 ⏳ 🛡️ 🧠 🎛️ 🔍 ⚙️ 🎙️ ⚡ ☕ 📝 🤖`）统一切换为 `icons.tsx` 单色线性图标，对齐整体专业视觉语言。
 
 **Acceptance criteria:**
-- [x] `POST /api/recordings/{rid}/notes/shorthand` 接收 `text` 与可选的 `synthesize=true` 标志。
-- [x] 若 `synthesize=false`，接口在 50ms 内返回已持久化的 `note_id`。
-- [x] 若 `synthesize=true`，后台异步派发扩写任务，完成后通过 SSE 实时向客户端广播新生成的扩写成果。
+- [x] 控制中心左侧导航与运行总览指标卡采用统一线性 SVG 图标。
+- [x] 会前准备与就绪舱三大配置区块标题采用统一线性 SVG 图标。
+- [x] 页面交互与样式在 `1440×813` 下居中对齐、无图标挤压。
 
 **Verification:**
-- [x] Tests pass: `PYTHONPATH=. .venv/bin/pytest -q tests/test_shorthand_routes.py`
-- [x] Build succeeds: `PYTHONPATH=. .venv/bin/pytest -q`
+- [ ] Tests pass: `npm --prefix frontend run typecheck && npm --prefix frontend run test:stream`
+- [ ] Build succeeds: `npm --prefix frontend run build -- --outDir /private/tmp/tingji-ui-build --emptyOutDir`
+- [ ] Manual check: 检查运行总览与准备页图标渲染
 
-**Dependencies:** Task 1.1, Task 1.2  
+**Dependencies:** Task 1.2  
 **Files likely touched:**
-- `app/routes/copilot.py` (新增)
-- `app/live_session.py`
-- `app/main.py`
-- `tests/test_shorthand_routes.py` (新增)
+- `frontend/src/features/management/RuntimeManagement.tsx`
+- `frontend/src/features/management/RuntimeOverviewPage.tsx`
+- `frontend/src/features/notes/RecordingSetupView.tsx`
 
-**Estimated scope:** S (3–4 files)
-
----
-
-## 检查点 1: 后端端侧速记引擎验证
-- [x] 所有新增速记与上下文对齐单测全部通过 (11 passed)。
-- [x] 原有 919 个自动化测试 100% 保持绿色通过，无回归 (930 passed)。
-- [x] 验证模拟速记输入到落盘与 SSE 推送端到端畅通。
+**Estimated scope:** S (3 files)
 
 ---
 
-## 阶段 2：原生伴随轻岛 (Interactive Companion Island)
+### 检查点 1：批次 1（`design-tokens`）实机验收
+- [x] 执行全量静态与宿主验证：`npm --prefix frontend run typecheck && npm --prefix frontend run format:check && npm --prefix frontend run test:stream && bash scripts/test_host.sh`
+- [x] 通过 Headless Chrome CDP 采集核心界面截图与 DOM 指标，核对 `DS-01` ~ `DS-04`
+- [x] **与用户截图验收确认后再进入阶段 2**
 
-### Task 2.1: 原生全局热键 `⌃ + ⌥ + N` 与轻岛悬浮窗
-**Description:** 改造 `native/Host/CompanionController.swift`，通过 AppKit 将其转变为非激活悬浮小岛（`NSPanel`，`floating` 层级，隐藏标准标题栏与红绿灯），并利用 macOS 全局快捷键监视机制注册 `⌃ + ⌥ + N` 快捷键，实现秒级平滑展开与收起。
+---
+
+## 阶段 2：统一应用外壳与路由状态机 (`app-shell`)
+
+### Task 2.1: 抽取互斥顶层路由状态机 `useAppShell` 及其单元测试
+**Description:** 新建 `frontend/src/shell/useAppShell.ts` 实现互斥 `ShellRoute`（`meeting` | `library` | `followups` | `management` | `recording`）与互斥 `TransientModal`，内置 `#management/tasks`、`#management/recovery` 与 `#companion-recording=*` Hash 深链解析，及「录音进行中锁定切页」逻辑；编写纯 Node 单元测试并在 `App.tsx` 接入该状态机替代分散布尔开关。
 
 **Acceptance criteria:**
-- [x] 在系统任意窗口（全屏 Zoom、浏览器、桌面）按下 `⌃ + ⌥ + N`，小岛在屏幕右上角平滑滑出。
-- [x] 呼出时不夺取前台其他全屏软件的活动焦点（Non-activating）。
-- [x] 再次按下 `⌃ + ⌥ + N` 或轻按 `Esc`（当输入框为空时）平滑收起。
+- [x] 任意切换 `ShellRoute` 自动清零当前打开的 `TransientModal`；打开新弹窗自动替换旧弹窗，互斥保证 ≤ 1 个弹窗。
+- [x] 完整支持 `#management/tasks`、`#management/recovery`、`#companion-recording=<32hex>` 与 `browserWorkspace` 约束。
+- [x] `frontend/tests/appShell.test.mjs` 覆盖所有状态转换、录音锁态与深链场景并全绿。
 
 **Verification:**
-- [x] Build succeeds: `bash scripts/build_host.sh`
-- [x] Manual check: 在 macOS 桌面按下 `Control + Option + N` 测试小岛呼出与收起动效。
+- [x] Tests pass: `npm --prefix frontend run typecheck && node --test frontend/tests/appShell.test.mjs`（注：`test:stream` 仅 `tests/meetingView.test.mjs` 存在 3 项既定历史失败，其余 187/190 全绿）
+- [x] Build succeeds: `npm --prefix frontend run build`
+- [x] Manual check: 验证深链 URL 直达与多弹窗切换互斥
 
 **Dependencies:** Checkpoint 1  
 **Files likely touched:**
-- `native/Host/CompanionController.swift`
-- `native/Host/AppDelegate.swift`
-- `native/Host/HostPreferences.swift`
+- `frontend/src/shell/shellState.ts` (新增)
+- `frontend/src/shell/useAppShell.ts` (新增)
+- `frontend/tests/appShell.test.mjs` (新增)
+- `frontend/src/App.tsx`
 
 **Estimated scope:** M (3 files)
 
 ---
 
-### Task 2.2: 轻岛极简输入框与 Enter / ⌘+Enter 交互桥接
-**Description:** 在伴随轻岛视图中嵌入极简原生输入行，接管键盘输入事件：普通 `Enter` 触发普通速记落盘；`⌘ + Enter` 触发智能扩写；通过本地回环 HTTP 客户端异步提交至后端。
+### Task 2.2: 将「会议资料库」与「跨会议跟进」升格为主画布全幅视图
+**Description:** 解除 `MeetingLibrary.tsx` 与 `FollowupsDialog.tsx` 对 `<Modal>` 遮罩弹窗的依赖，改为渲染在 `<main>` 主工作画布内的全幅视图（支持页面标题头与筛选区铺开）；保留左侧持久化 `Sidebar` 并高亮当前选中导航项，彻底消灭双弹窗叠罗汉。
 
 **Acceptance criteria:**
-- [x] 单行输入框获得光标焦点，输入流畅不丢字。
-- [x] 按 `Enter`：输入框立即清空并提供微震动/微高亮反馈，后台发送 `mode=raw` 请求。
-- [x] 按 `⌘ + Enter`：输入框清空，条目进入右侧/下方流并显示轻量 `[扩写中...]` 骨架占位，扩写返回后平滑展开。
+- [x] 「会议资料库」与「跨会议跟进」在主工作区全幅展示，无半透明遮罩与弹窗居中限制。
+- [x] 侧边栏「会议资料库」「跨会议跟进」与「最近会议」之间可零阻碍自由互切，打开任意会议直接进入详情工作区。
+- [x] 原有归类、筛选、归档、批量删除、待办状态勾选与保存逻辑完整无损。
 
 **Verification:**
-- [x] Build succeeds: `bash scripts/build_host.sh`
-- [x] Manual check: 在原生轻岛中分别用 `Enter` 和 `⌘ + Enter` 输入两条测试笔记，核验数据库中落盘内容。
-
-**Dependencies:** Task 2.1, Task 1.3  
-**Files likely touched:**
-- `native/Host/CompanionController.swift`
-- `native/Host/ServiceClient.swift`
-
-**Estimated scope:** M (2–3 files)
-
----
-
-### Task 2.3: 动态微型双轨声波指示与状态胶囊
-**Description:** 在轻岛头部整合微型双轨实时音量指示器（麦克风绿波、系统音频蓝波）与状态指示胶囊（录制时长、当前发言人或最新识别文字摘要），让用户无需切窗即可感知录音与识别状态。
-
-**Acceptance criteria:**
-- [x] 双轨有声时实时绘制平滑波形条，静音时柔和收拢。
-- [x] 状态指示显示录制时长与 ASR 状态点（就绪、识别中、轻度延迟）。
-- [x] 资源占用极低（UI 渲染刷新 CPU 增量 $\le 1.5\%$）。
-
-**Verification:**
-- [x] Build succeeds: `bash scripts/build_host.sh`
-- [x] Manual check: 播放本地音乐并对着麦克风说话，观察伴随轻岛声波的动态分轨响应。
+- [x] Tests pass: `npm --prefix frontend run typecheck && node --test frontend/tests/appShell.test.mjs`
+- [x] Build succeeds: `npm --prefix frontend run build`
+- [x] Manual check: 资料库直切跨会议跟进再按 `⌘K` 打开搜索，确认同时 `.modal-backdrop <= 1`
 
 **Dependencies:** Task 2.1  
 **Files likely touched:**
-- `native/Host/CompanionController.swift`
-
-**Estimated scope:** S (1–2 files)
-
----
-
-## 检查点 2: 原生交互式伴随轻岛闭环
-- [x] 原生宿主正常编译并通过构建。
-- [x] 外部视频通话中随时按 `⌃ + ⌥ + N` 呼出轻岛，敲入笔记立即记录并能按需扩充。
-- [x] 原生伴随窗与主程序录音状态完全同步。
-
----
-
-## 阶段 3：前瞻预测感知与决策捕获 (Speculative Intent)
-
-### Task 3.1: 会中流式语义意图探测器
-**Description:** 创建 `app/speculative_intent.py`，作为 ASR 实时流的旁路订阅者，以滑动窗口（如最近 45 秒内新增的确认分段）检测高置信度共识、决议（Decisions）与承诺待办（Action Items），生成结构化候选对象。
-
-**Acceptance criteria:**
-- [x] 过滤低信息量闲聊，仅对包含明确动作主体、时间边界或共识动词（如“确定”、“按这个定”、“我周五前发”）的句子进行触发。
-- [x] 意图探测运行在独立的后台线程/任务中，执行耗时设硬性上限（$\le 1.2s$）。
-- [x] 产生候选时打上唯一 `candidate_id` 与置信度分数，避免相邻窗口重复推荐同一决议。
-
-**Verification:**
-- [x] Tests pass: `PYTHONPATH=. .venv/bin/pytest -q tests/test_speculative_intent.py`
-- [x] Manual check: 注入标准会议用例对话流，检验决策候选与待办识别的准确度与去重逻辑。
-
-**Dependencies:** Checkpoint 1  
-**Files likely touched:**
-- `app/speculative_intent.py` (新增)
-- `app/live_session.py`
-- `tests/test_speculative_intent.py` (新增)
-
-**Estimated scope:** M (3 files)
-
----
-
-### Task 3.2: 意图前瞻候选与一键采纳 API
-**Description:** 在后端提供前瞻候选查询与采纳接口：`POST /api/recordings/{rid}/candidates/{cid}/accept`（将候选直接提升为正式会议待办/决策）与 `/reject`（忽略该候选），并通过 SSE 将新候选广播给伴随窗与前端。
-
-**Acceptance criteria:**
-- [x] 客户端可实时接收到 `candidate.detected` 事件。
-- [x] 采纳接口原子性将条目写入会议待办/决策表，并返回最新列表。
-- [x] 忽略接口将该条目记入会话抑制列表，本场不再弹出相同内容。
-
-**Verification:**
-- [x] Tests pass: `PYTHONPATH=. .venv/bin/pytest -q tests/test_copilot_candidates.py`
-
-**Dependencies:** Task 3.1  
-**Files likely touched:**
-- `app/routes/copilot.py`
-- `app/task_management.py`
-- `tests/test_copilot_candidates.py` (新增)
-
-**Estimated scope:** S (2–3 files)
-
----
-
-## 检查点 3: 前瞻预测感知流验证
-- [x] 意图探测与候选采纳单测全量通过。
-- [x] 验证后台实时流在识别到“这个我周五交”后，能在 2 秒内发出待办候选事件。
-- [x] 919+ 既有测试保持全绿。
-
----
-
-## 阶段 4：前端三栏流式主时间线重构 (Unified Timeline UI)
-
-### Task 4.1: 解耦 App.tsx 弹窗与播放器状态
-**Description:** 治理历史技术债务：将 `App.tsx` 中的全局弹窗（`RenameDialog`, `SearchDialog`, `FollowupsDialog`, `TermDialog`, `SpeakerReviewDialog` 等）提取至 `frontend/src/components/AppModals.tsx`，将播放器时间更新隔离至 `useMeetingPlayback`，大幅压缩 `App.tsx` 行数与重渲染范围。
-
-**Acceptance criteria:**
-- [x] 抽离弹窗组件为 `AppModals.tsx` 并完成解耦重构。
-- [x] 弹窗展现、关闭及播放器跳转功能 100% 保持原有行为一致。
-- [x] 播放器播放时不再引起全应用无谓的大面积重新渲染。
-
-**Verification:**
-- [x] Typecheck: `cd frontend && npm run typecheck`
-- [x] Build succeeds: `cd frontend && npm run build`
-- [x] Manual check: 打开主界面核对各弹窗与播放控制，确保所有现有功能无缺失。
-
-**Dependencies:** Checkpoint 1  
-**Files likely touched:**
+- `frontend/src/features/meeting/MeetingLibrary.tsx`
+- `frontend/src/features/meeting/FollowupsDialog.tsx`
 - `frontend/src/App.tsx`
-- `frontend/src/components/AppModals.tsx` (新增)
-- `frontend/src/hooks/useMeetingPlayback.ts` (新增)
-
-**Estimated scope:** M (3–4 files)
-
----
-
-### Task 4.2: 沉浸式三栏时间线视窗组件开发
-**Description:** 在 `frontend/src/features/copilot/` 中开发 `UnifiedTimeline.tsx`，形成左侧导航/元信息、中间连续转写与速记流、右侧实时萃取看板的三栏连续视窗，彻底取代反复在“实时文字/简记/概览”间 Tab 跳切的操作方式。
-
-**Acceptance criteria:**
-- [x] 中间栏将双轨文字、用户原始笔记、AI 扩写卡片按时间戳融合在单条时间线上，支持平滑虚拟滚动。
-- [x] 右侧看板直观聚合“已确认决策”、“待办事项清单”及“速记要点”。
-- [x] 点击右侧任意条目，中间时间线自动平滑滚动并高亮对应的语音转写段。
-
-**Verification:**
-- [x] Typecheck: `cd frontend && npm run typecheck`
-- [x] Build succeeds: `cd frontend && npm run build`
-- [x] Manual check: 加载一段包含转写与笔记的录音，验证三栏时间线的数据展现与联动跳转。
-
-**Dependencies:** Task 4.1, Task 1.3, Task 3.2  
-**Files likely touched:**
-- `frontend/src/features/copilot/UnifiedTimeline.tsx` (新增)
-- `frontend/src/features/copilot/TimelineItem.tsx` (新增)
-- `frontend/src/features/copilot/ExtractedSidebar.tsx` (新增)
-- `frontend/src/App.tsx`
+- `frontend/src/style.css`
 
 **Estimated scope:** M (4 files)
 
 ---
 
-### Task 4.3: 快捷键联动 (Tab 采纳 / Esc 忽略) 与端到端回归验收
-**Description:** 在主工作台及轻岛视窗中实现前瞻预测卡片的浮层动效与无障碍键盘快捷键操作：当有前瞻决策/待办浮出时，按 `Tab` 即可直接采纳沉淀，按 `Esc` 忽略，完成整个 Foresight Copilot 闭环验证。
+### Task 2.3: 统一「运行与模型管理」及「会前准备」壳层导航与播放器边界
+**Description:** 将 `RuntimeManagement` 嵌入统一主外壳右侧画布（保留左侧全局导航或同步高亮控制中心，统一入口文案为「运行与模型管理」）；让「会前准备」未开录前可保留侧边栏导航、开始实时录音后进入沉浸锁定态；收紧底栏 `Player` 渲染条件，仅在存在源音频的 `meeting` 路由下贴底显示。
 
 **Acceptance criteria:**
-- [x] 前瞻胶囊在时间线底部以微动效浮现，支持 `Tab` 键一键采纳、`Esc` 键快捷忽略。
-- [x] 采纳后即刻在右侧看板中生成已确认条目，并反向在时间线上标记锚点。
-- [x] 运行完整的端到端回归测试套件，验证项目整体稳定性。
+- [x] 侧边栏、分析页配置链接与会前准备页底部均统一显示「运行与模型管理」。
+- [x] 在「资料库」「跨会议跟进」「运行与模型管理」页面底部不渲染 `Player` 播放条，切回有音频的会议后立即恢复。
+- [x] 会前准备态允许从侧边栏返回任意历史会议；正式进入实时录音流态后锁定防误触跳转。
 
 **Verification:**
-- [x] Backend tests: `PYTHONPATH=. .venv/bin/pytest -q` (940 passed, 100% 全绿)
-- [x] Frontend build & check: `cd frontend && npm run typecheck && npm run build` (通过)
-- [x] Host test: `bash scripts/test_host.sh` (99 passed)
+- [x] Tests pass: `npm --prefix frontend run typecheck && node --test frontend/tests/appShell.test.mjs && bash scripts/test_host.sh`
+- [x] Build succeeds: `npm --prefix frontend run build`
+- [x] Manual check: 分别验证运行管理页、资料库页与会前准备页的底部及左侧导航行为
 
-**Dependencies:** Task 4.2  
+**Dependencies:** Task 2.2  
 **Files likely touched:**
-- `frontend/src/features/copilot/SpeculativeChips.tsx` (新增)
-- `frontend/src/features/copilot/UnifiedTimeline.tsx`
-- `tests/test_copilot_e2e.py` (新增)
+- `frontend/src/components/Sidebar.tsx`
+- `frontend/src/components/AppModals.tsx`
+- `frontend/src/features/management/RuntimeManagement.tsx`
+- `frontend/src/features/notes/RecordingSetupView.tsx`
+- `frontend/src/App.tsx`
 
-**Estimated scope:** M (3–4 files)
-
----
-
-## 最终检查点: 全流程闭环验收
-- [x] 原生伴随轻岛按 `⌃ + ⌥ + N` 瞬间唤出，输入框普通回车存纯文本，`⌘ + Enter` 智能扩充。
-- [x] 会中前瞻预测卡随语音流平滑浮现，按 `Tab` 即可一键沉淀为待办/决策。
-- [x] 主工作台三栏流式时间线阅读畅快，彻底告别频繁 Tab 切换。
-- [x] 后端原有 919 个单测以及所有新增测试 100% 通过（共 940 个通过），端侧离线与隐私铁律保持完好。
+**Estimated scope:** M (5 files)
 
 ---
 
-## 阶段 5：产品化升级与架构技术债治理 (Productization & Technical Hardening)
+### 检查点 2：批次 2（`app-shell`）实机验收
+- [x] 执行校验：`npm --prefix frontend run typecheck && npm --prefix frontend run format:check && node --test frontend/tests/appShell.test.mjs && bash scripts/test_host.sh`（`test:stream` 187/190 通过，3 项为历史既定 `tests/meetingView.test.mjs` 失败）
+- [x] 通过 Headless Chrome CDP 实拍资料库、跟进、运行管理及互切路径截图，验证 `SHELL-01` ~ `SHELL-05`
+- [x] **与用户截图验收确认后再进入阶段 3**
 
-### Task 5.1: 消除技术债务与测试阻塞 (Step 1)
-- [x] 修复 `tests/test_module_boundaries.py` 中的 OpenAPI schema 契约哈希校验（适配 `NativeRecordingInput.microphone_only`）。
-- [x] 在 `native/AudioCapture/main.swift` 中为纯麦克风路径补齐设备中断（`AVCaptureSessionWasInterruptedNotification`）与拔出监听。
-- [x] 在 `app/native_capture.py` 中统一收敛 `native_tracks(session)`，消除内联特判。
-- [x] 验证：全量 1018 个后端单测 100% 绿色通过，原生宿主测试全部通过。
-- [x] 提交：Git commit Step 1。
+---
 
-### Task 5.2: 录音配置场景化降噪与移除多语言硬编码 (Step 2)
-- [x] 重构 `RecordingSettingsDialog.tsx`：将技术性音源选择收敛为场景化卡片（“线上会议” vs “现场会议”）。
-- [x] 将底层技术名词（“AEC3”、“常驻进程模型释放”等）收敛进高级折叠面板，普通视图保持极致清爽。
-- [x] 清理全局针对特定语种的过渡性硬编码（移除 `japaneseBeta` 横幅、特化导出按钮等），统一纳入标准语言流。
-- [x] 验证：`cd frontend && npm run typecheck && npm run build` 成功。
-- [x] 提交：Git commit Step 2。
+## 阶段 3：会议工作区头部瘦身与工作流收敛 (`meeting-header-workflow`)
 
-### Task 5.3: 导航与时间线视窗归一与浏览器端体验完善 (Step 3)
-- [x] 将 Foresight 三栏统一时间线 (`UnifiedTimeline`) 设为已结束会议的默认呈现视图。
-- [x] 收敛顶部过重的审核漏斗（`Workflow`），将【深入分析】与【会议成果】提升为平级一级导航，消除下拉菜单暗藏入口。
-- [x] 浏览器工作台体验闭环：会话过期提供友好卡片引导，并提供原生客户端唤醒入口。
-- [x] 最终全量验收与回归。
-- [x] 提交：Git commit Step 3。
+### Task 3.1: 实现紧凑双行会议头与工作流 Popover 浮层化
+**Description:** 精简 `App.tsx` 会议详情顶部（取消单独占行的面包屑，日期并入副信息行），重组为「标题+操作行」与「元数据+工作流胶囊行」两层；重构 `Workflow.tsx`，将常驻占高的双层 `.workflow` 提示盒压缩为行内胶囊触发器，点击 `交接与核对 · X/Y` 或 `识别覆盖/录音异常` 时以轻浮层展开完整核对清单与 `RecordingReceipt`。
+
+**Acceptance criteria:**
+- [x] `1440×813` 与 `1180×800` 下 `#meeting-workspace` 以上全部头部与工作流条带总高度 `≤ 160px`（CDP 实测 `wsTop: 106px`，`headerHeight: 76px`）。
+- [x] 核心内容区首屏可视占比 `≥ 72%`（CDP 实测 `shareFromWsTop: 0.87 / 0.868`，扣除 `81px` 播放器后仍达 `0.77 / 0.766`）。
+- [x] 工作流核对弹出浮层包含全部人工核对按钮、定位跳转与关闭复原功能，关闭后不占用垂直高度（CDP 实测 `POPOVER_SHIFT_PX: 0`，`POPOVER_CLOSED: true`）。
+
+**Verification:**
+- [x] Tests pass: `npm --prefix frontend run typecheck` 通过；目标模块测试 `30/30` 通过（`test:stream` 188/191 通过，仅 `tests/meetingView.test.mjs` 存在 3 条历史默认页签断言失败）
+- [x] Build succeeds: `npm --prefix frontend run build` 通过（已构建至 `app/static/assets/`）
+- [x] Manual check: CDP `getBoundingClientRect()` 实测头部高度 ≤ 160px 与 Popover 交互
+
+**Dependencies:** Checkpoint 2  
+**Files likely touched:**
+- `frontend/src/App.tsx`
+- `frontend/src/components/Workflow.tsx`
+- `frontend/src/style.css`
+
+**Estimated scope:** M (3 files)
+
+---
+
+### Task 3.2: 合并重复的来源变更（Stale）黄色警告条
+**Description:** 梳理 `MinutesView.tsx` 与 `AnalysisView.tsx` 中围绕「来源变更」与「文稿版本落后（v1 vs v2）」的重复黄色告警逻辑，抽取合并规则将多条高度重叠提示整合为单条紧凑警告行，并内联一键 `[用 vN 重新生成]` 操作按钮，同时补充/更新工作流单测验证。
+
+**Acceptance criteria:**
+- [x] 纪要或研判落后于当前文稿版本时，首屏最多展示 **1 条**紧凑黄色提示条，包含差异说明与直达重生成按钮（CDP 实测 `智能纪要` 与 `深度研判` 均为 `noticeCount: 1`，按钮文案 `用 v2 重新生成`）。
+- [x] 不丢失旧版只读回看与版本对比功能入口（`版本历史与对比`、取消/失败重试及只读查看仍完整保留）。
+- [x] 现有与新增单元测试全部通过（`minutesWorkflow.test.mjs` 4/4 通过，含 `resolveMinutesStaleNotice` 与 `resolveAnalysisStaleNotice` 合并规则测试）。
+
+**Verification:**
+- [x] Tests pass: `npm --prefix frontend run typecheck` 通过；`minutesWorkflow.test.mjs` 4/4 通过（全量 `test:stream` 188/191，3 条为历史 `meetingView.test.mjs` 失败）
+- [x] Build succeeds: `npm --prefix frontend run build` 通过（已构建至 `app/static/assets/`）
+- [x] Manual check: 检查带 stale 状态会议的「智能纪要」首屏正文直接露出
+
+**Dependencies:** Task 3.1  
+**Files likely touched:**
+- `frontend/src/features/minutes/MinutesView.tsx`
+- `frontend/src/features/analysis/AnalysisView.tsx`
+- `frontend/tests/minutesWorkflow.test.mjs`
+- `frontend/src/style.css`
+
+**Estimated scope:** S (4 files)
+
+---
+
+### 检查点 3：批次 3（`meeting-header-workflow`）实机验收
+- [x] 执行校验：`npm --prefix frontend run typecheck && npm --prefix frontend run format:check` 全部通过；目标模块单测 `30/30` 通过（`test:stream` 188/191，仅 3 条历史 `meetingView.test.mjs` 失败）；`bash scripts/test_host.sh` `105/105` 通过
+- [x] 通过 Headless Chrome CDP 实测头部像素高度、视口占比及智能纪要/深度研判首屏截图，验证 `HDR-01` ~ `HDR-04`
+- [x] **与用户截图验收确认后再进入阶段 4**
+
+---
+
+## 阶段 4：子工作区排版与状态体验精修 (`workspace-views`)
+
+### Task 4.1: 精修「智能纪要」分栏开关内联与「深度研判」对齐及完成态收敛
+**Description:** 调整 `App.tsx`（`reviewSourceOpen` 默认 `false` 突出主文档，消除单独成行的 `[收起原文]` 空白行，将分栏切换按键整合入 `MinutesView.tsx` 顶栏工具区，收紧左右分栏多层套框）；修复 `AnalysisView.tsx` 副标题左贴边无内边距缺陷，并在 `job.state === "completed"` 时隐藏 `#analysisJob` 静态满格进度盒。
+
+**Acceptance criteria:**
+- [x] 「智能纪要」首屏默认聚焦纪要文档正文，点击工具区 `[对照原文]` 可平滑展开/收起左侧原文与回听分栏，左右顶栏齐平，嵌套边框 `≤ 2` 层（CDP 实测默认 `sourcePaneOpen: false`，`hasLegacyToggle: false`，分栏展开后 `topAlignedDiff: 0`）。
+- [x] 「深度研判」副标题与工具栏左侧像素级对齐（CDP 实测 `alignDiffPx: 0`），分析完成态不残留静态进度条占用高度（`hasAnalysisJobCard: false`）。
+
+**Verification:**
+- [x] Tests pass: `npm --prefix frontend run typecheck` 通过；定向单测 `31/31` 通过（全量 `test:stream` 189/192，仅 `tests/meetingView.test.mjs` 存在 3 条历史默认页签断言失败）
+- [x] Build succeeds: `npm --prefix frontend run build` 通过（已构建至 `app/static/`）
+- [x] Manual check: CDP 对比智能纪要单/双栏与深度研判完成态截图
+
+**Dependencies:** Checkpoint 3  
+**Files likely touched:**
+- `frontend/src/App.tsx`
+- `frontend/src/features/minutes/MinutesView.tsx`
+- `frontend/src/features/analysis/AnalysisView.tsx`
+- `frontend/src/style.css`
+
+**Estimated scope:** M (4 files)
+
+---
+
+### Task 4.2: 统一「精细校对」版本选择控件规格并压缩辅助信息栏
+**Description:** 在 `TranscriptView.tsx` 中用规格一致的 `ActionMenu` 或自定义触发器替换原生 `版本历史 (vN)` `<select>`，使其与旁边的 `批量校对工具` 保持一致的 `34px` 高度与 `8px` 圆角；将 `已启用大文稿流畅渲染` 提示合并精简为单行元信息，释放校对区垂直阅读空间。
+
+**Acceptance criteria:**
+- [x] 顶部 Pro Toolbar 中 `批量校对工具` 与 `版本历史` 按钮实测高度差 `≤ 1px`、圆角一致（CDP 实测 `34px` vs `34px`，`heightDiff: 0`，圆角同为 `8px`）。
+- [x] 保留所有历史版本切换、导出与大文稿虚拟渲染开关功能（合并至单行 `27px` 状态信息条 `共 362 个片段 · 已启用大文稿流畅渲染` + `展开全部 DOM (⌘F)`）。
+
+**Verification:**
+- [x] Tests pass: `npm --prefix frontend run typecheck` 通过；定向单测 `31/31` 通过
+- [x] Build succeeds: `npm --prefix frontend run build` 通过（已构建至 `app/static/`）
+- [x] Manual check: CDP 实测两个触发按钮 `getBoundingClientRect().height` 一致性
+
+**Dependencies:** Task 4.1  
+**Files likely touched:**
+- `frontend/src/features/transcript/TranscriptView.tsx`
+- `frontend/src/components/ActionMenu.tsx`
+- `frontend/src/style.css`
+
+**Estimated scope:** S (3 files)
+
+---
+
+### Task 4.3: 修复「会前准备」小屏截断与升级侧边栏列表语义状态点
+**Description:** 优化 `RecordingSetupView.tsx` 与 `recordingWorkbench.css` 的双栏容器弹性高度与区块间距，移除与主界重复的冗长底部静态状态条，确保 `1180×800` 及 `1440×813` 下右侧 `会后整理目标` 等表单控件零截断；在 `Sidebar.tsx` 为最近会议列表增加 `6px` 语义状态指示点（失败红色、处理中蓝色、待处理琥珀色）。
+
+**Acceptance criteria:**
+- [x] 在 `1180×800` 与 `1440×813` 视口下，「会前准备与就绪舱」所有配置控件及末尾 `会后整理目标` 完全可见，无底部裁剪（CDP 实测 `subBottom: 730px ≤ 800px / 813px`，`fitsWithoutPageScroll: true`；`900×600` 下 `rootOverflow: false` 且可滚动）。
+- [x] 侧边栏中 `failed`、`running` 会议条目具有鲜明语义状态视觉点（CDP 实测 `6×6` 语义圆点，新增 `appShell.test.mjs` 单测校验）。
+
+**Verification:**
+- [x] Tests pass: `npm --prefix frontend run typecheck` 通过；`appShell.test.mjs` 7/7 通过
+- [x] Build succeeds: `npm --prefix frontend run build` 通过（已构建至 `app/static/`）
+- [x] Manual check: CDP 多分辨率（`1440×813`、`1180×800`、`900×600`）快照检验零裁剪
+
+**Dependencies:** Task 4.1  
+**Files likely touched:**
+- `frontend/src/features/notes/RecordingSetupView.tsx`
+- `frontend/src/features/notes/recordingWorkbench.css`
+- `frontend/src/components/Sidebar.tsx`
+- `frontend/src/style.css`
+
+**Estimated scope:** M (4 files)
+
+---
+
+### 检查点 4：批次 4（`workspace-views`）终验与全量发布就绪
+- [x] 正式构建前端产物至 `app/static/`：`npm --prefix frontend run build`
+- [x] 执行全量回归验证：
+  - `npm --prefix frontend run typecheck`（通过）
+  - `npm --prefix frontend run format:check`（通过）
+  - `npm --prefix frontend run test:stream`（189/192 通过，仅 3 条 `tests/meetingView.test.mjs` 历史默认页签断言失败）
+  - `bash scripts/test_host.sh`（105/105 通过）
+  - `PYTHONPATH=. .venv/bin/python -m pytest tests/test_backups.py -q`（22/22 通过；直接 `.venv/bin/python -m pytest -q` 1029 passed，1 failed 为无 `PYTHONPATH=.` 导致的 `test_backups.py` `No module named 'app'`）
+- [x] 通过 Headless Chrome CDP 重跑全视图与多分辨率快照并检验 `VIEW-01` ~ `VIEW-05`
+- [x] **全部验收通过后提交并与用户汇报确认**

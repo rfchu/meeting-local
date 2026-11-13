@@ -138,10 +138,7 @@ export default function ChineseMeetingRecord({
       {record.isError && (
         <p role="alert" className="error">
           {(record.error as Error).message}{" "}
-          <button
-            className="text-btn"
-            onClick={() => void record.refetch()}
-          >
+          <button className="text-btn" onClick={() => void record.refetch()}>
             重试读取
           </button>
         </p>
@@ -156,8 +153,8 @@ export default function ChineseMeetingRecord({
       {data && counts && (
         <>
           <div className="bilingual-summary-badge">
-            中文原文 {counts.original} 段 · 译文 {counts.translated} 段 ·
-            待翻译 {counts.pending} 段 · 语言待确认 {counts.unknown} 段
+            中文原文 {counts.original} 段 · 译文 {counts.translated} 段 · 待翻译{" "}
+            {counts.pending} 段 · 语言待确认 {counts.unknown} 段
           </div>
           {pending.length > 0 && (
             <p role="status" className="bilingual-progress-status">
@@ -176,9 +173,7 @@ export default function ChineseMeetingRecord({
               className="primary btn-sm bilingual-continue-btn"
               onClick={() => onContinue(profile?.id || "")}
             >
-              {missing
-                ? "使用当前可用内容，继续整理纪要"
-                : "继续整理纪要"}
+              {missing ? "使用当前可用内容，继续整理纪要" : "继续整理纪要"}
             </button>
           )}
           <div className="bilingual-items-list">
@@ -216,8 +211,7 @@ export default function ChineseMeetingRecord({
                   status={
                     item.status === "unknown"
                       ? "语言待确认"
-                      : item.status === "pending" &&
-                          !errors[errorKey(item.id)]
+                      : item.status === "pending" && !errors[errorKey(item.id)]
                         ? nextId === item.id && !waiting
                           ? "翻译中"
                           : "待翻译"

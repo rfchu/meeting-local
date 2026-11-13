@@ -70,9 +70,11 @@ export function useLiveChinese(
           setEntries((old) => ({ ...old, [next]: { result } }));
       } catch (error) {
         if (controller.signal.aborted) return;
-        if (error instanceof APIError &&
+        if (
+          error instanceof APIError &&
           (error.code === "translation_busy" ||
-            error.code === "translation_profile_changed")) {
+            error.code === "translation_profile_changed")
+        ) {
           setBusy(true);
           timer = window.setTimeout(() => void run(), 2000);
           return;

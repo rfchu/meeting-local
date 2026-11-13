@@ -11,11 +11,11 @@
   flex-direction: column;
   gap: 6px;
   color: var(--muted);
-  font-size: 11px;
+  font-size: var(--text-xs);
 }
 .minutes-toolbar button,
 .minutes-toolbar select {
-  font-size: 11px;
+  font-size: var(--text-xs);
   padding: 8px;
 }
 .minutes-toolbar #minutesExport {
@@ -26,7 +26,7 @@
   align-items: center;
   gap: 6px;
   color: #687584;
-  font-size: 11px;
+  font-size: var(--text-xs);
 }
 .minutes-document {
   max-width: 820px;
@@ -36,20 +36,20 @@
 .minutes-style-badge {
   width: max-content;
   margin: 0 auto 8px;
-  padding: 4px 9px;
-  border-radius: 999px;
+  padding: 4px 10px;
+  border-radius: var(--radius-pill);
   background: #eef2ff;
   color: #365ce6;
-  font-size: 10px;
+  font-size: var(--text-xs);
   font-weight: 600;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.06em;
 }
 .minutes-document input,
 .minutes-document textarea {
   width: 100%;
   border: 1px solid transparent;
   background: transparent;
-  border-radius: 5px;
+  border-radius: var(--radius-sm);
   padding: 7px 8px;
   resize: vertical;
 }
@@ -77,7 +77,7 @@
   grid-template-columns: 62px 1fr;
   align-items: center;
   color: var(--muted);
-  font-size: 11px;
+  font-size: var(--text-xs);
 }
 .minutes-purpose {
   padding: 20px 0 2px;
@@ -109,7 +109,7 @@
 }
 .minutes-section-head button {
   padding: 5px 8px;
-  font-size: 10px;
+  font-size: var(--text-xs);
 }
 .minutes-item {
   padding: 10px 0;
@@ -125,36 +125,36 @@
   align-items: center;
 }
 .minutes-item-tools input {
-  font-size: 11px;
+  font-size: var(--text-xs);
   color: var(--muted);
 }
 .minutes-item-tools select {
-  font-size: 11px;
+  font-size: var(--text-xs);
   padding: 7px;
   border: 1px solid var(--line);
-  border-radius: 5px;
+  border-radius: var(--radius-sm);
   background: white;
 }
 .minutes-item-tools button {
   padding: 5px 8px;
-  font-size: 10px;
+  font-size: var(--text-xs);
   color: #a1424f;
 }
 .minutes-item .citations {
   padding: 2px 8px 0;
 }
 .minutes-save-state {
-  font-size: 11px;
+  font-size: var(--text-xs);
   color: var(--muted);
   padding: 0 8px 10px;
 }
 .minutes-empty {
-  font-size: 12px;
+  font-size: var(--text-xs);
   color: var(--muted);
   padding: 8px;
 }
 .minutes-reference-note {
-  font-size: 11px;
+  font-size: var(--text-xs);
   color: var(--muted);
   line-height: 1.7;
   margin-top: 22px;
@@ -163,7 +163,7 @@
   display: grid;
   align-items: stretch;
   border: 1px solid var(--line);
-  border-radius: 7px;
+  border-radius: var(--radius-md);
   overflow: hidden;
   background: white;
 }
@@ -185,7 +185,7 @@
   border-bottom: 1px solid var(--line);
   border-radius: 0 !important;
   padding: 8px !important;
-  font-size: 10px;
+  font-size: var(--text-xs);
   background: white;
 }
 .minutes-grid > *:nth-last-child(-n + 4) {
@@ -399,14 +399,14 @@ fieldset.minutes-document:disabled {
 }
 .minutes-diff-tag {
   display: block;
-  font-size: 10px;
+  font-size: var(--text-xs);
   font-weight: 600;
   margin-bottom: 4px;
   color: #526372;
 }
 .minutes-diff-row small {
   color: var(--muted);
-  font-size: 11px;
+  font-size: var(--text-xs);
 }
 .minutes-compare-footer {
   position: sticky;
@@ -615,7 +615,8 @@ fieldset.minutes-document:disabled {
 
 .minutes-document-actions {
   align-items: center;
-  padding-block: 8px;
+  padding: 10px 20px;
+  min-height: 52px;
 }
 .minutes-document-actions > span {
   margin-inline-end: auto;

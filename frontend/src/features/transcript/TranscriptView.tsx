@@ -11,6 +11,18 @@ import LiveCorrectionReview from "../notes/LiveCorrectionReview";
 import TranscriptList from "./TranscriptList";
 import SpeakerReviewDialog from "./SpeakerReviewDialog";
 import ChineseMeetingRecord from "../meeting/ChineseMeetingRecord";
+import {
+  IconBook,
+  IconClock,
+  IconEdit,
+  IconFileText,
+  IconGlobe,
+  IconScissors,
+  IconSearch,
+  IconSparkles,
+  IconUsers,
+  IconWrench,
+} from "../../styles/icons";
 
 interface Props {
   meeting: Meeting;
@@ -126,7 +138,9 @@ export default function TranscriptView({
   bilingualProfiles = [],
   onContinueBilingualMinutes,
 }: Props) {
-  const [viewMode, setViewMode] = useState<"original" | "bilingual">("original");
+  const [viewMode, setViewMode] = useState<"original" | "bilingual">(
+    "original",
+  );
   const [replaceBarOpen, setReplaceBarOpen] = useState(false);
   const [termsOpen, setTermsOpen] = useState(false);
   const [terms, setTerms] = useState<Term[]>([]);
@@ -168,7 +182,11 @@ export default function TranscriptView({
   const [search, setSearch] = useState(""),
     [speakerOpen, setSpeakerOpen] = useState(false),
     [compareOpen, setCompareOpen] = useState(false),
-    [replaceOpen, setReplaceOpen] = useState(false);
+    [replaceOpen, setReplaceOpen] = useState(false),
+    [fullDom, setFullDom] = useState(false);
+  useEffect(() => {
+    setFullDom(false);
+  }, [meeting.id]);
   const [reviewOpen, setReviewOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [speakerFrom, setSpeakerFrom] = useState(""),
@@ -291,7 +309,9 @@ export default function TranscriptView({
       <div className="transcript-pro-toolbar">
         <div className="toolbar-main-row">
           <div className="search-capsule">
-            <span className="search-icon">🔍</span>
+            <span className="search-icon">
+              <IconSearch size={14} />
+            </span>
             <input
               value={search}
               onChange={(e) => setSearch(e.target.value)}
@@ -335,23 +355,25 @@ export default function TranscriptView({
               className={`view-pill ${viewMode === "original" ? "active" : ""}`}
               onClick={() => setViewMode("original")}
             >
-              📄 纯文本校对
+              <IconFileText size={14} /> <span>纯文本校对</span>
             </button>
             <button
               type="button"
               className={`view-pill ${viewMode === "bilingual" ? "active" : ""}`}
               onClick={() => setViewMode("bilingual")}
             >
-              🌐 双语对照
+              <IconGlobe size={14} /> <span>双语对照</span>
             </button>
           </div>
 
           <div className="toolbar-actions">
             <ActionMenu
-              label="🛠️ 批量校对工具 ▾"
+              icon={<IconWrench size={14} />}
+              label="批量校对工具 ▾"
               actions={[
                 {
-                  label: `👤 批量管理发言人 (${counts.size} 人)…`,
+                  icon: <IconUsers size={14} />,
+                  label: `批量管理发言人 (${counts.size} 人)…`,
                   run: () => {
                     const first = counts.keys().next().value || "";
                     if (!first) return toast("请先完成转写");
@@ -361,7 +383,8 @@ export default function TranscriptView({
                   },
                 },
                 {
-                  label: "📚 专业术语与热词库…",
+                  icon: <IconBook size={14} />,
+                  label: "专业术语与热词库…",
                   run: () => {
                     void onSave()
                       .then(() => setTermsOpen(true))
@@ -369,44 +392,57 @@ export default function TranscriptView({
                   },
                 },
                 {
-                  label: "✂️ 智能合并连续短句",
+                  icon: <IconScissors size={14} />,
+                  label: "智能合并连续短句",
                   run: mergeShort,
                 },
                 {
-                  label: "🤖 AI 校对发言人…",
+                  icon: <IconSparkles size={14} />,
+                  label: "AI 校对发言人…",
                   disabled: !meeting.segments.length,
                   run: () => setReviewOpen(true),
                 },
                 {
-                  label: "⏱️ 对比识别版本…",
+                  icon: <IconClock size={14} />,
+                  label: "对比识别版本…",
                   disabled: meeting.revisions.length < 2,
                   run: () => setCompareOpen(true),
                 },
                 ...(hasLiveReview
                   ? [
                       {
-                        label: "📝 实时纠错记录…",
+                        icon: <IconEdit size={14} />,
+                        label: "实时纠错记录…",
                         run: () => setLiveReviewOpen(true),
                       },
                     ]
                   : []),
               ]}
             />
-            <select
-              className="revision-history-select"
-              aria-label="文稿历史版本"
-              value=""
-              onChange={(e) => {
-                if (e.target.value) void restore(Number(e.target.value));
-              }}
-            >
-              <option value="">版本历史 (v{meeting.revision}) ▾</option>
-              {meeting.revisions.map((item) => (
-                <option key={item.revision} value={item.revision}>
-                  v{item.revision} · {revisionLabel(item.source)}
-                </option>
-              ))}
-            </select>
+            <ActionMenu
+              key={`rev-${meeting.id}-${meeting.revision}-${meeting.revisions.length}`}
+              icon={<IconClock size={14} />}
+              label={`版本历史 (v${meeting.revision}) ▾`}
+              accessibleLabel="文稿历史版本"
+              actions={
+                meeting.revisions.length
+                  ? meeting.revisions.map((item) => ({
+                      label:
+                        item.revision === meeting.revision
+                          ? `v${item.revision} · ${revisionLabel(item.source)}（当前）`
+                          : `v${item.revision} · ${revisionLabel(item.source)}`,
+                      disabled: item.revision === meeting.revision,
+                      run: () => void restore(item.revision),
+                    }))
+                  : [
+                      {
+                        label: "暂无历史版本",
+                        disabled: true,
+                        run: () => {},
+                      },
+                    ]
+              }
+            />
           </div>
         </div>
 
@@ -486,12 +522,25 @@ export default function TranscriptView({
               <span className="count-info">
                 共 {meeting.segments.length} 个片段
                 {search.trim() ? ` · 检索到 ${shown.length} 个匹配片段` : ""}
+                {meeting.segments.length > 300 ? " · 已启用大文稿流畅渲染" : ""}
               </span>
-              <div className="keyboard-shortcuts-hint">
-                <span className="hint-title">快捷操作：</span>
-                <kbd>Option+R</kbd> 重听本句
-                <span className="dot">·</span>
-                <kbd>Tab</kbd> 切至下一段
+              <div className="transcript-status-tools">
+                {meeting.segments.length > 300 && (
+                  <label className="virtual-mode-toggle">
+                    <input
+                      type="checkbox"
+                      checked={fullDom}
+                      onChange={(e) => setFullDom(e.target.checked)}
+                    />
+                    <span>展开全部 DOM (⌘F)</span>
+                  </label>
+                )}
+                <div className="keyboard-shortcuts-hint">
+                  <span className="hint-title">快捷操作：</span>
+                  <kbd>Option+R</kbd> 重听本句
+                  <span className="dot">·</span>
+                  <kbd>Tab</kbd> 切至下一段
+                </div>
               </div>
             </div>
             <TranscriptList
@@ -500,6 +549,8 @@ export default function TranscriptView({
               segments={shown}
               onEditingChange={setEditingId}
               total={meeting.segments.length}
+              fullDom={fullDom}
+              hideVirtualBar
               onUpdate={update}
               onSeek={seek}
               jumpSegmentId={jumpSegmentId}

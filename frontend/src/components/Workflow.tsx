@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { IconAlertTriangle, IconLightbulb } from "../styles/icons";
 import RecordingReceipt from "../features/notes/RecordingReceipt";
 import HandoffSourcesDialog from "../features/meeting/HandoffSourcesDialog";
 import type { HandoffSource } from "../features/meeting/handoffSources";
@@ -54,6 +55,8 @@ const hints: Record<ReviewStep, string> = {
 export default function Workflow(props: Props) {
   const [sourcesOpen, setSourcesOpen] = useState(false);
   const [reviewOpen, setReviewOpen] = useState(false);
+  const [coverageOpen, setCoverageOpen] = useState(false);
+  const containerRef = useRef<HTMLElement>(null);
   const {
     meeting,
     transcriptDirty,
@@ -67,13 +70,50 @@ export default function Workflow(props: Props) {
     onReview,
     onConfirm,
   } = props;
+  useEffect(() => {
+    if (!reviewOpen && !coverageOpen) return;
+    const handleOutside = (event: MouseEvent | TouchEvent) => {
+      if (
+        containerRef.current &&
+        !containerRef.current.contains(event.target as Node)
+      ) {
+        setReviewOpen(false);
+        setCoverageOpen(false);
+      }
+    };
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setReviewOpen(false);
+        setCoverageOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleOutside, true);
+    document.addEventListener("touchstart", handleOutside, true);
+    window.addEventListener("keydown", handleEscape, true);
+    return () => {
+      document.removeEventListener("mousedown", handleOutside, true);
+      document.removeEventListener("touchstart", handleOutside, true);
+      window.removeEventListener("keydown", handleEscape, true);
+    };
+  }, [reviewOpen, coverageOpen]);
+  useEffect(() => {
+    setReviewOpen(false);
+    setCoverageOpen(false);
+  }, [meeting.id]);
   const qualityAttention = recordingQualityAttention(meeting.recording_quality);
   const openRecordingReview =
     props.onRecordingReview || (() => onReview("transcript"));
   const qualityNotice = qualityAttention && (
     <div className="workflow-quality" role="status">
       <span>{qualityAttention.text}</span>
-      <button className="text-btn" onClick={openRecordingReview}>
+      <button
+        type="button"
+        className="text-btn"
+        onClick={() => {
+          setCoverageOpen(false);
+          openRecordingReview();
+        }}
+      >
         {qualityAttention.action}
       </button>
     </div>
@@ -94,29 +134,69 @@ export default function Workflow(props: Props) {
     busy = meeting.jobs.find(isRunning);
   if (!meeting.review)
     return (
-      <section className="workflow" aria-label="会议处理进度">
-        {qualityNotice}
-        <p>
-          会后核对清单将在本次录音结束、服务更新后启用。现有整理功能可以照常使用。
-        </p>
-        <div className="review-optional">
-          <button
-            disabled={!!busy}
-            onClick={
-              progress.hasTranscript
-                ? () => onReview("transcript")
-                : onTranscribe
-            }
-          >
-            {progress.hasTranscript ? "打开文字稿" : "开始转写"}
-          </button>
-          <button className="text-btn" onClick={onMinutes}>
-            打开纪要
-          </button>
-          <button className="text-btn" onClick={onAnalysis}>
-            会议分析（可选）
-          </button>
+      <section
+        className="workflow workflow-compact"
+        aria-label="会议处理进度"
+        ref={containerRef}
+      >
+        <div className="workflow-bar workflow-next">
+          <div className="workflow-actions">
+            {qualityAttention && (
+              <button
+                type="button"
+                className={`workflow-review-toggle warning ${coverageOpen ? "active" : ""}`}
+                aria-expanded={coverageOpen}
+                onClick={() => setCoverageOpen((prev) => !prev)}
+              >
+                <IconAlertTriangle size={13} />
+                <span>{qualityAttention.action}</span>
+                <span className="workflow-chevron" aria-hidden="true">
+                  {coverageOpen ? " ▴" : " ▾"}
+                </span>
+              </button>
+            )}
+            <button
+              type="button"
+              className="primary"
+              disabled={!!busy}
+              onClick={
+                progress.hasTranscript
+                  ? () => onReview("transcript")
+                  : onTranscribe
+              }
+            >
+              {progress.hasTranscript ? "打开文字稿" : "开始转写"}
+            </button>
+            <button type="button" className="text-btn" onClick={onMinutes}>
+              打开纪要
+            </button>
+            <button type="button" className="text-btn" onClick={onAnalysis}>
+              会议分析
+            </button>
+          </div>
         </div>
+        {coverageOpen && (
+          <div
+            className="workflow-popover"
+            role="dialog"
+            aria-label="录音质量与核对提示"
+          >
+            <div className="workflow-popover-header">
+              <strong>会后核对与录音提示</strong>
+              <button
+                type="button"
+                className="text-btn"
+                onClick={() => setCoverageOpen(false)}
+              >
+                关闭
+              </button>
+            </div>
+            <p className="muted">
+              会后核对清单将在本次录音结束、服务更新后启用。现有整理功能可以照常使用。
+            </p>
+            {qualityNotice}
+          </div>
+        )}
       </section>
     );
   const blocked =
@@ -206,9 +286,10 @@ export default function Workflow(props: Props) {
     transcriptDirty || minutesDirty ? null : currentHandoff(meeting);
   const liveEngine = handoff?.stages.find((stage) => stage.key === "transcript")
     ?.source.live_engine;
-  const [coverageMeeting, setCoverageMeeting] = useState<string | null>(null);
   const guidance = handoffAction(meeting, transcriptDirty, minutesDirty);
   const openTarget = (target: string, jobId?: string) => {
+    setReviewOpen(false);
+    setCoverageOpen(false);
     switch (target) {
       case "tasks":
         if (props.onTasks)
@@ -252,44 +333,53 @@ export default function Workflow(props: Props) {
     label = guidance.label;
     action = followGuidance;
   }
+  const receiptEngine =
+    meeting.recording_quality?.recorded &&
+    (liveEngine === "whisper" || liveEngine === "qwen")
+      ? liveEngine
+      : undefined;
+  const hasQualityAlert = Boolean(label !== "核对录音" && qualityAttention);
+  const showCoverageToggle = Boolean(receiptEngine || hasQualityAlert);
+
   return (
-    <section className="workflow" aria-label="会议处理进度">
-      {label !== "核对录音" && qualityNotice}
-      {meeting.recording_quality?.recorded &&
-        (liveEngine === "whisper" || liveEngine === "qwen") && (
-          <div className="workflow-coverage-bar">
-            <button
-              className="text-btn"
-              aria-expanded={coverageMeeting === meeting.id}
-              onClick={() =>
-                setCoverageMeeting(
-                  coverageMeeting === meeting.id ? null : meeting.id,
-                )
-              }
-            >
-              查看实时识别覆盖与录音异常
-            </button>
-            {coverageMeeting === meeting.id && (
-              <RecordingReceipt id={meeting.id} engine={liveEngine} />
-            )}
-          </div>
-        )}
+    <section
+      className="workflow workflow-compact"
+      aria-label="会议处理进度"
+      ref={containerRef}
+    >
       <div className="workflow-bar workflow-next">
-        <div className="workflow-lead">
-          <span className="workflow-icon" aria-hidden="true">
-            💡
-          </span>
-          <span className="workflow-hint">{hint}</span>
-        </div>
         <div className="workflow-actions">
+          {showCoverageToggle && (
+            <button
+              type="button"
+              className={`workflow-review-toggle ${hasQualityAlert ? "warning" : ""} ${coverageOpen ? "active" : ""}`}
+              aria-expanded={coverageOpen}
+              aria-label="查看实时识别覆盖与录音异常"
+              title="查看实时识别覆盖与录音异常"
+              onClick={() => {
+                setReviewOpen(false);
+                setCoverageOpen((prev) => !prev);
+              }}
+            >
+              {hasQualityAlert && <IconAlertTriangle size={13} />}
+              <span>{hasQualityAlert ? "识别覆盖 · 异常" : "识别覆盖"}</span>
+              <span className="workflow-chevron" aria-hidden="true">
+                {coverageOpen ? " ▴" : " ▾"}
+              </span>
+            </button>
+          )}
           <button
             type="button"
             className={`workflow-review-toggle ${reviewOpen ? "active" : ""}`}
             aria-expanded={reviewOpen}
-            onClick={() => setReviewOpen(!reviewOpen)}
-            title="查看交接与人工核对清单"
+            onClick={() => {
+              setCoverageOpen(false);
+              setReviewOpen((prev) => !prev);
+            }}
+            title={hint || "查看交接与人工核对清单"}
           >
-            本次交接与核对 · {progress.requiredComplete}/{progress.requiredTotal}
+            本次交接与核对 · {progress.requiredComplete}/
+            {progress.requiredTotal}
             {progress.requiredStale
               ? ` · ${progress.requiredStale} 项待复核`
               : ""}
@@ -298,14 +388,40 @@ export default function Workflow(props: Props) {
             </span>
           </button>
           <button
+            type="button"
             className="primary"
             disabled={!!busy && !guidance}
+            title={hint}
             onClick={action}
           >
             {label}
           </button>
         </div>
       </div>
+
+      {coverageOpen && showCoverageToggle && (
+        <div
+          className="workflow-popover workflow-coverage-popover"
+          role="dialog"
+          aria-label="实时识别覆盖与录音异常"
+        >
+          <div className="workflow-popover-header">
+            <strong>实时识别覆盖与录音回执</strong>
+            <button
+              type="button"
+              className="text-btn"
+              onClick={() => setCoverageOpen(false)}
+            >
+              关闭
+            </button>
+          </div>
+          {label !== "核对录音" && qualityNotice}
+          {receiptEngine && (
+            <RecordingReceipt id={meeting.id} engine={receiptEngine} />
+          )}
+        </div>
+      )}
+
       {sourcesOpen && (
         <HandoffSourcesDialog
           key={meeting.id}
@@ -323,136 +439,171 @@ export default function Workflow(props: Props) {
           }}
         />
       )}
+
       {reviewOpen && (
-        <div className="workflow-review-drawer postmeeting-review">
+        <div
+          className="workflow-popover workflow-review-drawer postmeeting-review"
+          role="dialog"
+          aria-label="本次交接与核对清单"
+        >
+          <div className="workflow-popover-header">
+            <div className="workflow-popover-hint">
+              <span className="workflow-icon" aria-hidden="true">
+                <IconLightbulb size={15} />
+              </span>
+              <span>{hint}</span>
+            </div>
+            <button
+              type="button"
+              className="text-btn"
+              onClick={() => setReviewOpen(false)}
+            >
+              关闭
+            </button>
+          </div>
           <p>
             人工核对记录只表示你的确认，不等同于 AI
             已验证；不限制独立生成分析或纪要。个人与暂缓记录不阻碍纪要交付。
           </p>
-        {handoff && (
-          <div className="handoff-stages" aria-label="会后交接状态">
-            {handoff.stages.map((stage) => (
-              <div className={`handoff-stage ${stage.state}`} key={stage.key}>
-                <strong>{stage.label}</strong>
-                <span>
-                  {stage.key === "overview" && stage.state === "review"
-                    ? "按需核对"
-                    : handoffStates[stage.state]}
-                </span>
-                <p>{stage.summary}</p>
-                <button
-                  className="text-btn"
-                  onClick={() =>
-                    openTarget(
-                      stage.source.interrupted_job_id
-                        ? "tasks"
-                        : stage.key === "delivery"
-                          ? "delivery"
-                          : stage.key,
-                      typeof stage.source.interrupted_job_id === "string"
-                        ? stage.source.interrupted_job_id
-                        : undefined,
+          {handoff && (
+            <div className="handoff-stages" aria-label="会后交接状态">
+              {handoff.stages.map((stage) => (
+                <div className={`handoff-stage ${stage.state}`} key={stage.key}>
+                  <strong>{stage.label}</strong>
+                  <span>
+                    {stage.key === "overview" && stage.state === "review"
+                      ? "按需核对"
+                      : handoffStates[stage.state]}
+                  </span>
+                  <p>{stage.summary}</p>
+                  <button
+                    type="button"
+                    className="text-btn"
+                    onClick={() =>
+                      openTarget(
+                        stage.source.interrupted_job_id
+                          ? "tasks"
+                          : stage.key === "delivery"
+                            ? "delivery"
+                            : stage.key,
+                        typeof stage.source.interrupted_job_id === "string"
+                          ? stage.source.interrupted_job_id
+                          : undefined,
+                      )
+                    }
+                  >
+                    查看
+                  </button>
+                </div>
+              ))}
+              {!!handoff.edges.length && (
+                <p className="handoff-lineage">
+                  来源关系：
+                  {handoff.edges
+                    .map(
+                      (edge) =>
+                        `${handoff.stages.find((stage) => stage.key === edge.from)?.label || "实时识别"} → ${handoff.stages.find((stage) => stage.key === edge.to)?.label || edge.to} · ${handoffRelations[edge.relation]} ${edge.count} 项`,
                     )
-                  }
-                >
-                  查看
-                </button>
-              </div>
-            ))}
-            {!!handoff.edges.length && (
-              <p className="handoff-lineage">
-                来源关系：
-                {handoff.edges
-                  .map(
-                    (edge) =>
-                      `${handoff.stages.find((stage) => stage.key === edge.from)?.label || "实时识别"} → ${handoff.stages.find((stage) => stage.key === edge.to)?.label || edge.to} · ${handoffRelations[edge.relation]} ${edge.count} 项`,
-                  )
-                  .join("；")}
-              </p>
-            )}
-          </div>
-        )}
-        {handoff && (
-          <button
-            disabled={transcriptDirty || minutesDirty}
-            onClick={() => setSourcesOpen(true)}
-          >
-            查看具体来源与处理
-          </button>
-        )}
-        {handoff && <h4>人工核对记录</h4>}
-        <div className="review-grid">
-          {progress.steps.map(({ key, state, item }) => (
-            <article key={key} className={`review-card ${state}`}>
-              <strong>{labels[key]}</strong>
-              <span className="review-state">
-                {key === "notes" &&
-                deliveryAttention === 0 &&
-                ["pending", "stale"].includes(state)
-                  ? "可稍后整理"
-                  : state === "blocked" &&
-                      key === "minutes" &&
-                      latestMinutes(meeting)
-                    ? "纪要已过期，请更新"
-                    : {
-                        done:
-                          item?.decision === "skipped"
-                            ? "本次不区分"
-                            : "已核对",
-                        pending: "待核对",
-                        stale: "内容变化，待复核",
-                        blocked: "等待内容",
-                        not_needed: "无简记，无需核对",
-                      }[state]}
-              </span>
-              <p>{hints[key]}</p>
-              <div>
-                <button className="text-btn" onClick={() => onReview(key)}>
-                  打开
-                  {key === "speakers"
-                    ? "文字稿"
-                    : key === "minutes"
-                      ? "纪要"
-                      : key === "notes"
-                        ? "简记"
-                        : "文字稿"}
-                </button>
-                {state === "done" ? (
+                    .join("；")}
+                </p>
+              )}
+            </div>
+          )}
+          {handoff && (
+            <button
+              type="button"
+              disabled={transcriptDirty || minutesDirty}
+              onClick={() => {
+                setReviewOpen(false);
+                setSourcesOpen(true);
+              }}
+            >
+              查看具体来源与处理
+            </button>
+          )}
+          {handoff && <h4>人工核对记录</h4>}
+          <div className="review-grid">
+            {progress.steps.map(({ key, state, item }) => (
+              <article key={key} className={`review-card ${state}`}>
+                <strong>{labels[key]}</strong>
+                <span className="review-state">
+                  {key === "notes" &&
+                  deliveryAttention === 0 &&
+                  ["pending", "stale"].includes(state)
+                    ? "可稍后整理"
+                    : state === "blocked" &&
+                        key === "minutes" &&
+                        latestMinutes(meeting)
+                      ? "纪要已过期，请更新"
+                      : {
+                          done:
+                            item?.decision === "skipped"
+                              ? "本次不区分"
+                              : "已核对",
+                          pending: "待核对",
+                          stale: "内容变化，待复核",
+                          blocked: "等待内容",
+                          not_needed: "无简记，无需核对",
+                        }[state]}
+                </span>
+                <p>{hints[key]}</p>
+                <div>
                   <button
+                    type="button"
                     className="text-btn"
-                    disabled={blocked || (key === "minutes" && minutesDirty)}
-                    onClick={() => onConfirm(key, "reset")}
+                    onClick={() => {
+                      setReviewOpen(false);
+                      onReview(key);
+                    }}
                   >
-                    撤回确认
+                    打开
+                    {key === "speakers"
+                      ? "文字稿"
+                      : key === "minutes"
+                        ? "纪要"
+                        : key === "notes"
+                          ? "简记"
+                          : "文字稿"}
                   </button>
-                ) : (
-                  state !== "not_needed" && (
+                  {state === "done" ? (
                     <button
-                      disabled={
-                        blocked ||
-                        state === "blocked" ||
-                        (key === "minutes" && minutesDirty)
-                      }
-                      onClick={() => onConfirm(key, "confirmed")}
+                      type="button"
+                      className="text-btn"
+                      disabled={blocked || (key === "minutes" && minutesDirty)}
+                      onClick={() => onConfirm(key, "reset")}
                     >
-                      确认已核对
+                      撤回确认
                     </button>
-                  )
-                )}
-                {key === "speakers" && state !== "done" && (
-                  <button
-                    className="text-btn"
-                    disabled={blocked || state === "blocked"}
-                    onClick={() => onConfirm(key, "skipped")}
-                  >
-                    本次不区分
-                  </button>
-                )}
-              </div>
-            </article>
-          ))}
+                  ) : (
+                    state !== "not_needed" && (
+                      <button
+                        type="button"
+                        disabled={
+                          blocked ||
+                          state === "blocked" ||
+                          (key === "minutes" && minutesDirty)
+                        }
+                        onClick={() => onConfirm(key, "confirmed")}
+                      >
+                        确认已核对
+                      </button>
+                    )
+                  )}
+                  {key === "speakers" && state !== "done" && (
+                    <button
+                      type="button"
+                      className="text-btn"
+                      disabled={blocked || state === "blocked"}
+                      onClick={() => onConfirm(key, "skipped")}
+                    >
+                      本次不区分
+                    </button>
+                  )}
+                </div>
+              </article>
+            ))}
+          </div>
         </div>
-      </div>
       )}
     </section>
   );

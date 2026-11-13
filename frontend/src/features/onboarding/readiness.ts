@@ -1,5 +1,6 @@
 import type { EngineInfo, NativeCapability } from "../../types";
-export type CaptureSource = "browser" | "macos-system" | "macos-both" | "macos-microphone";
+export type CaptureSource =
+  "browser" | "macos-system" | "macos-both" | "macos-microphone";
 export type Readiness = {
   native: NativeCapability;
   engines: EngineInfo[];

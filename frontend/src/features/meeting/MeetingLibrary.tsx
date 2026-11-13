@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import Modal from "../../components/Modal";
+import { IconFolder } from "../../styles/icons";
 import { api } from "../../api";
 import { clock } from "../../utils";
 import type { MeetingOrganization, MeetingSummary } from "../../types";
@@ -76,7 +77,9 @@ export default function MeetingLibrary({
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
 
   const activeCount = meetings.filter((item) => !item.library?.archived).length;
-  const archivedCount = meetings.filter((item) => !!item.library?.archived).length;
+  const archivedCount = meetings.filter(
+    (item) => !!item.library?.archived,
+  ).length;
 
   const normalizedSearch = search.trim().toLowerCase();
   const visible = meetings.filter((item) => {
@@ -201,25 +204,20 @@ export default function MeetingLibrary({
     setBusy(false);
   }
   return (
-    <Modal
-      ariaLabel="会议资料库"
-      onClose={onClose}
-      className="meeting-library-dialog"
+    <section
+      aria-label="会议资料库"
+      className="shell-page meeting-library-page"
     >
       <div className="meeting-library-header">
         <h2>
-          <span>📁 会议资料库</span>
+          <IconFolder size={18} />
+          <span>会议资料库</span>
           <span className="meeting-library-header-meta">
             共 {visible.length} 场
           </span>
         </h2>
-        <button
-          className="text-btn"
-          style={{ fontSize: 16, cursor: "pointer" }}
-          onClick={onClose}
-          aria-label="关闭"
-        >
-          ✕
+        <button type="button" onClick={onClose}>
+          返回会议
         </button>
       </div>
 
@@ -618,8 +616,8 @@ export default function MeetingLibrary({
             </button>
           </div>
           <p style={{ marginTop: 12, lineHeight: 1.6 }}>
-            您已选择 <strong>{selected.length}</strong> 场会议。
-            删除后将<strong>永久清除</strong>
+            您已选择 <strong>{selected.length}</strong> 场会议。 删除后将
+            <strong>永久清除</strong>
             本地录音音频文件、转写文字稿、AI 纪要与分析数据，
             <strong>此操作无法撤销</strong>。
           </p>
@@ -670,6 +668,6 @@ export default function MeetingLibrary({
           </div>
         </Modal>
       )}
-    </Modal>
+    </section>
   );
 }

@@ -177,7 +177,10 @@ type AudiencePreviewInput = {
 export function cloudConfirmation(profile?: LLMConfig) {
   if (profile?.provider_type !== "cloud") return {};
   const { id, base_url, provider_type, model } = profile;
-  return { confirm_cloud: true, expected_provider: { id, base_url, provider_type, model } };
+  return {
+    confirm_cloud: true,
+    expected_provider: { id, base_url, provider_type, model },
+  };
 }
 
 type AnalysisRequest = {
@@ -235,14 +238,22 @@ export const api = {
       json("POST", { expected_seq: seq }),
     ),
   runtimeOverview: () => request<RuntimeOverview>("/runtime/overview"),
-  modelImportStatus: () =>
-    request<ModelImportStatus>("/runtime/model-import"),
+  modelImportStatus: () => request<ModelImportStatus>("/runtime/model-import"),
   importModelDirectory: (directory: string) =>
-    request<ModelImportStatus>("/runtime/model-import", json("POST", { directory })),
+    request<ModelImportStatus>(
+      "/runtime/model-import",
+      json("POST", { directory }),
+    ),
   importModelArchive: (archive: string) =>
-    request<ModelImportStatus>("/runtime/model-import/archive", json("POST", { archive })),
+    request<ModelImportStatus>(
+      "/runtime/model-import/archive",
+      json("POST", { archive }),
+    ),
   downloadModelPack: (url: string) =>
-    request<ModelImportStatus>("/runtime/model-import/download", json("POST", { url })),
+    request<ModelImportStatus>(
+      "/runtime/model-import/download",
+      json("POST", { url }),
+    ),
   activateModelImport: () =>
     request<ModelImportStatus>("/runtime/model-import/activate", json("POST")),
   cancelModelImport: () =>
@@ -286,8 +297,9 @@ export const api = {
     ),
   recordingReadiness: () => request<Readiness>("/recording-readiness"),
   sampleMeeting: () => request<SampleMeeting>("/onboarding/sample"),
-  startCaptureTest: (source: "macos-system" | "macos-both" | "macos-microphone") =>
-    request<CaptureTest>("/capture-tests", json("POST", { source })),
+  startCaptureTest: (
+    source: "macos-system" | "macos-both" | "macos-microphone",
+  ) => request<CaptureTest>("/capture-tests", json("POST", { source })),
   captureTest: (id: string) => request<CaptureTest>(`/capture-tests/${id}`),
   deleteCaptureTest: (id: string) =>
     request(`/capture-tests/${id}`, json("DELETE")),
@@ -599,10 +611,18 @@ export const api = {
   liveModelControl: (action: "warm" | "release") =>
     request("/live-model/" + action, { method: "POST" }),
   nativeCapability: () => request<NativeCapability>("/native-capture"),
-  nativeStart: (microphone: boolean, keepAwake = true, microphoneOnly = false) =>
+  nativeStart: (
+    microphone: boolean,
+    keepAwake = true,
+    microphoneOnly = false,
+  ) =>
     request<RecordingSession>(
       "/native-capture",
-      json("POST", { microphone, keep_awake: keepAwake, microphone_only: microphoneOnly }),
+      json("POST", {
+        microphone,
+        keep_awake: keepAwake,
+        microphone_only: microphoneOnly,
+      }),
     ),
   nativeStatus: (id: string, signal?: AbortSignal) =>
     request<NativeCaptureStatus>(`/native-capture/${id}`, {
@@ -1039,7 +1059,11 @@ export const api = {
   },
   rename: (id: string, title: string) =>
     request(`/meetings/${id}`, json("PATCH", { title })),
-  speakerReview: (id: string, profileId?: string, consent = cloudConfirmation()) =>
+  speakerReview: (
+    id: string,
+    profileId?: string,
+    consent = cloudConfirmation(),
+  ) =>
     request<Artifact<SpeakerReviewResult>>(
       `/meetings/${id}/speaker-reviews`,
       json("POST", { profile_id: profileId, ...consent }),
@@ -1132,7 +1156,12 @@ export const api = {
     todoId: string,
     body: { status: "pending" | "done"; owner: string; due_date: string },
   ) => request(`/meetings/${id}/note-todos/${todoId}`, json("PUT", body)),
-  expandNote: (id: string, noteId: string, profileId?: string, consent = cloudConfirmation()) =>
+  expandNote: (
+    id: string,
+    noteId: string,
+    profileId?: string,
+    consent = cloudConfirmation(),
+  ) =>
     request<{ id: string }>(
       `/meetings/${id}/notes/${noteId}/expand`,
       json("POST", { profile_id: profileId || null, ...consent }),
@@ -1235,7 +1264,9 @@ export const api = {
   deleteConfig: (id: string) =>
     request(`/llm-configs/${id}`, { method: "DELETE" }),
   shorthandNotes: (rid: string) =>
-    request<import("./types").CopilotNote[]>(`/recordings/${rid}/notes/shorthand`),
+    request<import("./types").CopilotNote[]>(
+      `/recordings/${rid}/notes/shorthand`,
+    ),
   postShorthand: (
     rid: string,
     body: {

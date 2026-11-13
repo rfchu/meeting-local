@@ -4,6 +4,27 @@ import AudioCheck from "../onboarding/AudioCheck";
 import { clock } from "../../utils";
 import type { Environment } from "../../types";
 import type { RecordingViewModel } from "./useRecordingController";
+import {
+  IconBook,
+  IconBriefcase,
+  IconClipboard,
+  IconCpu,
+  IconEdit,
+  IconFileText,
+  IconGlobe,
+  IconHeadphones,
+  IconHelpCircle,
+  IconLaptop,
+  IconLink,
+  IconLock,
+  IconMic,
+  IconPin,
+  IconSave,
+  IconShield,
+  IconSliders,
+  IconSparkles,
+  IconTarget,
+} from "../../styles/icons";
 
 export type RecordingSetupViewProps = Pick<
   RecordingViewModel,
@@ -80,9 +101,9 @@ export default function RecordingSetupView({
       : "general",
   );
 
-  const [agendaTab, setAgendaTab] = useState<"agenda" | "purpose" | "questions">(
-    "agenda",
-  );
+  const [agendaTab, setAgendaTab] = useState<
+    "agenda" | "purpose" | "questions"
+  >("agenda");
 
   const [testingAudio, setTestingAudio] = useState(false);
 
@@ -90,7 +111,9 @@ export default function RecordingSetupView({
     (p) => p.id === minutesModel,
   );
   const isCloudMinutes =
-    postGoal === "minutes" && completionMode !== "none" && autoProcess &&
+    postGoal === "minutes" &&
+    completionMode !== "none" &&
+    autoProcess &&
     selectedMinutesProfile?.provider_type === "cloud";
 
   const startDisabled =
@@ -132,7 +155,9 @@ export default function RecordingSetupView({
             className="ghost-back-btn"
             disabled={requesting}
             onClick={onClose}
-            title={requesting ? "正在启动录音，暂不可返回" : "自动保存备会草稿并返回"}
+            title={
+              requesting ? "正在启动录音，暂不可返回" : "自动保存备会草稿并返回"
+            }
           >
             ← 返回
           </button>
@@ -142,12 +167,47 @@ export default function RecordingSetupView({
               {requesting
                 ? "正在启动录音通道…"
                 : briefSaved
-                  ? "✓ 备会内容已保存到本机"
+                  ? "✓ 备会已保存"
                   : "正在保存草稿…"}
+            </span>
+            <span
+              className={`setup-readiness-chip${isCloudMinutes ? " cloud" : ""}`}
+              title={
+                isCloudMinutes
+                  ? "录音与实时识别纯本地离线处理；会后纪要经由您核对确认后发送至所选云端模型"
+                  : "纯本地离线处理 · 无云端数据传输"
+              }
+            >
+              {isCloudMinutes ? (
+                <>
+                  <IconShield size={12} /> 录音离线 · 纪要云端（
+                  {selectedMinutesProfile?.name ||
+                    selectedMinutesProfile?.model ||
+                    "云端模型"}
+                  ）
+                </>
+              ) : (
+                <>
+                  <IconLock size={12} /> 纯本地离线
+                </>
+              )}
+              {preflight?.storage.writable === false
+                ? " · 存储异常"
+                : !nativeCapability?.available
+                  ? " · 需音频授权"
+                  : ""}
             </span>
           </div>
         </div>
         <div className="setup-topbar-right">
+          <button
+            type="button"
+            className="setup-mgmt-link"
+            onClick={onModels}
+            title="查看完整依赖、模型及环境自检"
+          >
+            运行与模型管理
+          </button>
           <button
             type="button"
             className={`setup-start-btn ${requesting ? "loading" : ""}`}
@@ -155,7 +215,9 @@ export default function RecordingSetupView({
             onClick={onStart}
             title={requesting ? "正在请求权限并启动录音…" : "快捷键: ⌘ + Enter"}
           >
-            <span className={`setup-record-dot ${requesting ? "loading" : ""}`} />
+            <span
+              className={`setup-record-dot ${requesting ? "loading" : ""}`}
+            />
             {requesting ? "正在启动录音…" : "开始实时录音"}
             {!requesting && <kbd className="setup-kbd-hint">⌘↵</kbd>}
           </button>
@@ -191,8 +253,12 @@ export default function RecordingSetupView({
             <div className="setup-card-header">
               <div className="setup-card-header-row">
                 <div>
-                  <div className="setup-eyebrow-tag">PRE-MEETING CONTEXT · 会议预设</div>
-                  <h3>📝 会议背景与讨论诉求</h3>
+                  <div className="setup-eyebrow-tag">
+                    PRE-MEETING CONTEXT · 会议预设
+                  </div>
+                  <h3>
+                    <IconEdit size={16} /> 会议背景与讨论诉求
+                  </h3>
                   <p>
                     提前填写会议主题与讨论重点，帮助会中抓取关键决策及会后生成精准纪要。
                   </p>
@@ -208,7 +274,7 @@ export default function RecordingSetupView({
                     className={`setup-mode-btn ${meetingMode === "general" ? "active" : ""}`}
                     onClick={() => setMeetingMode("general")}
                   >
-                    📌 常规业务会议
+                    <IconPin size={14} /> 常规业务会议
                   </button>
                   <button
                     type="button"
@@ -231,7 +297,7 @@ export default function RecordingSetupView({
                       }
                     }}
                   >
-                    💼 招聘面试考察
+                    <IconBriefcase size={14} /> 招聘面试考察
                   </button>
                 </div>
               </div>
@@ -282,9 +348,12 @@ export default function RecordingSetupView({
                         className={`setup-agenda-tab-btn ${agendaTab === "agenda" ? "active" : ""}`}
                         onClick={() => setAgendaTab("agenda")}
                       >
-                        📋 议程与背景材料
+                        <IconClipboard size={13} /> 议程与背景材料
                         {brief.agenda?.trim() ? (
-                          <span className="tab-has-content-dot" title="已填写内容" />
+                          <span
+                            className="tab-has-content-dot"
+                            title="已填写内容"
+                          />
                         ) : null}
                       </button>
                       <button
@@ -294,9 +363,12 @@ export default function RecordingSetupView({
                         className={`setup-agenda-tab-btn ${agendaTab === "purpose" ? "active" : ""}`}
                         onClick={() => setAgendaTab("purpose")}
                       >
-                        🎯 预期目标与结论
+                        <IconTarget size={13} /> 预期目标与结论
                         {brief.purpose?.trim() ? (
-                          <span className="tab-has-content-dot" title="已填写内容" />
+                          <span
+                            className="tab-has-content-dot"
+                            title="已填写内容"
+                          />
                         ) : null}
                       </button>
                       <button
@@ -306,9 +378,12 @@ export default function RecordingSetupView({
                         className={`setup-agenda-tab-btn ${agendaTab === "questions" ? "active" : ""}`}
                         onClick={() => setAgendaTab("questions")}
                       >
-                        ❓ 需拍板关注问题
+                        <IconHelpCircle size={13} /> 需拍板关注问题
                         {brief.questions?.trim() ? (
-                          <span className="tab-has-content-dot" title="已填写内容" />
+                          <span
+                            className="tab-has-content-dot"
+                            title="已填写内容"
+                          />
                         ) : null}
                       </button>
                     </div>
@@ -361,7 +436,8 @@ export default function RecordingSetupView({
               /* 面试专属字段：在选择面试模式时展开 */
               <div className="setup-interview-panel">
                 <div className="setup-interview-banner">
-                  💼 招聘面试专属预设 · 系统将自动按面试官问题、候选人回答与能力维度整理纪要
+                  <IconBriefcase size={14} /> 招聘面试专属预设 ·
+                  系统将自动按面试官问题、候选人回答与能力维度整理纪要
                 </div>
                 <div className="setup-form-row">
                   <div className="setup-field flex-1">
@@ -446,7 +522,9 @@ export default function RecordingSetupView({
 
             {/* 关联上一场会议 */}
             <div className="setup-field setup-prev-meeting-field">
-              <label htmlFor="setup-prev-meeting">🔗 关联上下文（可选）</label>
+              <label htmlFor="setup-prev-meeting">
+                <IconLink size={13} /> 关联上下文（可选）
+              </label>
               <select
                 id="setup-prev-meeting"
                 className="setup-select"
@@ -477,7 +555,9 @@ export default function RecordingSetupView({
             <div className="setup-card">
               <div className="setup-card-header">
                 <div className="setup-card-title-row">
-                  <span className="setup-card-icon">🎙️</span>
+                  <span className="setup-card-icon">
+                    <IconMic size={16} />
+                  </span>
                   <div>
                     <h3>录音音源与即时试音</h3>
                     <p>选择参会形式，可按当前音源试录并回听。</p>
@@ -486,7 +566,11 @@ export default function RecordingSetupView({
               </div>
 
               {/* 2x2 紧凑收音卡片矩阵 */}
-              <div className="setup-source-grid" role="radiogroup" aria-label="收音方案">
+              <div
+                className="setup-source-grid"
+                role="radiogroup"
+                aria-label="收音方案"
+              >
                 <button
                   type="button"
                   className={`setup-source-card ${captureSource === "macos-both" ? "selected" : ""}`}
@@ -494,14 +578,18 @@ export default function RecordingSetupView({
                   onClick={() => setCaptureSource("macos-both")}
                 >
                   <div className="setup-source-card-top">
-                    <span className="setup-source-icon">🎧</span>
+                    <span className="setup-source-icon">
+                      <IconHeadphones size={15} />
+                    </span>
                     <strong>混合会议</strong>
                     {captureSource === "macos-both" && (
                       <span className="source-check-badge">✓</span>
                     )}
                   </div>
                   <span className="setup-source-desc">电脑声音 ＋ 麦克风</span>
-                  <small className="setup-source-sub">腾讯会议 / 飞书 / Zoom</small>
+                  <small className="setup-source-sub">
+                    腾讯会议 / 飞书 / Zoom
+                  </small>
                 </button>
 
                 <button
@@ -514,7 +602,9 @@ export default function RecordingSetupView({
                   onClick={() => setCaptureSource("macos-microphone")}
                 >
                   <div className="setup-source-card-top">
-                    <span className="setup-source-icon">🎙️</span>
+                    <span className="setup-source-icon">
+                      <IconMic size={15} />
+                    </span>
                     <strong>现场会议</strong>
                     {captureSource === "macos-microphone" && (
                       <span className="source-check-badge">✓</span>
@@ -531,14 +621,18 @@ export default function RecordingSetupView({
                   onClick={() => setCaptureSource("macos-system")}
                 >
                   <div className="setup-source-card-top">
-                    <span className="setup-source-icon">💻</span>
+                    <span className="setup-source-icon">
+                      <IconLaptop size={15} />
+                    </span>
                     <strong>线上旁听</strong>
                     {captureSource === "macos-system" && (
                       <span className="source-check-badge">✓</span>
                     )}
                   </div>
                   <span className="setup-source-desc">仅电脑声音</span>
-                  <small className="setup-source-sub">线上培训 / 直播 / 讲座</small>
+                  <small className="setup-source-sub">
+                    线上培训 / 直播 / 讲座
+                  </small>
                 </button>
 
                 {browserCaptureAllowed() ? (
@@ -548,7 +642,9 @@ export default function RecordingSetupView({
                     onClick={() => setCaptureSource("browser")}
                   >
                     <div className="setup-source-card-top">
-                      <span className="setup-source-icon">🌐</span>
+                      <span className="setup-source-icon">
+                        <IconGlobe size={15} />
+                      </span>
                       <strong>浏览器麦克风</strong>
                       {captureSource === "browser" && (
                         <span className="source-check-badge">✓</span>
@@ -560,10 +656,14 @@ export default function RecordingSetupView({
                 ) : (
                   <div className="setup-source-card disabled-placeholder">
                     <div className="setup-source-card-top">
-                      <span className="setup-source-icon">🔒</span>
+                      <span className="setup-source-icon">
+                        <IconLock size={15} />
+                      </span>
                       <strong>系统收音就绪</strong>
                     </div>
-                    <span className="setup-source-desc">原生高保真离线采集</span>
+                    <span className="setup-source-desc">
+                      原生高保真离线采集
+                    </span>
                     <small className="setup-source-sub">低延迟 · 纯本地</small>
                   </div>
                 )}
@@ -573,7 +673,9 @@ export default function RecordingSetupView({
               {captureSource === "macos-both" && (
                 <div className="setup-echo-control-bar">
                   <div className="echo-bar-label">
-                    <span className="echo-icon">🎛️</span>
+                    <span className="echo-icon">
+                      <IconSliders size={15} />
+                    </span>
                     <div className="echo-label-group">
                       <strong>双轨回声消除</strong>
                       <small>佩戴耳机推荐标准处理；外放扬声器推荐 AEC3</small>
@@ -621,7 +723,9 @@ export default function RecordingSetupView({
             <div className="setup-card">
               <div className="setup-card-header">
                 <div className="setup-card-title-row">
-                  <span className="setup-card-icon">🤖</span>
+                  <span className="setup-card-icon">
+                    <IconCpu size={16} />
+                  </span>
                   <div>
                     <h3>识别引擎与交付策略</h3>
                     <p>配置识别引擎、个人专有词库与会后整理规则。</p>
@@ -640,7 +744,8 @@ export default function RecordingSetupView({
                     onChange={(e) =>
                       setBrief({
                         ...brief,
-                        source_language: e.target.value as typeof brief.source_language,
+                        source_language: e.target
+                          .value as typeof brief.source_language,
                       })
                     }
                   >
@@ -670,7 +775,9 @@ export default function RecordingSetupView({
               {/* 个人术语库：专有名词与词库增强 */}
               <div className="setup-terms-card">
                 <div className="setup-terms-info">
-                  <span className="setup-terms-icon">📖</span>
+                  <span className="setup-terms-icon">
+                    <IconBook size={15} />
+                  </span>
                   <div className="setup-terms-text">
                     <div className="setup-terms-headline">
                       <strong>个人术语库</strong>
@@ -708,7 +815,7 @@ export default function RecordingSetupView({
                       setCompletionMode("quick");
                     }}
                   >
-                    ✨ 文字稿 ＋ AI 纪要
+                    <IconSparkles size={13} /> 文字稿 ＋ AI 纪要
                   </button>
                   <button
                     type="button"
@@ -718,7 +825,7 @@ export default function RecordingSetupView({
                       setCompletionMode("full");
                     }}
                   >
-                    📝 仅生成文字稿
+                    <IconFileText size={13} /> 仅生成文字稿
                   </button>
                   <button
                     type="button"
@@ -727,7 +834,7 @@ export default function RecordingSetupView({
                       setCompletionMode("none");
                     }}
                   >
-                    💾 仅保存录音
+                    <IconSave size={13} /> 仅保存录音
                   </button>
                 </div>
               </div>
@@ -751,7 +858,8 @@ export default function RecordingSetupView({
                     onChange={(e) =>
                       setBrief({
                         ...brief,
-                        output_language: e.target.value as typeof brief.output_language,
+                        output_language: e.target
+                          .value as typeof brief.output_language,
                       })
                     }
                   >
@@ -764,46 +872,6 @@ export default function RecordingSetupView({
           </div>
         </div>
       </div>
-
-      {/* 底部轻量就绪状态条 */}
-      <footer className="setup-footer-bar">
-        <div className="setup-footer-status">
-          <span className="setup-footer-badge">
-            <span className="footer-dot-green" />
-            {nativeCapability?.available ? "本机音频服务就绪" : "需麦克风/系统声音授权"}
-          </span>
-          <span className="setup-footer-badge">
-            <span className="footer-dot-green" />
-            实时识别已配置（{draftEngine === "qwen" ? "千问 Qwen-ASR" : "Whisper"}）
-          </span>
-          <span className="setup-footer-badge">
-            <span className="footer-dot-green" />
-            {preflight?.storage.writable !== false ? "本地存储空间充足" : "存储不可写"}
-          </span>
-          {isCloudMinutes ? (
-            <span
-              className="setup-footer-badge setup-privacy-badge cloud-notice"
-              title="录音与实时识别纯本地离线处理；会后纪要经由您核对确认后发送至所选云端模型"
-            >
-              🛡️ 录音转写本地离线 · 会后纪要经确认由云端处理（{selectedMinutesProfile?.name || selectedMinutesProfile?.model || "云端模型"}）
-            </span>
-          ) : (
-            <span className="setup-footer-badge setup-privacy-badge">
-              🔒 纯本地离线处理 · 无云端数据传输
-            </span>
-          )}
-        </div>
-        <div className="setup-footer-right">
-          <button
-            type="button"
-            className="setup-mgmt-link"
-            onClick={onModels}
-            title="查看完整依赖、模型及环境自检"
-          >
-            系统与环境管理 ↗
-          </button>
-        </div>
-      </footer>
     </div>
   );
 }

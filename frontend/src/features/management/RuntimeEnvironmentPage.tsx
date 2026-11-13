@@ -20,8 +20,16 @@ const recordingDefaults = [
   ["streamEnabled", "Qwen 实时流式输出", "开启后逐字打字机推送到实时界面"],
   ["responsiveMode", "短片段极速预览", "提前返回 0.5s 快速预览并支持尾部修订"],
   ["prefixEnabled", "上下文稳定前缀锁定", "提升长时间连续会议的上下文连贯度"],
-  ["contextEnabled", "会议准备提纲辅助", "使用会前填写的议程与目标纠偏专有名词"],
-  ["correctionEnabled", "本地模型实时校对", "在后台使用小型本地模型校对已转写片段"],
+  [
+    "contextEnabled",
+    "会议准备提纲辅助",
+    "使用会前填写的议程与目标纠偏专有名词",
+  ],
+  [
+    "correctionEnabled",
+    "本地模型实时校对",
+    "在后台使用小型本地模型校对已转写片段",
+  ],
 ] as const;
 
 function RecordingDefaults() {
@@ -35,7 +43,9 @@ function RecordingDefaults() {
     enabled: preferences.correctionEnabled,
   });
   const localProfiles =
-    environment?.analysis.profiles.filter((profile) => profile.provider_type === "local") || [];
+    environment?.analysis.profiles.filter(
+      (profile) => profile.provider_type === "local",
+    ) || [];
 
   function update(patch: Partial<RecordingPreferences>) {
     const next = { ...readRecordingPreferences(window.localStorage), ...patch };
@@ -65,7 +75,9 @@ function RecordingDefaults() {
             <input
               type="checkbox"
               className="pref-switch"
-              checked={preferences[key as keyof RecordingPreferences] as boolean}
+              checked={
+                preferences[key as keyof RecordingPreferences] as boolean
+              }
               onChange={(event) => update({ [key]: event.target.checked })}
             />
           </label>
@@ -81,7 +93,9 @@ function RecordingDefaults() {
           <select
             className="pref-select"
             value={preferences.correctionProfileId}
-            onChange={(event) => update({ correctionProfileId: event.target.value })}
+            onChange={(event) =>
+              update({ correctionProfileId: event.target.value })
+            }
           >
             <option value="">请选择本地模型服务</option>
             {localProfiles.map((profile) => (
@@ -152,7 +166,9 @@ export default function RuntimeEnvironmentPage({
         <div className="section-title-row">
           <div>
             <h3>🔐 系统授权与音频采集</h3>
-            <p className="section-desc">macOS 屏幕声音采集与麦克风录制权限状态</p>
+            <p className="section-desc">
+              macOS 屏幕声音采集与麦克风录制权限状态
+            </p>
           </div>
         </div>
 
@@ -170,7 +186,9 @@ export default function RuntimeEnvironmentPage({
                 data.native.screen_permission ? "success" : "warning"
               }`}
             >
-              {data.native.screen_permission ? "✓ 已授权" : "未授权 · 需系统允许"}
+              {data.native.screen_permission
+                ? "✓ 已授权"
+                : "未授权 · 需系统允许"}
             </span>
           </div>
 
@@ -187,7 +205,9 @@ export default function RuntimeEnvironmentPage({
                 data.native.microphone_permission ? "success" : "warning"
               }`}
             >
-              {data.native.microphone_permission ? "✓ 已授权" : "未授权 · 需系统允许"}
+              {data.native.microphone_permission
+                ? "✓ 已授权"
+                : "未授权 · 需系统允许"}
             </span>
           </div>
 
@@ -222,9 +242,24 @@ export default function RuntimeEnvironmentPage({
         <div className="env-status-grid">
           {(
             [
-              ["ffmpeg", "FFmpeg 多媒体转码库", "音频切片、重采样与双轨合成", "🎵"],
-              ["diarization", "声学发言人分离模型", "根据声纹特征切分不同发言人", "👥"],
-              ["punctuation", "中文自然标点恢复", "离线实时断句与中英文标点修正", "📝"],
+              [
+                "ffmpeg",
+                "FFmpeg 多媒体转码库",
+                "音频切片、重采样与双轨合成",
+                "🎵",
+              ],
+              [
+                "diarization",
+                "声学发言人分离模型",
+                "根据声纹特征切分不同发言人",
+                "👥",
+              ],
+              [
+                "punctuation",
+                "中文自然标点恢复",
+                "离线实时断句与中英文标点修正",
+                "📝",
+              ],
             ] as const
           ).map(([key, label, desc, icon]) => (
             <div className="env-status-item" key={key}>
@@ -252,7 +287,9 @@ export default function RuntimeEnvironmentPage({
         <div className="section-title-row">
           <div>
             <h3>💾 数据存储与磁盘占用</h3>
-            <p className="section-desc">录音原始音频、文字稿、AI 纪要与数据库位置</p>
+            <p className="section-desc">
+              录音原始音频、文字稿、AI 纪要与数据库位置
+            </p>
           </div>
         </div>
 
@@ -275,7 +312,11 @@ export default function RuntimeEnvironmentPage({
           <div className="storage-metrics-row">
             <div className="storage-metric-col">
               <span className="metric-sub">目录写权限</span>
-              <strong className={data.storage.writable ? "text-success" : "text-danger"}>
+              <strong
+                className={
+                  data.storage.writable ? "text-success" : "text-danger"
+                }
+              >
                 {data.storage.writable ? "✓ 可正常读写" : "✕ 不可写 (权限受阻)"}
               </strong>
             </div>
@@ -322,7 +363,9 @@ export default function RuntimeEnvironmentPage({
               <small>包含基线评测、发布就绪检查、质量样本及录音契约校验</small>
             </div>
           </div>
-          <span className="summary-arrow">{advanced ? "收起 ▲" : "展开 ▼"}</span>
+          <span className="summary-arrow">
+            {advanced ? "收起 ▲" : "展开 ▼"}
+          </span>
         </summary>
 
         {advanced && (

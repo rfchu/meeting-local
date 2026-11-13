@@ -41,9 +41,7 @@ export default function ModelServicesPage({
               </small>
             </div>
           ))}
-          <p className="muted">
-            在录音或转写时选择本场使用的语音引擎。
-          </p>
+          <p className="muted">在录音或转写时选择本场使用的语音引擎。</p>
         </section>
       )}
       <ModelDirectoryImport active={active} />

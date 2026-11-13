@@ -71,7 +71,8 @@ export interface InterviewItem {
   content: string;
   evidence: InterviewEvidence[];
 }
-export type InterviewSection = "background" | "qa" | "competencies" | "concerns" | "followups" | "summary";
+export type InterviewSection =
+  "background" | "qa" | "competencies" | "concerns" | "followups" | "summary";
 export interface PendingInterviewItem extends InterviewItem {
   section: InterviewSection;
   issue: string;

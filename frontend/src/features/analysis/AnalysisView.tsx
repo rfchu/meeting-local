@@ -1,5 +1,6 @@
 import type { Environment, Meeting } from "../../types";
 import { download } from "../../api";
+import { resolveAnalysisStaleNotice } from "../minutes/presentation";
 import {
   clock,
   currentAnalysis,
@@ -48,76 +49,83 @@ export default function AnalysisView({
   const profile = environment?.analysis.profiles.find(
     (item) => item.id === model,
   );
-  const stale =
-    artifact && (transcriptDirty || artifact.revision !== meeting.revision);
+  const staleNotice = resolveAnalysisStaleNotice({
+    artifact,
+    meetingRevision: meeting.revision,
+    transcriptDirty,
+  });
+  const canGenerateAnalysis = Boolean(
+    meeting.revision && model && environment?.analysis.ready && !running,
+  );
   const byId = new Map(meeting.segments.map((item) => [item.id, item]));
+  const showJobCard =
+    !!job && (running || ["failed", "cancelled"].includes(job.state));
   return (
     <div id="analysisView">
-      <p className="muted">
-        内部复盘 · 对照原文核对讨论、决定、待办和未决问题。
-      </p>
-      <div className="analysis-toolbar">
-        <button
-          className="primary"
-          disabled={
-            !meeting.revision ||
-            !model ||
-            !environment?.analysis.ready ||
-            running
-          }
-          onClick={onGenerate}
-        >
-          {current ? "重新生成会议分析" : "生成会议分析"}
-        </button>
-        <button
-          disabled={!current || transcriptDirty || composing || running}
-          onClick={onCompose}
-        >
-          用这份分析生成纪要草稿
-        </button>
-        <button className="text-btn" onClick={onConfigure}>
-          {profile?.name || model || "配置分析模型"} · 运行管理
-        </button>
-        <select
-          id="analysisExport"
-          aria-label="导出会议分析"
-          value=""
-          onChange={(e) => {
-            if (e.target.value)
-              download(
-                `/meetings/${meeting.id}/analysis/export/${e.target.value}`,
-              );
-          }}
-        >
-          <option value="">导出分析 ↓</option>
-          <option value="md">Markdown</option>
-          <option value="json">结构化 JSON</option>
-        </select>
+      <div className="analysis-top">
+        <p className="analysis-subtitle muted">
+          内部复盘 · 对照原文核对讨论、决定、待办和未决问题。
+        </p>
+        <div className="analysis-toolbar">
+          <button
+            className="primary"
+            disabled={!canGenerateAnalysis}
+            onClick={onGenerate}
+          >
+            {current ? "重新生成会议分析" : "生成会议分析"}
+          </button>
+          <button
+            disabled={!current || transcriptDirty || composing || running}
+            onClick={onCompose}
+          >
+            用这份分析生成纪要草稿
+          </button>
+          <button className="text-btn" onClick={onConfigure}>
+            {profile?.name || model || "配置分析模型"} · 运行与模型管理
+          </button>
+          <select
+            id="analysisExport"
+            aria-label="导出会议分析"
+            value=""
+            onChange={(e) => {
+              if (e.target.value)
+                download(
+                  `/meetings/${meeting.id}/analysis/export/${e.target.value}`,
+                );
+            }}
+          >
+            <option value="">导出分析 ↓</option>
+            <option value="md">Markdown</option>
+            <option value="json">结构化 JSON</option>
+          </select>
+        </div>
       </div>
-      {job && (
+      {showJobCard && job && (
         <div id="analysisJob">
           <div className="job-head">
             <span>{job.stage}</span>
-            {(running || ["failed", "cancelled"].includes(job.state)) && (
-              <button
-                className="text-btn"
-                onClick={() =>
-                  onJobAction(job.id, running ? "cancel" : "retry")
-                }
-              >
-                {running ? "取消任务" : "从检查点重试"}
-              </button>
-            )}
+            <button
+              className="text-btn"
+              onClick={() => onJobAction(job.id, running ? "cancel" : "retry")}
+            >
+              {running ? "取消任务" : "从检查点重试"}
+            </button>
           </div>
           <progress max={1} value={job.progress} />
-          <pre id="analysisError">{job.error}</pre>
+          {job.error ? <pre id="analysisError">{job.error}</pre> : null}
         </div>
       )}
-      {stale && (
-        <div className="analysis-notice">
-          {transcriptDirty
-            ? "文字稿正在修改；保存后当前会议分析将过期，请重新生成。"
-            : `该分析基于 v${artifact.revision}，当前文字稿为 v${meeting.revision}，建议重新生成。`}
+      {staleNotice && (
+        <div className="analysis-notice stale-compact-notice" role="status">
+          <span className="stale-notice-text">{staleNotice.message}</span>
+          <button
+            type="button"
+            className="notice-action-btn stale-regen-btn"
+            disabled={!canGenerateAnalysis}
+            onClick={onGenerate}
+          >
+            {running ? "正在生成…" : staleNotice.actionLabel}
+          </button>
         </div>
       )}
       {!artifact ? (
@@ -154,7 +162,7 @@ export default function AnalysisView({
               <p className="muted">
                 {!meeting.revision
                   ? "请先完成录音转写，再生成深度研判。"
-                  : "请先在「运行管理」中配置可用的分析模型。"}
+                  : "请先在「运行与模型管理」中配置可用的分析模型。"}
               </p>
             )}
           </div>

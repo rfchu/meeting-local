@@ -646,7 +646,7 @@ function ReviewPanel({
           <h3>AI 扩写建议</h3>
           {!profileId && (
             <button className="text-btn" onClick={onConfigureModel}>
-              在运行管理中配置扩写模型
+              在运行与模型管理中配置扩写模型
             </button>
           )}
           <button
@@ -671,7 +671,13 @@ function ReviewPanel({
                 )
                   return;
                 void run(
-                  () => api.expandNote(meeting.id, note.id, profileId, cloudConfirmation(selected)),
+                  () =>
+                    api.expandNote(
+                      meeting.id,
+                      note.id,
+                      profileId,
+                      cloudConfirmation(selected),
+                    ),
                   "扩写任务已提交",
                 );
               } catch (e) {

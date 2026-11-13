@@ -1,4 +1,9 @@
-import type { ComponentProps } from "react";
+import {
+  useEffect,
+  useState,
+  type ComponentProps,
+  type ReactNode,
+} from "react";
 import RecordingRecoveryCenter from "../notes/RecordingRecoveryCenter";
 import type { TaskFocus } from "../../types";
 import RuntimeOverviewPage from "./RuntimeOverviewPage";
@@ -12,11 +17,22 @@ import TasksPanel from "./TasksPanel";
 
 import IndexManagement from "./IndexManagement";
 import ModelDefaults from "./ModelDefaults";
-import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import Modal from "../../components/Modal";
 
 import { api } from "../../api";
+import {
+  IconAlertTriangle,
+  IconBarChart,
+  IconClock,
+  IconCpu,
+  IconLock,
+  IconRefresh,
+  IconSearch,
+  IconSettings,
+  IconShield,
+  IconSliders,
+} from "../../styles/icons";
 
 import "./management.css";
 
@@ -24,7 +40,7 @@ interface NavGroupItem {
   key: ManagementPage;
   label: string;
   description: string;
-  icon: string;
+  icon: ReactNode;
 }
 
 interface NavGroup {
@@ -38,25 +54,60 @@ const navGroups: NavGroup[] = [
     id: "monitoring",
     title: "运行监控",
     items: [
-      { key: "overview", label: "运行总览", description: "能力状态与核心指标", icon: "📊" },
-      { key: "tasks", label: "任务队列", description: "离线转写与后台任务", icon: "⏳" },
-      { key: "recovery", label: "录音恢复", description: "中断会话与草稿拯救", icon: "🛡️" },
+      {
+        key: "overview",
+        label: "运行总览",
+        description: "能力状态与核心指标",
+        icon: <IconBarChart size={15} />,
+      },
+      {
+        key: "tasks",
+        label: "任务队列",
+        description: "离线转写与后台任务",
+        icon: <IconClock size={15} />,
+      },
+      {
+        key: "recovery",
+        label: "录音恢复",
+        description: "中断会话与草稿拯救",
+        icon: <IconShield size={15} />,
+      },
     ],
   },
   {
     id: "ai",
     title: "智能模型",
     items: [
-      { key: "models", label: "模型与服务", description: "语音识别与 LLM 供应商", icon: "🧠" },
-      { key: "defaults", label: "调度偏好", description: "各功能场景默认模型", icon: "🎛️" },
-      { key: "index", label: "向量与检索", description: "本地语义模型与索引库", icon: "🔍" },
+      {
+        key: "models",
+        label: "模型与服务",
+        description: "语音识别与 LLM 供应商",
+        icon: <IconCpu size={15} />,
+      },
+      {
+        key: "defaults",
+        label: "调度偏好",
+        description: "各功能场景默认模型",
+        icon: <IconSliders size={15} />,
+      },
+      {
+        key: "index",
+        label: "向量与检索",
+        description: "本地语义模型与索引库",
+        icon: <IconSearch size={15} />,
+      },
     ],
   },
   {
     id: "system",
     title: "系统环境",
     items: [
-      { key: "environment", label: "存储与环境", description: "系统权限、依赖与参数", icon: "⚙️" },
+      {
+        key: "environment",
+        label: "存储与环境",
+        description: "系统权限、依赖与参数",
+        icon: <IconSettings size={15} />,
+      },
     ],
   },
 ];
@@ -126,14 +177,25 @@ export default function RuntimeManagement({
     if (!recoveryBusy) leave(onClose);
   };
 
-  const activeJobCount = data ? (data.job_counts.running || 0) + (data.job_counts.queued || 0) : 0;
-  const hasEnvIssue = data ? data.issues.length > 0 || !data.storage.writable || !data.dependencies.ffmpeg : false;
+  const activeJobCount = data
+    ? (data.job_counts.running || 0) + (data.job_counts.queued || 0)
+    : 0;
+  const hasEnvIssue = data
+    ? data.issues.length > 0 ||
+      !data.storage.writable ||
+      !data.dependencies.ffmpeg
+    : false;
 
   return (
-    <Modal className="management-shell" ariaLabel="运行管理" onClose={close}>
+    <section
+      className="shell-page management-shell"
+      aria-label="运行与模型管理"
+    >
       <header className="management-header">
         <div className="management-header-title">
-          <div className="management-header-icon-box">🎛️</div>
+          <div className="management-header-icon-box">
+            <IconSliders size={18} />
+          </div>
           <div>
             <div className="management-header-meta">
               <span className="management-eyebrow">听记 · 本机工作空间</span>
@@ -146,7 +208,7 @@ export default function RuntimeManagement({
                 </span>
               )}
             </div>
-            <h1>控制中心与运行管理</h1>
+            <h1>运行与模型管理</h1>
           </div>
         </div>
         <div className="management-header-actions">
@@ -157,13 +219,23 @@ export default function RuntimeManagement({
               disabled={query.isFetching}
               onClick={() => {
                 void query.refetch();
-                void client.invalidateQueries({ queryKey: ["runtime-resources"] });
-                void client.invalidateQueries({ queryKey: ["runtime-recordings"] });
-                void client.invalidateQueries({ queryKey: ["model-preferences"] });
+                void client.invalidateQueries({
+                  queryKey: ["runtime-resources"],
+                });
+                void client.invalidateQueries({
+                  queryKey: ["runtime-recordings"],
+                });
+                void client.invalidateQueries({
+                  queryKey: ["model-preferences"],
+                });
               }}
               title="刷新本机状态"
             >
-              <span className={`refresh-icon ${query.isFetching ? "spinning" : ""}`}>🔄</span>
+              <span
+                className={`refresh-icon ${query.isFetching ? "spinning" : ""}`}
+              >
+                <IconRefresh size={14} />
+              </span>
               <span>{query.isFetching ? "检查中…" : "刷新状态"}</span>
             </button>
           )}
@@ -173,13 +245,13 @@ export default function RuntimeManagement({
             disabled={recoveryBusy}
             onClick={close}
           >
-            返回会议 ✕
+            返回工作区
           </button>
         </div>
       </header>
 
       <div className="management-layout">
-        <nav aria-label="运行管理导航" className="management-sidebar-nav">
+        <nav aria-label="运行与模型管理导航" className="management-sidebar-nav">
           {navGroups.map((group) => (
             <div key={group.id} className="management-nav-group">
               <span className="management-nav-group-title">{group.title}</span>
@@ -209,14 +281,18 @@ export default function RuntimeManagement({
                     >
                       <div className="management-nav-item-header">
                         <span className="management-nav-icon">{item.icon}</span>
-                        <strong className="management-nav-label">{item.label}</strong>
+                        <strong className="management-nav-label">
+                          {item.label}
+                        </strong>
                         {badgeContent !== undefined && (
                           <span className={`management-nav-badge ${badgeType}`}>
                             {badgeContent}
                           </span>
                         )}
                       </div>
-                      <small className="management-nav-desc">{item.description}</small>
+                      <small className="management-nav-desc">
+                        {item.description}
+                      </small>
                     </button>
                   );
                 })}
@@ -224,7 +300,9 @@ export default function RuntimeManagement({
             </div>
           ))}
           <div className="management-nav-footer">
-            <span className="nav-privacy-tag">🔒 纯本地运行 · 隐私无传输</span>
+            <span className="nav-privacy-tag">
+              <IconLock size={12} /> 纯本地运行 · 隐私无传输
+            </span>
           </div>
         </nav>
 
@@ -250,7 +328,11 @@ export default function RuntimeManagement({
             </div>
             {data && (
               <span className="management-check-time">
-                检查于 {new Date(data.checked_at * 1000).toLocaleTimeString("zh-CN", { hour12: false })} · 纯本机环境
+                检查于{" "}
+                {new Date(data.checked_at * 1000).toLocaleTimeString("zh-CN", {
+                  hour12: false,
+                })}{" "}
+                · 纯本机环境
               </span>
             )}
           </div>
@@ -266,7 +348,9 @@ export default function RuntimeManagement({
 
           {page !== "recovery" && query.error && (
             <div className="management-error-banner" role="alert">
-              <span className="error-icon">⚠️</span>
+              <span className="error-icon">
+                <IconAlertTriangle size={16} />
+              </span>
               <div>
                 <strong>状态检查暂不可用</strong>
                 <p>{query.error.message}</p>
@@ -283,7 +367,9 @@ export default function RuntimeManagement({
 
           {page !== "recovery" && !data && query.isPending && (
             <div className="management-loading-box" role="status">
-              <span className="spinning">🔄</span>
+              <span className="spinning">
+                <IconRefresh size={15} />
+              </span>
               <span>正在读取本机运行信息与模型状态…</span>
             </div>
           )}
@@ -363,6 +449,6 @@ export default function RuntimeManagement({
           </div>
         </Modal>
       )}
-    </Modal>
+    </section>
   );
 }

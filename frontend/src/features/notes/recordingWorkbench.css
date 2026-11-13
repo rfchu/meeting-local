@@ -117,9 +117,7 @@
 }
 
 @media (min-width: 851px) {
-  .recording-workbench
-    .recording-view-tabs
-    .workbench-notes-tab {
+  .recording-workbench .recording-view-tabs .workbench-notes-tab {
     display: none !important;
   }
   .recording-workbench.focus-mode
@@ -234,8 +232,8 @@
   padding: 3px 7px;
   color: #633525;
   background: #f0e3db;
-  border-radius: 4px;
-  font-size: 11px;
+  border-radius: var(--radius-sm);
+  font-size: var(--text-xs);
 }
 
 .overview-timeline .overview-locate,

@@ -67,13 +67,15 @@ export function resolveMeetingView(meeting: Meeting, saved: MeetingView) {
     (a) => a.id === saved.minutesId && a.kind === "meeting_minutes",
   ) as Artifact<MeetingMinutes> | undefined;
   const selected = minutes || latestMinutes(meeting);
-  const targetWorkspace = saved.workspace && ["minutes", "analysis", "transcript"].includes(saved.workspace)
-    ? saved.workspace
-    : selected
-      ? "minutes"
-      : meeting.revision
+  const targetWorkspace =
+    saved.workspace &&
+    ["minutes", "analysis", "transcript"].includes(saved.workspace)
+      ? saved.workspace
+      : selected
         ? "minutes"
-        : "transcript";
+        : meeting.revision
+          ? "minutes"
+          : "transcript";
   return {
     workspace: targetWorkspace as Workspace,
     minutes: selected,

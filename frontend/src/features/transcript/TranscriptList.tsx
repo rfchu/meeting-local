@@ -11,6 +11,13 @@ import {
 import { defaultRangeExtractor, useVirtualizer } from "@tanstack/react-virtual";
 import type { Segment, SourceTrack } from "../../types";
 import { clock, trackLabel } from "../../utils";
+import {
+  IconAlertTriangle,
+  IconCheck,
+  IconClock,
+  IconCopy,
+  IconLightbulb,
+} from "../../styles/icons";
 function fitText(element: HTMLTextAreaElement | null) {
   if (!element) return;
   element.style.height = "auto";
@@ -127,7 +134,7 @@ const Row = memo(function Row({
               className="warning-pill boundary"
               title="分段交界处，请回听确认重复或漏字"
             >
-              ⚠️ 待核对边界
+              <IconAlertTriangle size={12} /> 待核对边界
             </span>
           )}
           {segment.alignment_warning && (
@@ -135,7 +142,7 @@ const Row = memo(function Row({
               className="warning-pill alignment"
               title={segment.alignment_warning}
             >
-              ⏱️ 时间待校准
+              <IconClock size={12} /> 时间待校准
             </span>
           )}
         </div>
@@ -156,7 +163,15 @@ const Row = memo(function Row({
             title="复制本句文字"
             onClick={handleCopy}
           >
-            {copied ? "✓ 已复制" : "📋 复制"}
+            {copied ? (
+              <>
+                <IconCheck size={12} /> 已复制
+              </>
+            ) : (
+              <>
+                <IconCopy size={12} /> 复制
+              </>
+            )}
           </button>
           <label
             className={`speaker-lock-label ${segment.speaker_locked ? "is-locked" : ""}`}
@@ -222,6 +237,8 @@ export default function TranscriptList({
   scrollRoot,
   activeSegment,
   readOnly = false,
+  fullDom,
+  hideVirtualBar = false,
 }: {
   readOnly?: boolean;
   activeSegment?: string;
@@ -232,6 +249,8 @@ export default function TranscriptList({
   onSeek: (time: number, track?: SourceTrack) => void;
   jumpSegmentId?: string;
   onEditingChange: (id: string | null) => void;
+  fullDom?: boolean;
+  hideVirtualBar?: boolean;
 }) {
   const parent = useRef<HTMLDivElement>(null);
   const [full, setFull] = useState(false),
@@ -241,7 +260,8 @@ export default function TranscriptList({
     id: string;
     last: boolean;
   } | null>(null);
-  const virtual = total > 300 && !full;
+  const effectiveFull = fullDom ?? full;
+  const virtual = total > 300 && !effectiveFull;
   const focusIndex = focused ? segments.findIndex((s) => s.id === focused) : -1;
   const getKey = useCallback((i: number) => segments[i].id, [segments]);
   const list = useVirtualizer({
@@ -368,10 +388,11 @@ export default function TranscriptList({
   );
   return (
     <>
-      {total > 300 && (
+      {total > 300 && !hideVirtualBar && (
         <div className="transcript-virtual-mode-bar">
           <span className="virtual-mode-hint">
-            💡 已启用大文稿流畅渲染（共 {total} 段，当前视图 {segments.length} 段）
+            <IconLightbulb size={13} /> 已启用大文稿流畅渲染（共 {total}{" "}
+            段，当前视图 {segments.length} 段）
           </span>
           <label className="virtual-mode-toggle">
             <input

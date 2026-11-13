@@ -79,9 +79,12 @@ export function readRecordingPreferences(
         typeof value.silenceReminder === "boolean"
           ? value.silenceReminder
           : true,
-      captureSource: ["browser", "macos-system", "macos-both", "macos-microphone"].includes(
-        value.captureSource,
-      )
+      captureSource: [
+        "browser",
+        "macos-system",
+        "macos-both",
+        "macos-microphone",
+      ].includes(value.captureSource)
         ? value.captureSource
         : "browser",
       draftEngine: value.draftEngine === "qwen" ? "qwen" : "whisper",

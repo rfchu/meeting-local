@@ -190,3 +190,75 @@ export function minutesAdoptionBlockReason(
     return "此版本来源已变化，请根据当前来源重新生成。";
   return undefined;
 }
+
+export interface StaleNoticeBanner {
+  message: string;
+  actionLabel: string;
+}
+
+/**
+ * 合并纪要过期与来源变化提示，保证页面内最多呈现一条紧凑警告与快捷重生成动作。
+ */
+export function resolveMinutesStaleNotice(params: {
+  artifact?: Pick<Artifact<MeetingMinutes>, "revision" | "stale">;
+  meetingRevision: number;
+  transcriptDirty: boolean;
+  readOnly: boolean;
+  sameRevisionRecordChanged?: boolean;
+  analysisUpdated?: boolean;
+}): StaleNoticeBanner | null {
+  const {
+    artifact,
+    meetingRevision,
+    transcriptDirty,
+    readOnly,
+    sameRevisionRecordChanged,
+    analysisUpdated,
+  } = params;
+  if (!artifact) return null;
+  const targetVersion = `v${meetingRevision}`;
+  if (transcriptDirty) {
+    return {
+      message: `文字稿正在修改；当前纪要（基于 v${artifact.revision}）将在保存后过期，旧稿仅供查看。`,
+      actionLabel: `用 ${targetVersion} 重新生成`,
+    };
+  }
+  if (artifact.revision !== meetingRevision) {
+    return {
+      message: `当前纪要基于文字稿 v${artifact.revision}（最新为 ${targetVersion}），旧稿仅供查看与导出，生成新草稿后可对比采用。`,
+      actionLabel: `用 ${targetVersion} 重新生成`,
+    };
+  }
+  if (readOnly || artifact.stale) {
+    return {
+      message: sameRevisionRecordChanged
+        ? "中文记录、译文或整理资料已变化，此版本仅供查看和导出；旧稿仍保留。"
+        : "会议准备、关注点或原文依据已变化，此版本仅供查看和导出；旧稿仍保留。",
+      actionLabel: `用 ${targetVersion} 重新生成`,
+    };
+  }
+  if (analysisUpdated) {
+    return {
+      message: "会议分析已更新，建议生成新草稿核对；当前人工编辑内容仍会保留。",
+      actionLabel: `用 ${targetVersion} 重新生成`,
+    };
+  }
+  return null;
+}
+
+export function resolveAnalysisStaleNotice(params: {
+  artifact?: Pick<Artifact<unknown>, "revision">;
+  meetingRevision: number;
+  transcriptDirty: boolean;
+}): StaleNoticeBanner | null {
+  const { artifact, meetingRevision, transcriptDirty } = params;
+  if (!artifact) return null;
+  if (!transcriptDirty && artifact.revision === meetingRevision) return null;
+  const targetVersion = `v${meetingRevision}`;
+  return {
+    message: transcriptDirty
+      ? `文字稿正在修改（基于 v${artifact.revision} 生成的分析将在保存后过期），建议保存后重新研判。`
+      : `该分析基于文字稿 v${artifact.revision}，当前文字稿为 ${targetVersion}，建议重新生成以保持同步。`,
+    actionLabel: `用 ${targetVersion} 重新生成`,
+  };
+}

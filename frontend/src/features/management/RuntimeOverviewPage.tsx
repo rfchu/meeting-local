@@ -1,6 +1,16 @@
 import CaptureControlPanel from "./CaptureControlPanel";
 import { clock } from "../../utils";
 import type { RuntimeOverview, ManagementPage } from "./types";
+import {
+  IconAlertTriangle,
+  IconCheck,
+  IconClock,
+  IconCoffee,
+  IconCpu,
+  IconMic,
+  IconSettings,
+  IconZap,
+} from "../../styles/icons";
 
 export default function RuntimeOverviewPage({
   data,
@@ -11,10 +21,13 @@ export default function RuntimeOverviewPage({
 }) {
   const readyEngines = data.engines.filter((e) => e.ready).length;
   const totalEngines = data.engines.length;
-  const pendingJobs = (data.job_counts.running || 0) + (data.job_counts.queued || 0);
+  const pendingJobs =
+    (data.job_counts.running || 0) + (data.job_counts.queued || 0);
 
   const hasIssues =
-    data.issues.length > 0 || !data.storage.writable || !data.dependencies.ffmpeg;
+    data.issues.length > 0 ||
+    !data.storage.writable ||
+    !data.dependencies.ffmpeg;
 
   return (
     <div className="runtime-overview-container">
@@ -26,7 +39,9 @@ export default function RuntimeOverviewPage({
           title="点击查看会话详情"
         >
           <div className="kpi-header">
-            <span className="kpi-icon">🎙️</span>
+            <span className="kpi-icon">
+              <IconMic size={16} />
+            </span>
             <span
               className={`kpi-status-badge ${
                 data.sessions.length ? "active" : "idle"
@@ -51,7 +66,9 @@ export default function RuntimeOverviewPage({
           title="点击管理语音识别引擎"
         >
           <div className="kpi-header">
-            <span className="kpi-icon">⚡</span>
+            <span className="kpi-icon">
+              <IconZap size={16} />
+            </span>
             <span
               className={`kpi-status-badge ${
                 readyEngines === totalEngines ? "ready" : "warning"
@@ -80,7 +97,9 @@ export default function RuntimeOverviewPage({
           title="点击配置大模型服务商"
         >
           <div className="kpi-header">
-            <span className="kpi-icon">🧠</span>
+            <span className="kpi-icon">
+              <IconCpu size={16} />
+            </span>
             <span
               className={`kpi-status-badge ${
                 data.llm.profiles.length > 0 ? "ready" : "idle"
@@ -105,7 +124,9 @@ export default function RuntimeOverviewPage({
           title="点击查看任务队列与进度"
         >
           <div className="kpi-header">
-            <span className="kpi-icon">⏳</span>
+            <span className="kpi-icon">
+              <IconClock size={16} />
+            </span>
             <span
               className={`kpi-status-badge ${
                 pendingJobs > 0 ? "active" : "idle"
@@ -129,7 +150,9 @@ export default function RuntimeOverviewPage({
       {hasIssues && (
         <section className="management-alert-box" role="alert">
           <div className="alert-box-header">
-            <span className="alert-box-icon">⚠️</span>
+            <span className="alert-box-icon">
+              <IconAlertTriangle size={16} />
+            </span>
             <div className="alert-box-content">
               <h4>检测到运行环境存在需要注意的事项</h4>
               {data.issues.map((issue) => (
@@ -160,13 +183,17 @@ export default function RuntimeOverviewPage({
       <section className="management-section">
         <div className="section-title-row">
           <div>
-            <h3>🎙️ 实时识别流会话</h3>
+            <h3>
+              <IconMic size={15} /> 实时识别流会话
+            </h3>
             <p className="section-desc">当前连接到本地守护进程的实时转写会话</p>
           </div>
         </div>
         {!data.sessions.length ? (
           <div className="management-empty-state">
-            <span className="empty-icon">☕</span>
+            <span className="empty-icon">
+              <IconCoffee size={22} />
+            </span>
             <p>当前暂无活跃的实时转写会话</p>
             <small>在录音工作台开始录音后，此处将呈现分轨与确认进度</small>
           </div>
@@ -198,7 +225,10 @@ export default function RuntimeOverviewPage({
                   </span>
                 </div>
                 <div className="session-right">
-                  <code className="session-id-pill" title={`会话 ID: ${s.recording_id}`}>
+                  <code
+                    className="session-id-pill"
+                    title={`会话 ID: ${s.recording_id}`}
+                  >
                     #{s.recording_id.slice(0, 8)}
                   </code>
                 </div>
@@ -212,8 +242,12 @@ export default function RuntimeOverviewPage({
       <section className="management-section">
         <div className="section-title-row">
           <div>
-            <h3>⚙️ 后台批处理作业</h3>
-            <p className="section-desc">离线转写、AI 纪要提炼与向量索引任务流</p>
+            <h3>
+              <IconSettings size={15} /> 后台批处理作业
+            </h3>
+            <p className="section-desc">
+              离线转写、AI 纪要提炼与向量索引任务流
+            </p>
           </div>
           {data.jobs.length > 0 && (
             <button
@@ -227,7 +261,9 @@ export default function RuntimeOverviewPage({
         </div>
         {!data.jobs.length ? (
           <div className="management-empty-state">
-            <span className="empty-icon">✓</span>
+            <span className="empty-icon">
+              <IconCheck size={20} />
+            </span>
             <p>暂无待处理或运行中的后台任务</p>
             <small>所有会议的转写与 AI 总结均已完成处理</small>
           </div>
@@ -254,7 +290,9 @@ export default function RuntimeOverviewPage({
                   <div className="job-info-row">
                     <span className="job-kind-badge">{kindLabel}</span>
                     <strong className="job-stage-text">
-                      {j.state === "queued" ? "排队等待中…" : j.stage || "正在处理…"}
+                      {j.state === "queued"
+                        ? "排队等待中…"
+                        : j.stage || "正在处理…"}
                     </strong>
                     <span className="job-pct">{pct}%</span>
                   </div>

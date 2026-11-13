@@ -1,8 +1,6 @@
 import ActionMenu from "./components/ActionMenu";
 import MeetingLibrary from "./features/meeting/MeetingLibrary";
-import RuntimeManagement, {
-  type ManagementPage,
-} from "./features/management/RuntimeManagement";
+import RuntimeManagement from "./features/management/RuntimeManagement";
 import OverviewArchiveButton from "./features/overview/OverviewArchiveButton";
 import SampleMeetingDialog from "./features/onboarding/SampleMeetingDialog";
 import { recordingRecoveryCount } from "./features/notes/recordingInventory";
@@ -23,7 +21,6 @@ import {
   persistMinutesOptions,
   type MinutesOptions,
 } from "./features/minutes/composition";
-import MinutesCompare from "./features/minutes/MinutesCompare";
 import { useModelChoice } from "./preferences/useModelChoice";
 import FollowupsDialog from "./features/meeting/FollowupsDialog";
 import ChineseMeetingRecord from "./features/meeting/ChineseMeetingRecord";
@@ -57,47 +54,36 @@ import {
   latestMinutes,
   revisionLabel,
 } from "./utils";
-import SearchDialog, { type SearchHit } from "./features/SearchDialog";
 import Sidebar from "./components/Sidebar";
 import Workflow from "./components/Workflow";
-import type { TaskFocus } from "./types";
 import { handoffWorkspace } from "./components/handoff";
 import Player from "./components/Player";
 import { AppModals } from "./components/AppModals";
 import Modal from "./components/Modal";
-import { MinutesPreview, RenameDialog } from "./components/Dialogs";
+import { IconClipboard, IconLock, IconPin } from "./styles/icons";
 import TranscriptView from "./features/transcript/TranscriptView";
 import AnalysisView from "./features/analysis/AnalysisView";
 import MinutesView from "./features/minutes/MinutesView";
 import NotesView from "./features/notes/NotesView";
 import { UnifiedTimeline } from "./features/copilot/UnifiedTimeline";
-import CompanionRecordingStatus, {
-  companionRecording,
-} from "./features/notes/CompanionRecordingStatus";
 import RecordingDialog from "./features/notes/RecordingDialog";
 import { recoverableRecordings } from "./features/notes/recordingBuffer";
+import type { SearchHit } from "./features/SearchDialog";
+import { UNIFIED_MANAGEMENT_LABEL, useAppShell } from "./shell/useAppShell";
 
-export default function App({ browserWorkspace = false }: { browserWorkspace?: boolean } = {}) {
-  const [targetRecordingId, setTargetRecordingId] = useState<string>();
-  const [companionId, setCompanionId] = useState(() =>
-    companionRecording(window.location.hash),
-  );
-  useEffect(() => {
-    const readTarget = () =>
-      setCompanionId(companionRecording(window.location.hash));
-    window.addEventListener("hashchange", readTarget);
-    return () => window.removeEventListener("hashchange", readTarget);
-  }, []);
-  const closeCompanionStatus = () => {
-    if (companionRecording(window.location.hash)) {
-      window.history.replaceState(
-        window.history.state,
-        "",
-        window.location.pathname + window.location.search,
-      );
-    }
-    setCompanionId(undefined);
-  };
+export default function App({
+  browserWorkspace = false,
+}: { browserWorkspace?: boolean } = {}) {
+  const shell = useAppShell({ browserWorkspace });
+  const searchOpen = shell.modal?.kind === "search";
+  const renameOpen = shell.modal?.kind === "rename";
+  const retranscribeOpen = shell.modal?.kind === "retranscribe";
+  const prepareOpen = shell.modal?.kind === "prepare";
+  const notesModalOpen = shell.modal?.kind === "notes";
+  const previewOpen = shell.modal?.kind === "preview";
+  const compareIds = shell.modal?.kind === "compare" ? shell.modal.ids : null;
+  const companionId =
+    shell.modal?.kind === "companion" ? shell.modal.id : undefined;
   const client = useQueryClient();
   const listQuery = useQuery({
     queryKey: ["meetings"],
@@ -115,8 +101,6 @@ export default function App({ browserWorkspace = false }: { browserWorkspace?: b
   });
   const [meeting, setMeeting] = useState<Meeting | null>(null),
     [workspace, setWorkspace] = useState<Workspace>("minutes");
-  const [prepareOpen, setPrepareOpen] = useState(false);
-  const [notesModalOpen, setNotesModalOpen] = useState(false);
   const [sessionExpired, setSessionExpired] = useState(false);
   useEffect(() => {
     if (!browserWorkspace) return;
@@ -137,7 +121,6 @@ export default function App({ browserWorkspace = false }: { browserWorkspace?: b
     return () => window.clearInterval(timer);
   }, [browserWorkspace]);
   const [actionsFocus, setActionsFocus] = useState(false);
-  const [retranscribeOpen, setRetranscribeOpen] = useState(false);
   const [deliveryFocus, setDeliveryFocus] = useState(false);
   const [overviewFocus, setOverviewFocus] = useState(false);
   const [overviewSourceId, setOverviewSourceId] = useState<string>();
@@ -176,7 +159,6 @@ export default function App({ browserWorkspace = false }: { browserWorkspace?: b
   const minutesSaveTask = useRef<Promise<
     Artifact<MeetingMinutes> | undefined
   > | null>(null);
-  const [compareIds, setCompareIds] = useState<[string, string] | null>(null);
   const [showCitations, setShowCitations] = useState(false);
   const changeMinutesOptions = (value: MinutesOptions) => {
     setMinutesOptions(value);
@@ -196,28 +178,13 @@ export default function App({ browserWorkspace = false }: { browserWorkspace?: b
     [minutesModel, setMinutesModel] = useModelChoice("minutes", meeting?.id),
     [generating, setGenerating] = useState(false);
   const [uploading, setUploading] = useState(false),
-    [toastText, setToastText] = useState(""),
-    [renameOpen, setRenameOpen] = useState(false),
-    [previewOpen, setPreviewOpen] = useState(false),
-    [recordingOpen, setRecordingOpen] = useState(false);
-  const [taskFocus, setTaskFocus] = useState<TaskFocus | undefined>();
-  const [managementPage, setManagementPage] = useState<ManagementPage | null>(
-    () => {
-      const fragment = window.location.hash;
-      return fragment === "#management/tasks"
-        ? "tasks"
-        : fragment === "#management/recovery"
-          ? "recovery"
-          : null;
-    },
-  );
+    [toastText, setToastText] = useState("");
   const recoveryQuery = useQuery({
     queryKey: ["recording-recoveries"],
     queryFn: recoverableRecordings,
     refetchInterval: 30000,
-    enabled: !recordingOpen,
+    enabled: !shell.recordingLocked,
   });
-  const [libraryOpen, setLibraryOpen] = useState(false);
   const [transcriptionLanguage, setTranscriptionLanguage] =
     useState<TranscriptionLanguage>("auto");
   const experimentalTranscription = transcriptionLanguage === "ja";
@@ -230,20 +197,8 @@ export default function App({ browserWorkspace = false }: { browserWorkspace?: b
   }, [meeting?.id, meeting?.flow?.brief.source_language]);
   const [reviewFocus, setReviewFocus] = useState<number | null>(null);
   const [reviewFocusVersion, setReviewFocusVersion] = useState(0);
-  const [reviewSourceOpen, setReviewSourceOpen] = useState(true);
+  const [reviewSourceOpen, setReviewSourceOpen] = useState(false);
   const [reviewBusy, setReviewBusy] = useState(false);
-  const [searchOpen, setSearchOpen] = useState(false);
-  const [followupsOpen, setFollowupsOpen] = useState(false);
-  useEffect(() => {
-    const handleGlobalShortcuts = (event: KeyboardEvent) => {
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
-        event.preventDefault();
-        setSearchOpen((prev) => !prev);
-      }
-    };
-    window.addEventListener("keydown", handleGlobalShortcuts);
-    return () => window.removeEventListener("keydown", handleGlobalShortcuts);
-  }, []);
   const [searchTarget, setSearchTarget] = useState<SearchHit | null>(null);
   const [engine, setEngine] = useModelChoice("transcription", meeting?.id),
     [diarization, setDiarization] = useState(false),
@@ -316,7 +271,7 @@ export default function App({ browserWorkspace = false }: { browserWorkspace?: b
   });
   const navigateReview = (step: ReviewStep) => {
     if (step === "notes") {
-      setNotesModalOpen(true);
+      shell.openModal({ kind: "notes" });
       setWorkspace("minutes");
     } else {
       setWorkspace(step === "speakers" ? "transcript" : step);
@@ -498,7 +453,14 @@ export default function App({ browserWorkspace = false }: { browserWorkspace?: b
     setReviewFocusVersion((value) => value + 1);
   };
 
-  const openMeeting = async (id: string) => {
+  const openMeeting = async (
+    id: string,
+    { switchRoute = true }: { switchRoute?: boolean } = {},
+  ) => {
+    if (switchRoute && shell.recordingLocked) {
+      toast("请先返回录音现场；结束录音后可打开其他会议。");
+      return null;
+    }
     setReviewFocus(null);
     const request = ++openingMeeting.current;
     try {
@@ -549,6 +511,7 @@ export default function App({ browserWorkspace = false }: { browserWorkspace?: b
       } catch {
         /* Historical jobs do not override the last selected model. */
       }
+      if (switchRoute) shell.openMeeting();
       return value;
     } catch (error) {
       toast((error as Error).message);
@@ -561,7 +524,7 @@ export default function App({ browserWorkspace = false }: { browserWorkspace?: b
     restoredMeeting.current = true;
     const id = lastMeeting(browserMeetingStorage());
     if (!meetingRef.current && listQuery.data.some((row) => row.id === id))
-      void openMeeting(id);
+      void openMeeting(id, { switchRoute: false });
   }, [listQuery.data]);
   useEffect(() => {
     if (meeting)
@@ -572,6 +535,10 @@ export default function App({ browserWorkspace = false }: { browserWorkspace?: b
       );
   }, [meeting?.id, workspace, selectedMinutesId]);
   const goHome = async () => {
+    if (shell.recordingLocked) {
+      toast("请先返回录音现场；结束录音后可打开其他会议。");
+      return;
+    }
     if (savingTranscript) {
       toast("文字稿正在保存，请稍候再返回首页");
       return;
@@ -583,6 +550,7 @@ export default function App({ browserWorkspace = false }: { browserWorkspace?: b
       rememberMeeting("", browserMeetingStorage());
       setMeeting(null);
       displayMinutes(null);
+      shell.openMeeting();
     } catch {
       /* Preserve unsaved content. */
     }
@@ -722,17 +690,16 @@ export default function App({ browserWorkspace = false }: { browserWorkspace?: b
         );
       }
       await client.invalidateQueries({ queryKey: ["meetings"] });
-      const opened = await openMeeting(created.id);
+      const opened = await openMeeting(created.id, { switchRoute: false });
       if (!opened)
         throw new Error("本机会议已保存，打开暂未成功，请重试进入会后整理");
-      setRecordingOpen(false);
-      setTargetRecordingId(undefined);
+      shell.exitRecording();
       setWorkspace(
         options.mode === "none" ? "notes" : handoffWorkspace(opened),
       );
       toast(
         reusedHandoff
-          ? "已打开会议，沿用首次交接的任务。处理状态可在运行管理查看，失败或取消的任务可在那里重试。"
+          ? `已打开会议，沿用首次交接的任务。处理状态可在${UNIFIED_MANAGEMENT_LABEL}查看，失败或取消的任务可在那里重试。`
           : followUpErrors.length
             ? `录音已保存；${followUpErrors.join("；")}`
             : options.mode === "none"
@@ -787,9 +754,13 @@ export default function App({ browserWorkspace = false }: { browserWorkspace?: b
     if (!meeting || !analysisModel) return toast("请先配置分析模型");
     const profiles = envQuery.data?.analysis.profiles || [];
     const profile = profiles.find((item) => item.id === analysisModel);
-    if (profile?.provider_type === "cloud" && !window.confirm(
-      `本场文字稿将发送至 ${profile.name}（${profile.base_url}）生成会议分析。是否继续？`,
-    )) return;
+    if (
+      profile?.provider_type === "cloud" &&
+      !window.confirm(
+        `本场文字稿将发送至 ${profile.name}（${profile.base_url}）生成会议分析。是否继续？`,
+      )
+    )
+      return;
     try {
       await saveTranscript();
       await api.analyze(
@@ -922,10 +893,13 @@ export default function App({ browserWorkspace = false }: { browserWorkspace?: b
     try {
       const displayed = selectedMinutesRef.current;
       const saved = await saveMinutes();
-      setCompareIds([
-        left === displayed && saved ? saved.id : left,
-        right === displayed && saved ? saved.id : right,
-      ]);
+      shell.openModal({
+        kind: "compare",
+        ids: [
+          left === displayed && saved ? saved.id : left,
+          right === displayed && saved ? saved.id : right,
+        ],
+      });
     } catch {
       /* Saving already reported the error. */
     }
@@ -941,7 +915,7 @@ export default function App({ browserWorkspace = false }: { browserWorkspace?: b
       setMeeting(fresh);
       const adopted = fresh.artifacts.find((a) => a.id === aid);
       if (adopted) displayMinutes(adopted as Artifact<MeetingMinutes>);
-      setCompareIds(null);
+      shell.closeModal();
       toast("已采用此版本，会议成果与跟进使用该版本；旧版本仍保留");
     } catch (error) {
       toast((error as Error).message);
@@ -956,7 +930,7 @@ export default function App({ browserWorkspace = false }: { browserWorkspace?: b
   };
   const openMinutesPreview = async () => {
     await saveMinutes();
-    setPreviewOpen(true);
+    shell.openModal({ kind: "preview" });
   };
   const environment = envQuery.data,
     transcriptionJob = latestJob(meeting, "transcription"),
@@ -967,67 +941,47 @@ export default function App({ browserWorkspace = false }: { browserWorkspace?: b
   const candidateArtifacts =
     meeting?.artifacts.filter((item) => item.kind === "transcript_candidate") ||
     [];
+  const hasMeetingAudio = Boolean(
+    meeting &&
+    (meeting.duration > 0 || (meeting.audio_tracks?.length ?? 0) > 0),
+  );
   return (
     <>
       <Sidebar
+        activeRoute={shell.route.kind}
+        recordingLocked={shell.recordingLocked}
         onHome={() => void goHome()}
-        onLibrary={() => setLibraryOpen(true)}
+        onLibrary={shell.openLibrary}
         meetings={listQuery.data || []}
         currentId={meeting?.id}
         uploading={uploading}
         onSelect={(id) => void openMeeting(id)}
         onUpload={(file) => void upload(file)}
-        onRecord={browserWorkspace ? undefined : () => setRecordingOpen(true)}
-        onManage={browserWorkspace ? undefined : () => setManagementPage("overview")}
-        onSearch={() => setSearchOpen(true)}
+        onRecord={browserWorkspace ? undefined : () => shell.openRecording()}
+        onManage={
+          browserWorkspace ? undefined : () => shell.openManagement("overview")
+        }
+        onSearch={() => shell.openModal({ kind: "search" })}
         browserWorkspace={browserWorkspace}
         onFollowups={() =>
           environment?.meeting_flow_ready
-            ? setFollowupsOpen(true)
+            ? shell.openFollowups()
             : toast("跨会议跟进需在录音和任务结束后更新服务，现有内容已保留。")
         }
         recoveryCount={recordingRecoveryCount(recoveryQuery.data || [])}
       />
-      {libraryOpen && (
-        <MeetingLibrary
-          meetings={listQuery.data || []}
-          currentMeetingId={meeting?.id}
-          onDeletedActiveMeeting={() => {
-            rememberMeeting("", browserMeetingStorage());
-            setMeeting(null);
-          }}
-          onClose={() => setLibraryOpen(false)}
-          onPrepare={async (id) => {
-            if (browserWorkspace) return toast("请在听记 App 中准备实时会议。");
-            const current = await api.preparation();
-            await api.savePreparation({ ...current, previous_meeting_id: id });
-            setLibraryOpen(false);
-            setRecordingOpen(true);
-            toast("已关联系列中的最近会议");
-          }}
-          onOpen={async (id, segmentId) => {
-            setLibraryOpen(false);
-            const opened = await openMeeting(id);
-            const segment = opened?.segments.find(
-              (item) => item.id === segmentId,
-            );
-            if (segment) {
-              setWorkspace("notes");
-              setReviewSourceOpen(true);
-              locateReview(segment.start);
-            }
-          }}
-        />
-      )}
       <main>
         {browserWorkspace && sessionExpired && (
           <div className="browser-session-expired-banner" role="alert">
             <div className="session-expired-content">
-              <span className="session-expired-icon">🔒</span>
+              <span className="session-expired-icon">
+                <IconLock size={16} />
+              </span>
               <div>
                 <strong>浏览器访问授权已过期</strong>
                 <p>
-                  为保护会议隐私与安全，访问授权已结束。请在听记 App 菜单栏点击「打开浏览器工作台」重新授权，或直接唤醒桌面客户端。
+                  为保护会议隐私与安全，访问授权已结束。请在听记 App
+                  菜单栏点击「打开浏览器工作台」重新授权，或直接唤醒桌面客户端。
                 </p>
               </div>
             </div>
@@ -1039,955 +993,1056 @@ export default function App({ browserWorkspace = false }: { browserWorkspace?: b
             </div>
           </div>
         )}
-        {!meeting && !!recordingRecoveryCount(recoveryQuery.data || []) && (
-          <section
-            className="recording-recovery-banner"
-            aria-label="录音恢复提醒"
-          >
-            <span>
-              发现 {recordingRecoveryCount(recoveryQuery.data || [])}{" "}
-              条录音会话待检查，请核对已保存内容。
-            </span>
-            <button onClick={() => setManagementPage("recovery")}>
-              前往运行管理查看
-            </button>
-          </section>
-        )}
-        {!meeting ? (
-          <Welcome
-            onUpload={(file) => void upload(file)}
-            onRecord={browserWorkspace ? undefined : () => setRecordingOpen(true)}
+        {shell.route.kind === "library" && (
+          <MeetingLibrary
+            meetings={listQuery.data || []}
+            currentMeetingId={meeting?.id}
+            onDeletedActiveMeeting={() => {
+              rememberMeeting("", browserMeetingStorage());
+              setMeeting(null);
+            }}
+            onClose={shell.openMeeting}
+            onPrepare={async (id) => {
+              if (browserWorkspace)
+                return toast("请在听记 App 中准备实时会议。");
+              const current = await api.preparation();
+              await api.savePreparation({
+                ...current,
+                previous_meeting_id: id,
+              });
+              shell.openRecording();
+              toast("已关联系列中的最近会议");
+            }}
+            onOpen={async (id, segmentId) => {
+              const opened = await openMeeting(id);
+              const segment = opened?.segments.find(
+                (item) => item.id === segmentId,
+              );
+              if (segment) {
+                setWorkspace("notes");
+                setReviewSourceOpen(true);
+                locateReview(segment.start);
+              }
+            }}
           />
-        ) : (
-          <section id="detail">
-            <div className="title-row">
-              <div>
-                <div className="eyebrow">
-                  会议资料 / {meeting.created.slice(0, 10)}
-                </div>
-                <h1>{meeting.title}</h1>
-                <div className="meeting-meta-strip">
-                  <span>{meeting.created.slice(0, 16).replace("T", " ")}</span>
-                  {meeting.duration ? (
-                    <span>· 时长 {clock(meeting.duration)}</span>
-                  ) : null}
-                  <span>· {meeting.segments.length} 个片段</span>
-                  {meeting.revision ? (
-                    <span className="meeting-meta-pill">
-                      {transcriptionJob
-                        ? engineLabel(
-                            JSON.parse(transcriptionJob.config || "{}").engine,
-                          )
-                        : "已转写"}{" "}
-                      · v{meeting.revision}
+        )}
+        {shell.route.kind === "followups" && (
+          <FollowupsDialog
+            onClose={shell.openMeeting}
+            onOpen={async (id) => {
+              await openMeeting(id);
+              setWorkspace("minutes");
+            }}
+          />
+        )}
+        {!browserWorkspace && shell.route.kind === "management" && (
+          <RuntimeManagement
+            recoveryCount={recordingRecoveryCount(recoveryQuery.data || [])}
+            recoveryEngine={engine === "qwen" ? "qwen" : "whisper"}
+            onRecoveryComplete={async (id, options) => {
+              await completeRecording(id, options);
+              void client.invalidateQueries({
+                queryKey: ["recording-recoveries"],
+              });
+            }}
+            onRecording={() => shell.openRecording()}
+            onSearch={() => {
+              shell.closeManagement();
+              shell.openModal({ kind: "search" });
+            }}
+            onOpenMeeting={(id) => {
+              if (shell.recordingLocked) {
+                toast("请先返回录音现场；结束录音后可打开其他会议。");
+                return;
+              }
+              void openMeeting(id);
+            }}
+            page={shell.route.page}
+            taskFocus={shell.route.taskFocus}
+            onPage={(page) => shell.setManagementPage(page)}
+            onClose={shell.closeManagement}
+            onChanged={() =>
+              void client.invalidateQueries({ queryKey: ["environment"] })
+            }
+            toast={toast}
+          />
+        )}
+        {!browserWorkspace && shell.route.kind === "recording" && (
+          <RecordingDialog
+            targetRecordingId={shell.route.targetRecordingId}
+            environment={environment}
+            minutesModel={minutesModel}
+            onMinutesModel={setMinutesModel}
+            flowReady={environment?.meeting_flow_ready === true}
+            meetings={listQuery.data || []}
+            engineLabel={engineLabel(engine)}
+            engines={environment?.engines || []}
+            onPhaseChange={shell.setRecordingPhase}
+            onClose={() => {
+              shell.exitRecording();
+              void client.invalidateQueries({
+                queryKey: ["recording-recoveries"],
+              });
+            }}
+            onComplete={completeRecording}
+            onModels={() => shell.openManagement("models")}
+            toast={toast}
+          />
+        )}
+        {shell.route.kind === "meeting" &&
+          !meeting &&
+          !!recordingRecoveryCount(recoveryQuery.data || []) && (
+            <section
+              className="recording-recovery-banner"
+              aria-label="录音恢复提醒"
+            >
+              <span>
+                发现 {recordingRecoveryCount(recoveryQuery.data || [])}{" "}
+                条录音会话待检查，请核对已保存内容。
+              </span>
+              <button onClick={() => shell.openManagement("recovery")}>
+                前往{UNIFIED_MANAGEMENT_LABEL}查看
+              </button>
+            </section>
+          )}
+        {shell.route.kind === "meeting" &&
+          (!meeting ? (
+            <Welcome
+              onUpload={(file) => void upload(file)}
+              onRecord={
+                browserWorkspace ? undefined : () => shell.openRecording()
+              }
+            />
+          ) : (
+            <section id="detail">
+              <header className="meeting-header">
+                <div className="meeting-header-top">
+                  <div className="meeting-title-group">
+                    <h1>{meeting.title}</h1>
+                    {meeting.revision ? (
+                      <span className="meeting-meta-pill">
+                        v{meeting.revision}
+                      </span>
+                    ) : (
+                      <span className="meeting-meta-pill pending">待转写</span>
+                    )}
+                    <span className="meeting-meta-pill offline">
+                      <IconLock size={12} /> 本机离线
                     </span>
-                  ) : (
-                    <span className="meeting-meta-pill pending">待转写</span>
-                  )}
-                  <span className="meeting-meta-pill offline">🔒 本机离线</span>
-                  <span
-                    className="meeting-filename-hint"
-                    title={`源音频文件：${meeting.filename}`}
-                  >
-                    源音频 ⓘ
-                  </span>
-                </div>
-              </div>
-              <div className="meeting-header-actions">
-                <button
-                  className="btn-prepare-trigger"
-                  onClick={() => setPrepareOpen(true)}
-                  title="查看或完善会前议程、目标与参会人"
-                >
-                  📋 备会背景
-                </button>
-                <button onClick={() => setRenameOpen(true)}>重命名</button>
-                <OverviewArchiveButton
-                  openRequested={overviewFocus}
-                  focusItemId={overviewSourceId}
-                  onOpened={() => setOverviewFocus(false)}
-                  key={meeting.id}
-                  meeting={meeting}
-                  onSeek={(evidence) => {
-                    const source = meeting.segments.find(
-                      (segment) =>
-                        (segment.source_track ?? null) ===
-                          (evidence.source_track ?? null) &&
-                        segment.start <= evidence.start &&
-                        segment.end > evidence.start &&
-                        segment.text.includes(evidence.quote),
-                    );
-                    if (
-                      !source &&
-                      evidence.source_track &&
-                      evidence.range_id &&
-                      evidence.segment_index != null
-                    )
-                      return false;
-                    setWorkspace("transcript");
-                    if (source) setRestoredSegment(source.id);
-                    seekRef.current?.(
-                      source?.start ?? evidence.start,
-                      evidence.source_track,
-                    );
-                    return true;
-                  }}
-                />
-                <ActionMenu
-                  key={meeting.id + ":export"}
-                  label="导出文字稿 ↓"
-                  actions={([
-                    ["txt", "纯文本 TXT"],
-                    ["md", "Markdown"],
-                    ["srt", "字幕 SRT"],
-                    ["json", "结构化 JSON"],
-                  ] as const).map(([format, label]) => ({
-                    label,
-                    run: async () => {
-                      try {
-                        await saveTranscript();
-                      } catch {
-                        return; // saveTranscript already reports the error.
-                      }
-                      download(`/meetings/${meeting.id}/export/${format}`);
-                    },
-                  }))}
-                />
-                <ActionMenu
-                  key={meeting.id + ":more"}
-                  label="···"
-                  accessibleLabel="更多操作"
-                  actions={[
-                    ...(meeting.revision > 0
-                      ? [{ label: "重新转写设置…", run: () => setRetranscribeOpen(true) }]
-                      : []),
-                    {
-                      label: "删除会议",
-                      danger: true,
-                      run: async () => {
-                        if (
-                          !confirm(
-                            "删除此会议的录音、所有文稿版本和分析结果？此操作无法撤销。",
-                          )
-                        )
-                          return;
-                        try {
-                          await api.remove(meeting.id);
-                          rememberMeeting("", browserMeetingStorage());
-                          setMeeting(null);
-                          await client.invalidateQueries({
-                            queryKey: ["meetings"],
-                          });
-                        } catch (error) {
-                          toast((error as Error).message);
-                        }
-                      },
-                    },
-                  ]}
-                />
-              </div>
-            </div>
-            {!meeting.revision && (
-              <div className="untranscribed-setup-card">
-                <div className="untranscribed-setup-header">
-                  <strong>设置转写参数</strong>
-                  <p>本次录音尚未生成文字稿，请选择原文语言与识别引擎后开始。</p>
-                </div>
-                <div className="transcription-options-body">
-                  <label>
-                    原文语言{" "}
-                    <select
-                      aria-label="转写原文语言"
-                      value={transcriptionLanguage}
-                      disabled={transcriptionRunning}
-                      onChange={(event) =>
-                        setTranscriptionLanguage(
-                          event.target.value as typeof transcriptionLanguage,
-                        )
-                      }
-                    >
-                      <option value="auto">自动识别（中英）</option>
-                      <option value="zh">中文</option>
-                      <option value="en">英文</option>
-                      <option value="ja">日语</option>
-                    </select>
-                  </label>
-                  <label className="engine-field">
-                    识别引擎{" "}
-                    <select
-                      value={transcriptionEngine}
-                      disabled={
-                        transcriptionRunning || experimentalTranscription
-                      }
-                      onChange={(e) => setEngine(e.target.value)}
-                    >
-                      {environment?.engines.map((item) => (
-                        <option
-                          value={item.id}
-                          disabled={!item.ready}
-                          key={item.id}
-                        >
-                          {item.label}
-                          {item.ready ? "" : " · 待安装"}
-                        </option>
-                      )) || (
-                        <>
-                          <option value="whisper">
-                            Whisper large-v3-turbo
-                          </option>
-                          <option value="qwen">千问 Qwen3-ASR-1.7B</option>
-                        </>
-                      )}
-                    </select>
-                  </label>
-                  {experimentalTranscription ? (
-                    <p className="muted">
-                      使用本机千问生成独立原文草稿，按约 30 秒音频块回听。姓名、数字和外语插句请人工核对。
-                      {!engineReady && " 请先安装本机千问模型。"}
-                    </p>
-                  ) : (
-                    <>
-                      <label className="check">
-                        <input
-                          type="checkbox"
-                          checked={diarization}
-                          disabled={!environment?.diarization_ready}
-                          onChange={(e) => setDiarization(e.target.checked)}
-                        />{" "}
-                        自动区分发言人
-                      </label>
-                      <select
-                        value={numSpeakers}
-                        onChange={(e) => setNumSpeakers(Number(e.target.value))}
-                      >
-                        {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((value) => (
-                          <option value={value} key={value}>
-                            {value ? `${value} 位发言人` : "人数自动估计"}
-                          </option>
-                        ))}
-                      </select>
-                    </>
-                  )}
-                  <button
-                    className="primary"
-                    disabled={transcriptionRunning || !engineReady}
-                    onClick={() => void startTranscription()}
-                  >
-                    {experimentalTranscription
-                      ? "生成多语种草稿"
-                      : "开始转写"}
-                  </button>
-                </div>
-              </div>
-            )}
-            {retranscribeOpen && (
-              <Modal
-                ariaLabel="重新转写与识别设置"
-                className="retranscribe-dialog"
-                onClose={() => setRetranscribeOpen(false)}
-              >
-                <div className="retranscribe-header">
-                  <h3>重新转写与识别设置</h3>
-                  <p>
-                    重新转写将生成新的文稿版本。当前校对稿将完整保留在历史版本中。
-                  </p>
-                </div>
-                <div className="retranscribe-form">
-                  <label>
-                    原文语言
-                    <select
-                      aria-label="转写原文语言"
-                      value={transcriptionLanguage}
-                      disabled={transcriptionRunning}
-                      onChange={(event) =>
-                        setTranscriptionLanguage(
-                          event.target.value as typeof transcriptionLanguage,
-                        )
-                      }
-                    >
-                      <option value="auto">自动识别（中英）</option>
-                      <option value="zh">中文</option>
-                      <option value="en">英文</option>
-                      <option value="ja">日语</option>
-                    </select>
-                  </label>
-                  <label className="engine-field">
-                    识别引擎
-                    <select
-                      value={transcriptionEngine}
-                      disabled={
-                        transcriptionRunning || experimentalTranscription
-                      }
-                      onChange={(e) => setEngine(e.target.value)}
-                    >
-                      {environment?.engines.map((item) => (
-                        <option
-                          value={item.id}
-                          disabled={!item.ready}
-                          key={item.id}
-                        >
-                          {item.label}
-                          {item.ready ? "" : " · 待安装"}
-                        </option>
-                      )) || (
-                        <>
-                          <option value="whisper">
-                            Whisper large-v3-turbo
-                          </option>
-                          <option value="qwen">千问 Qwen3-ASR-1.7B</option>
-                        </>
-                      )}
-                    </select>
-                  </label>
-                  {experimentalTranscription ? (
-                    <p className="muted">
-                      使用本机千问生成独立原文草稿，按约 30 秒音频块回听。
-                    </p>
-                  ) : (
-                    <div className="diarization-row">
-                      <label className="check">
-                        <input
-                          type="checkbox"
-                          checked={diarization}
-                          disabled={!environment?.diarization_ready}
-                          onChange={(e) => setDiarization(e.target.checked)}
-                        />{" "}
-                        自动区分发言人
-                      </label>
-                      <select
-                        value={numSpeakers}
-                        onChange={(e) => setNumSpeakers(Number(e.target.value))}
-                      >
-                        {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((value) => (
-                          <option value={value} key={value}>
-                            {value ? `${value} 位发言人` : "人数自动估计"}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                  )}
-                </div>
-                <div className="retranscribe-actions">
-                  <button onClick={() => setRetranscribeOpen(false)}>
-                    取消
-                  </button>
-                  <button
-                    className="primary"
-                    disabled={transcriptionRunning || !engineReady}
-                    onClick={async () => {
-                      setRetranscribeOpen(false);
-                      await startTranscription();
-                    }}
-                  >
-                    {experimentalTranscription
-                      ? "生成多语种草稿"
-                      : "确认重新转写"}
-                  </button>
-                </div>
-              </Modal>
-            )}
-            {prepareOpen && (
-              <Modal
-                ariaLabel="本次会议准备与背景"
-                className="preparation-dialog"
-                onClose={() => setPrepareOpen(false)}
-              >
-                <div className="preparation-dialog-header">
-                  <h3>📋 本次会议准备与背景</h3>
-                  <p>核对会前目标、议程与参会人。修改后自动同步至会议资料。</p>
-                </div>
-                <MeetingPreparation
-                  key={meeting.id}
-                  meeting={meeting}
-                  meetings={listQuery.data || []}
-                  onRefresh={async () => {
-                    setMeeting(await api.meeting(meeting.id));
-                  }}
-                  onOpen={(id) => {
-                    setPrepareOpen(false);
-                    void openMeeting(id);
-                  }}
-                  toast={toast}
-                />
-              </Modal>
-            )}
-            {notesModalOpen && (
-              <Modal
-                ariaLabel="会议关注点与会中速记"
-                className="preparation-dialog"
-                onClose={() => setNotesModalOpen(false)}
-              >
-                <div className="preparation-dialog-header">
-                  <h3>📌 会议关注点与会中速记</h3>
-                  <p>核对会中标记的重点、问题与待办，可关联至会议纪要与跟进项。</p>
-                </div>
-                <NotesView
-                  key={meeting.id}
-                  inlineReview
-                  onConfigureModel={() => {
-                    setNotesModalOpen(false);
-                    setManagementPage("models");
-                  }}
-                  focusNoteId={noteSourceId}
-                  onNoteFocused={() => setNoteSourceId(undefined)}
-                  onLocate={(time) => {
-                    locateReview(time);
-                    setReviewSourceOpen(true);
-                  }}
-                  meeting={meeting}
-                  onRefresh={async () => {
-                    const fresh = await api.meeting(meeting.id);
-                    setMeeting(fresh);
-                    if (!minutesDirty) {
-                      const artifact = latestMinutes(fresh);
-                      displayMinutes(artifact || null);
-                    }
-                  }}
-                  minutesDirty={minutesDirty}
-                  onMinutes={() => {
-                    setNotesModalOpen(false);
-                    setWorkspace("minutes");
-                  }}
-                  onPause={() => pausePlaybackRef.current?.()}
-                  onSeek={(time) => {
-                    locateReview(time);
-                    seekRef.current?.(time);
-                  }}
-                  toast={toast}
-                />
-              </Modal>
-            )}
-            {transcriptionJob &&
-              (transcriptionRunning ||
-                ["failed", "cancelled"].includes(transcriptionJob.state)) && (
-                <div id="jobBox">
-                  <div className="job-head">
-                    <span>
-                      {engineLabel(
-                        JSON.parse(transcriptionJob.config || "{}").engine,
-                      )}{" "}
-                      · {transcriptionJob.stage}
-                    </span>
+                  </div>
+                  <div className="meeting-header-actions">
                     <button
-                      className="text-btn"
-                      onClick={() =>
-                        void jobAction(
-                          transcriptionJob.id,
-                          transcriptionRunning ? "cancel" : "retry",
-                        )
-                      }
+                      className="btn-prepare-trigger"
+                      onClick={() => shell.openModal({ kind: "prepare" })}
+                      title="查看或完善会前议程、目标与参会人"
                     >
-                      {transcriptionRunning ? "取消任务" : "从检查点重试"}
+                      <IconClipboard size={14} /> 备会背景
+                    </button>
+                    <button onClick={() => shell.openModal({ kind: "rename" })}>
+                      重命名
+                    </button>
+                    <OverviewArchiveButton
+                      openRequested={overviewFocus}
+                      focusItemId={overviewSourceId}
+                      onOpened={() => setOverviewFocus(false)}
+                      key={meeting.id}
+                      meeting={meeting}
+                      onSeek={(evidence) => {
+                        const source = meeting.segments.find(
+                          (segment) =>
+                            (segment.source_track ?? null) ===
+                              (evidence.source_track ?? null) &&
+                            segment.start <= evidence.start &&
+                            segment.end > evidence.start &&
+                            segment.text.includes(evidence.quote),
+                        );
+                        if (
+                          !source &&
+                          evidence.source_track &&
+                          evidence.range_id &&
+                          evidence.segment_index != null
+                        )
+                          return false;
+                        setWorkspace("transcript");
+                        if (source) setRestoredSegment(source.id);
+                        seekRef.current?.(
+                          source?.start ?? evidence.start,
+                          evidence.source_track,
+                        );
+                        return true;
+                      }}
+                    />
+                    <ActionMenu
+                      key={meeting.id + ":export"}
+                      label="导出文字稿 ↓"
+                      actions={(
+                        [
+                          ["txt", "纯文本 TXT"],
+                          ["md", "Markdown"],
+                          ["srt", "字幕 SRT"],
+                          ["json", "结构化 JSON"],
+                        ] as const
+                      ).map(([format, label]) => ({
+                        label,
+                        run: async () => {
+                          try {
+                            await saveTranscript();
+                          } catch {
+                            return; // saveTranscript already reports the error.
+                          }
+                          download(`/meetings/${meeting.id}/export/${format}`);
+                        },
+                      }))}
+                    />
+                    <ActionMenu
+                      key={meeting.id + ":more"}
+                      label="···"
+                      accessibleLabel="更多操作"
+                      actions={[
+                        ...(meeting.revision > 0
+                          ? [
+                              {
+                                label: "重新转写设置…",
+                                run: () =>
+                                  shell.openModal({ kind: "retranscribe" }),
+                              },
+                            ]
+                          : []),
+                        {
+                          label: "删除会议",
+                          danger: true,
+                          run: async () => {
+                            if (
+                              !confirm(
+                                "删除此会议的录音、所有文稿版本和分析结果？此操作无法撤销。",
+                              )
+                            )
+                              return;
+                            try {
+                              await api.remove(meeting.id);
+                              rememberMeeting("", browserMeetingStorage());
+                              setMeeting(null);
+                              await client.invalidateQueries({
+                                queryKey: ["meetings"],
+                              });
+                            } catch (error) {
+                              toast((error as Error).message);
+                            }
+                          },
+                        },
+                      ]}
+                    />
+                  </div>
+                </div>
+                <div className="meeting-header-sub">
+                  <div className="meeting-meta-strip">
+                    <span>
+                      {meeting.created.slice(0, 16).replace("T", " ")}
+                    </span>
+                    {meeting.duration ? (
+                      <span>· 时长 {clock(meeting.duration)}</span>
+                    ) : null}
+                    <span>· {meeting.segments.length} 个片段</span>
+                    {meeting.revision && transcriptionJob ? (
+                      <span>
+                        ·{" "}
+                        {engineLabel(
+                          JSON.parse(transcriptionJob.config || "{}").engine,
+                        )}
+                      </span>
+                    ) : null}
+                    <span
+                      className="meeting-filename-hint"
+                      title={`源音频文件：${meeting.filename}`}
+                    >
+                      源音频 ⓘ
+                    </span>
+                  </div>
+                  <div className="meeting-workflow-slot">
+                    <Workflow
+                      meeting={meeting}
+                      transcriptDirty={transcriptDirty}
+                      minutesDirty={minutesDirty}
+                      reviewBusy={reviewBusy}
+                      onRecordingReview={() => {
+                        setQualityReviewRequest((old) => ({
+                          id: meeting.id,
+                          nonce: old.nonce + 1,
+                          view: meeting.recording_quality?.pending_count
+                            ? "pending"
+                            : meeting.recording_quality?.gap_count
+                              ? "gaps"
+                              : "all",
+                        }));
+                        navigateReview("transcript");
+                      }}
+                      onSourceLocate={(source) => {
+                        if (source.target?.item_id) {
+                          setOverviewSourceId(source.target.item_id);
+                          setOverviewFocus(true);
+                        } else if (source.target?.note_id) {
+                          setNoteSourceId(source.target.note_id);
+                          locateReview(source.target.start ?? 0);
+                          setReviewSourceOpen(true);
+                          navigateReview("notes");
+                        } else {
+                          navigateReview("transcript");
+                          setRestoredSegment(source.target?.segment_id);
+                        }
+                      }}
+                      onReview={navigateReview}
+                      onConfirm={(step, decision) =>
+                        void confirmReview(step, decision)
+                      }
+                      onTranscribe={() => void startTranscription()}
+                      onSave={() => void saveTranscript()}
+                      onTasks={(focus) => shell.openManagement("tasks", focus)}
+                      onActions={() => {
+                        setActionsFocus(true);
+                        navigateReview("minutes");
+                      }}
+                      onOverview={() => {
+                        setOverviewSourceId(undefined);
+                        setOverviewFocus(true);
+                      }}
+                      onAnalysis={() => setWorkspace("analysis")}
+                      onMinutes={() => navigateReview("minutes")}
+                      onDelivery={() => {
+                        setDeliveryFocus(true);
+                        navigateReview("minutes");
+                      }}
+                      onPreview={() => void openMinutesPreview()}
+                    />
+                  </div>
+                </div>
+              </header>
+              {!meeting.revision && (
+                <div className="untranscribed-setup-card">
+                  <div className="untranscribed-setup-header">
+                    <strong>设置转写参数</strong>
+                    <p>
+                      本次录音尚未生成文字稿，请选择原文语言与识别引擎后开始。
+                    </p>
+                  </div>
+                  <div className="transcription-options-body">
+                    <label>
+                      原文语言{" "}
+                      <select
+                        aria-label="转写原文语言"
+                        value={transcriptionLanguage}
+                        disabled={transcriptionRunning}
+                        onChange={(event) =>
+                          setTranscriptionLanguage(
+                            event.target.value as typeof transcriptionLanguage,
+                          )
+                        }
+                      >
+                        <option value="auto">自动识别（中英）</option>
+                        <option value="zh">中文</option>
+                        <option value="en">英文</option>
+                        <option value="ja">日语</option>
+                      </select>
+                    </label>
+                    <label className="engine-field">
+                      识别引擎{" "}
+                      <select
+                        value={transcriptionEngine}
+                        disabled={
+                          transcriptionRunning || experimentalTranscription
+                        }
+                        onChange={(e) => setEngine(e.target.value)}
+                      >
+                        {environment?.engines.map((item) => (
+                          <option
+                            value={item.id}
+                            disabled={!item.ready}
+                            key={item.id}
+                          >
+                            {item.label}
+                            {item.ready ? "" : " · 待安装"}
+                          </option>
+                        )) || (
+                          <>
+                            <option value="whisper">
+                              Whisper large-v3-turbo
+                            </option>
+                            <option value="qwen">千问 Qwen3-ASR-1.7B</option>
+                          </>
+                        )}
+                      </select>
+                    </label>
+                    {experimentalTranscription ? (
+                      <p className="muted">
+                        使用本机千问生成独立原文草稿，按约 30
+                        秒音频块回听。姓名、数字和外语插句请人工核对。
+                        {!engineReady && " 请先安装本机千问模型。"}
+                      </p>
+                    ) : (
+                      <>
+                        <label className="check">
+                          <input
+                            type="checkbox"
+                            checked={diarization}
+                            disabled={!environment?.diarization_ready}
+                            onChange={(e) => setDiarization(e.target.checked)}
+                          />{" "}
+                          自动区分发言人
+                        </label>
+                        <select
+                          value={numSpeakers}
+                          onChange={(e) =>
+                            setNumSpeakers(Number(e.target.value))
+                          }
+                        >
+                          {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((value) => (
+                            <option value={value} key={value}>
+                              {value ? `${value} 位发言人` : "人数自动估计"}
+                            </option>
+                          ))}
+                        </select>
+                      </>
+                    )}
+                    <button
+                      className="primary"
+                      disabled={transcriptionRunning || !engineReady}
+                      onClick={() => void startTranscription()}
+                    >
+                      {experimentalTranscription
+                        ? "生成多语种草稿"
+                        : "开始转写"}
                     </button>
                   </div>
-                  {transcriptionRunning && (
-                    <progress max={1} value={transcriptionJob.progress} />
-                  )}
-                  <pre id="jobError">{transcriptionJob.error}</pre>
                 </div>
               )}
-            {candidateArtifacts.map((item) => (
-              <section className="transcription-recovery" key={item.id}>
-                {item.provenance.experimental === true && (
-                  <strong>多语种 · 实验性原文草稿</strong>
-                )}
-                {item.provenance.incomplete === true &&
-                  item.provenance.experimental !== true && (
-                    <strong>
-                      {item.provenance.completion_mode === "quick"
-                        ? "快速文字稿"
-                        : "精细转写"}{" "}
-                      · 未完成恢复稿
-                    </strong>
-                  )}
-                <p>
-                  {item.provenance.incomplete
-                    ? "转写未完成，已完成部分已保留为恢复稿，不会覆盖当前文稿。可从检查点重试。"
-                    : item.provenance.experimental
-                      ? "可按音频块回听核对，也可导出文本进行校对。"
-                      : "重新转写期间文稿有修改，识别结果已作为候选稿保留。"}
-                </p>
-                {item.provenance.incomplete === true && (
-                  <details>
-                    <summary>查看已保留文字与缺段</summary>
-                    <p>
-                      以下为未完成稿，请勿视为整场完整文字稿。对齐异常的段落只保留块级时间。
-                    </p>
-                    {Array.isArray(item.provenance.missing_ranges) &&
-                      item.provenance.missing_ranges.map(
-                        (range: { start: number; end: number }, i: number) => (
-                          <p key={i}>
-                            待识别：{clock(range.start)}–{clock(range.end)}
-                          </p>
-                        ),
-                      )}
-                    <textarea
-                      readOnly
-                      aria-label="未完成文字恢复稿"
-                      rows={12}
-                      value={
-                        Array.isArray(item.payload)
-                          ? (item.payload as Segment[])
-                              .map(
-                                (s) =>
-                                  `[${clock(s.start)}–${clock(s.end)}]${s.alignment_warning ? "（时间待校准）" : ""} ${s.text}`,
-                              )
-                              .join("\n")
-                          : ""
-                      }
-                    />
-                  </details>
-                )}
-                {item.provenance.experimental === true &&
-                  !item.provenance.incomplete && (
-                    <ChineseMeetingRecord
-                      id={meeting.id}
-                      revision={item.revision}
-                      draftId={item.id}
-                      dirty={false}
-                      profiles={
-                        environment?.analysis.profiles.filter(
-                          (profile) => profile.provider_type === "local",
-                        ) || []
-                      }
-                      onSeek={(time) => seekRef.current?.(time)}
-                    />
-                  )}
-                <button
-                  onClick={() => {
-                    if (
-                      item.provenance.experimental &&
-                      Array.isArray(item.payload)
-                    ) {
-                      const text = (item.payload as Segment[])
-                        .map(
-                          (segment) =>
-                            `[${clock(segment.start)}–${clock(segment.end)}] ${segment.text}`,
-                        )
-                        .join("\n\n");
-                      const url = URL.createObjectURL(
-                        new Blob(
-                          ["多语种实验性原文草稿（按音频块定位）\n\n", text],
-                          { type: "text/plain;charset=utf-8" },
-                        ),
-                      );
-                      const link = document.createElement("a");
-                      link.href = url;
-                      link.download = "实验草稿.txt";
-                      link.click();
-                      window.setTimeout(() => URL.revokeObjectURL(url), 30_000);
-                      return;
-                    }
-                    const link = document.createElement("a");
-                    link.href = URL.createObjectURL(
-                      new Blob(
-                        [
-                          JSON.stringify(
-                            item.provenance.incomplete ||
-                              item.provenance.experimental
-                              ? {
-                                  segments: item.payload,
-                                  provenance: item.provenance,
-                                }
-                              : item.payload,
-                            null,
-                            2,
-                          ),
-                        ],
-                        {
-                          type: "application/json",
-                        },
-                      ),
-                    );
-                    link.download = item.provenance.incomplete
-                      ? "未完成恢复稿.json"
-                      : "候选转写.json";
-                    link.click();
-                  }}
+              {retranscribeOpen && (
+                <Modal
+                  ariaLabel="重新转写与识别设置"
+                  className="retranscribe-dialog"
+                  onClose={shell.closeModal}
                 >
-                  {item.provenance.incomplete
-                    ? "导出未完成恢复稿"
-                    : item.provenance.experimental
-                      ? "导出原文草稿"
-                      : "查看候选稿"}
-                </button>
-              </section>
-            ))}
-            <Workflow
-              meeting={meeting}
-              transcriptDirty={transcriptDirty}
-              minutesDirty={minutesDirty}
-              reviewBusy={reviewBusy}
-              onRecordingReview={() => {
-                setQualityReviewRequest((old) => ({
-                  id: meeting.id,
-                  nonce: old.nonce + 1,
-                  view: meeting.recording_quality?.pending_count
-                    ? "pending"
-                    : meeting.recording_quality?.gap_count
-                      ? "gaps"
-                      : "all",
-                }));
-                navigateReview("transcript");
-              }}
-              onSourceLocate={(source) => {
-                if (source.target?.item_id) {
-                  setOverviewSourceId(source.target.item_id);
-                  setOverviewFocus(true);
-                } else if (source.target?.note_id) {
-                  setNoteSourceId(source.target.note_id);
-                  locateReview(source.target.start ?? 0);
-                  setReviewSourceOpen(true);
-                  navigateReview("notes");
-                } else {
-                  navigateReview("transcript");
-                  setRestoredSegment(source.target?.segment_id);
-                }
-              }}
-              onReview={navigateReview}
-              onConfirm={(step, decision) => void confirmReview(step, decision)}
-              onTranscribe={() => void startTranscription()}
-              onSave={() => void saveTranscript()}
-              onTasks={(focus) => {
-                setTaskFocus(focus);
-                setManagementPage("tasks");
-              }}
-              onActions={() => {
-                setActionsFocus(true);
-                navigateReview("minutes");
-              }}
-              onOverview={() => {
-                setOverviewSourceId(undefined);
-                setOverviewFocus(true);
-              }}
-              onAnalysis={() => setWorkspace("analysis")}
-              onMinutes={() => navigateReview("minutes")}
-              onDelivery={() => {
-                setDeliveryFocus(true);
-                navigateReview("minutes");
-              }}
-              onPreview={() => void openMinutesPreview()}
-            />
-            <div
-              className="workspace"
-              id="meeting-workspace"
-            >
-              <div className="transcript-panel">
-                <div className="panel-header">
-                  <div className="tabs">
-                    {(
-                      [
-                        ["minutes", "智能纪要"],
-                        ["analysis", "深度研判"],
-                        ["transcript", "精细校对"],
-                      ] as [Workspace, string][]
-                    ).map(([key, label]) => (
-                      <button
-                        className={`tab${workspace === key ? " active" : ""}`}
-                        key={key}
-                        onClick={() => setWorkspace(key)}
-                      >
-                        {label}
-                      </button>
-                    ))}
+                  <div className="retranscribe-header">
+                    <h3>重新转写与识别设置</h3>
+                    <p>
+                      重新转写将生成新的文稿版本。当前校对稿将完整保留在历史版本中。
+                    </p>
                   </div>
-                  {workspace === "transcript" && (
+                  <div className="retranscribe-form">
+                    <label>
+                      原文语言
+                      <select
+                        aria-label="转写原文语言"
+                        value={transcriptionLanguage}
+                        disabled={transcriptionRunning}
+                        onChange={(event) =>
+                          setTranscriptionLanguage(
+                            event.target.value as typeof transcriptionLanguage,
+                          )
+                        }
+                      >
+                        <option value="auto">自动识别（中英）</option>
+                        <option value="zh">中文</option>
+                        <option value="en">英文</option>
+                        <option value="ja">日语</option>
+                      </select>
+                    </label>
+                    <label className="engine-field">
+                      识别引擎
+                      <select
+                        value={transcriptionEngine}
+                        disabled={
+                          transcriptionRunning || experimentalTranscription
+                        }
+                        onChange={(e) => setEngine(e.target.value)}
+                      >
+                        {environment?.engines.map((item) => (
+                          <option
+                            value={item.id}
+                            disabled={!item.ready}
+                            key={item.id}
+                          >
+                            {item.label}
+                            {item.ready ? "" : " · 待安装"}
+                          </option>
+                        )) || (
+                          <>
+                            <option value="whisper">
+                              Whisper large-v3-turbo
+                            </option>
+                            <option value="qwen">千问 Qwen3-ASR-1.7B</option>
+                          </>
+                        )}
+                      </select>
+                    </label>
+                    {experimentalTranscription ? (
+                      <p className="muted">
+                        使用本机千问生成独立原文草稿，按约 30 秒音频块回听。
+                      </p>
+                    ) : (
+                      <div className="diarization-row">
+                        <label className="check">
+                          <input
+                            type="checkbox"
+                            checked={diarization}
+                            disabled={!environment?.diarization_ready}
+                            onChange={(e) => setDiarization(e.target.checked)}
+                          />{" "}
+                          自动区分发言人
+                        </label>
+                        <select
+                          value={numSpeakers}
+                          onChange={(e) =>
+                            setNumSpeakers(Number(e.target.value))
+                          }
+                        >
+                          {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((value) => (
+                            <option value={value} key={value}>
+                              {value ? `${value} 位发言人` : "人数自动估计"}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
+                  </div>
+                  <div className="retranscribe-actions">
+                    <button onClick={shell.closeModal}>取消</button>
                     <button
-                      className="text-btn"
-                      onClick={() => void saveTranscript()}
+                      className="primary"
+                      disabled={transcriptionRunning || !engineReady}
+                      onClick={async () => {
+                        shell.closeModal();
+                        await startTranscription();
+                      }}
                     >
-                      {savingTranscript
-                        ? "保存中…"
-                        : transcriptDirty
-                          ? "正在编辑…"
-                          : meeting.revision
-                            ? `已保存 · v${meeting.revision}`
-                            : "尚无文稿"}
+                      {experimentalTranscription
+                        ? "生成多语种草稿"
+                        : "确认重新转写"}
                     </button>
-                  )}
-                </div>
-                {workspace === "transcript" && (
-                  <TranscriptView
-                    activeSegment={activeSegment}
-                    qualityReviewView={qualityReviewRequest.view}
-                    qualityReviewRequest={
-                      qualityReviewRequest.id === meeting.id
-                        ? qualityReviewRequest.nonce
-                        : 0
-                    }
+                  </div>
+                </Modal>
+              )}
+              {prepareOpen && (
+                <Modal
+                  ariaLabel="本次会议准备与背景"
+                  className="preparation-dialog"
+                  onClose={shell.closeModal}
+                >
+                  <div className="preparation-dialog-header">
+                    <h3>
+                      <IconClipboard size={16} /> 本次会议准备与背景
+                    </h3>
+                    <p>
+                      核对会前目标、议程与参会人。修改后自动同步至会议资料。
+                    </p>
+                  </div>
+                  <MeetingPreparation
+                    key={meeting.id}
                     meeting={meeting}
-                    jumpSegmentId={
-                      searchTarget?.meeting_id === meeting.id
-                        ? searchTarget.source_segment_ids[0]
-                        : restoredSegment
-                    }
-                    onChange={updateSegments}
-                    onSeek={(time, track) => seekRef.current?.(time, track)}
-                    onSave={saveTranscript}
+                    meetings={listQuery.data || []}
+                    onRefresh={async () => {
+                      setMeeting(await api.meeting(meeting.id));
+                    }}
+                    onOpen={(id) => {
+                      shell.closeModal();
+                      void openMeeting(id);
+                    }}
+                    toast={toast}
+                  />
+                </Modal>
+              )}
+              {notesModalOpen && (
+                <Modal
+                  ariaLabel="会议关注点与会中速记"
+                  className="preparation-dialog"
+                  onClose={shell.closeModal}
+                >
+                  <div className="preparation-dialog-header">
+                    <h3>
+                      <IconPin size={16} /> 会议关注点与会中速记
+                    </h3>
+                    <p>
+                      核对会中标记的重点、问题与待办，可关联至会议纪要与跟进项。
+                    </p>
+                  </div>
+                  <NotesView
+                    key={meeting.id}
+                    inlineReview
+                    onConfigureModel={() => shell.openManagement("models")}
+                    focusNoteId={noteSourceId}
+                    onNoteFocused={() => setNoteSourceId(undefined)}
+                    onLocate={(time) => {
+                      locateReview(time);
+                      setReviewSourceOpen(true);
+                    }}
+                    meeting={meeting}
                     onRefresh={async () => {
                       const fresh = await api.meeting(meeting.id);
                       setMeeting(fresh);
-                      setTranscriptDirty(false);
-                      await client.invalidateQueries({
-                        queryKey: ["meetings"],
-                      });
+                      if (!minutesDirty) {
+                        const artifact = latestMinutes(fresh);
+                        displayMinutes(artifact || null);
+                      }
                     }}
-                    toast={toast}
-                    transcriptDirty={transcriptDirty}
-                    bilingualProfiles={
-                      environment?.analysis.profiles.filter(
-                        (item) => item.provider_type === "local",
-                      ) || []
-                    }
-                    onContinueBilingualMinutes={(profileId) => {
-                      setChineseMinutes({
-                        id: meeting.id,
-                        revision: meeting.revision,
-                        profileId,
-                      });
-                      setMinutesOptions((old) => ({
-                        ...old,
-                        method: "ai",
-                        output_language: "zh",
-                      }));
+                    minutesDirty={minutesDirty}
+                    onMinutes={() => {
+                      shell.closeModal();
                       setWorkspace("minutes");
                     }}
+                    onPause={() => pausePlaybackRef.current?.()}
+                    onSeek={(time) => {
+                      locateReview(time);
+                      seekRef.current?.(time);
+                    }}
+                    toast={toast}
                   />
-                )}
-                {workspace === "analysis" && (
-                  <AnalysisView
-                    meeting={meeting}
-                    environment={environment}
-                    model={analysisModel}
-                    onGenerate={() => void generateAnalysis()}
-                    onCompose={() => void startMinutes(true)}
-                    composing={generating}
-                    onConfigure={() => setManagementPage("models")}
-                    onJobAction={(id, action) => void jobAction(id, action)}
-                    onSeek={(time) => seekRef.current?.(time)}
-                    transcriptDirty={transcriptDirty}
-                  />
-                )}
-                {workspace === "minutes" && (
-                  <div
-                    className={`meeting-review-workspace ${reviewSourceOpen ? "split" : ""}`}
-                  >
-                    <button
-                      className="review-source-toggle"
-                      onClick={() => setReviewSourceOpen(!reviewSourceOpen)}
-                    >
-                      {reviewSourceOpen ? "收起原文" : "展开原文与回听"}
-                    </button>
-                    {reviewSourceOpen && (
-                      <ReviewSourcePane
-                        activeSegment={activeSegment}
-                        key={meeting.id}
-                        meeting={meeting}
-                        focusTime={reviewFocus}
-                        focusVersion={reviewFocusVersion}
-                        onSeek={(time) => {
-                          seekRef.current?.(time);
-                        }}
-                        onEdit={() => setWorkspace("transcript")}
-                      />
-                    )}
-                    <div className="review-notes-pane">
-                      <MinutesView
-                        meeting={meeting}
-                        environment={environment}
-                        draft={minutesDraft}
-                        dirty={minutesDirty}
-                        transcriptDirty={transcriptDirty}
-                        options={minutesOptions}
-                        selectedId={selectedMinutesId}
-                        templates={
-                          (templatesQuery.data || []) as MinutesTemplate[]
-                        }
-                        model={minutesModel}
-                        referenceMode={reviewSourceOpen}
-                        showCitations={showCitations}
-                        generating={generating}
-                        onOptions={changeMinutesOptions}
-                        onConfirmInterviewRoles={async (roles) => {
-                          const target = meetingRef.current;
-                          const brief = target?.flow?.brief;
-                          if (
-                            !target ||
-                            !brief ||
-                            transcriptDirty ||
-                            (roles && target.revision !== roles.revision)
+                </Modal>
+              )}
+              {transcriptionJob &&
+                (transcriptionRunning ||
+                  ["failed", "cancelled"].includes(transcriptionJob.state)) && (
+                  <div id="jobBox">
+                    <div className="job-head">
+                      <span>
+                        {engineLabel(
+                          JSON.parse(transcriptionJob.config || "{}").engine,
+                        )}{" "}
+                        · {transcriptionJob.stage}
+                      </span>
+                      <button
+                        className="text-btn"
+                        onClick={() =>
+                          void jobAction(
+                            transcriptionJob.id,
+                            transcriptionRunning ? "cancel" : "retry",
                           )
-                            throw new Error("请先保存并刷新文字稿");
-                          const flow = await api.saveBrief(target.id, {
-                            ...brief,
-                            interview: {
-                              candidate: "",
-                              role: "",
-                              round: "",
-                              interviewers: "",
-                              focus: "",
-                              questions: "",
-                              job_description: "",
-                              ...brief.interview,
-                              speaker_roles: roles,
-                            },
-                          });
-                          setMeeting((old) =>
-                            old?.id === target.id ? { ...old, flow } : old,
-                          );
-                        }}
-                        onPreparation={() => setPrepareOpen(true)}
-                        onSelect={(id) => void selectMinutes(id)}
-                        onAdopt={() => void adoptMinutes()}
-                        onCompare={(left, right) =>
-                          void compareMinutes(left, right)
                         }
-                        onExport={(format) => void exportMinutes(format)}
-                        onConfigureModel={() => setManagementPage("models")}
-                        onCitations={setShowCitations}
-                        onGenerate={() => void startMinutes()}
-                        onDraft={(value) => {
-                          minutesGeneration.current++;
-                          minutesDraftRef.current = {
-                            draft: value,
-                            dirty: true,
-                          };
-                          setMinutesDraft(value);
-                          setMinutesDirty(true);
-                        }}
-                        onJobAction={(id, action) => void jobAction(id, action)}
-                        onSave={() => void saveMinutes()}
-                        onPreview={() => void openMinutesPreview()}
-                        onSeek={(time, track) => {
-                          locateReview(time);
-                          setReviewSourceOpen(true);
-                          seekRef.current?.(time, track);
-                        }}
-                      />
-                      <MeetingOutcomes
-                        focusRequested={actionsFocus}
-                        onFocused={() => setActionsFocus(false)}
-                        onSeek={(time) => {
-                          locateReview(time);
-                          setReviewSourceOpen(true);
-                          seekRef.current?.(time);
-                        }}
-                        minutesDirty={minutesDirty}
-                        meeting={meeting}
-                        onNotes={() => setNotesModalOpen(true)}
-                        onRefresh={async () =>
-                          setMeeting(await api.meeting(meeting.id))
-                        }
-                        toast={toast}
-                      />
-                      <MinutesDeliveryPanel
-                        focusRequested={deliveryFocus}
-                        onFocused={() => setDeliveryFocus(false)}
-                        onNavigate={(target) => {
-                          if (target === "actions") {
-                            setActionsFocus(true);
-                            navigateReview("minutes");
-                          } else navigateReview(target);
-                        }}
-                        meeting={meeting}
-                        selectedId={selectedMinutesId}
-                        dirty={minutesDirty || transcriptDirty}
-                        includeCitations={showCitations}
-                        onRefresh={async () =>
-                          setMeeting(await api.meeting(meeting.id))
-                        }
-                      />
+                      >
+                        {transcriptionRunning ? "取消任务" : "从检查点重试"}
+                      </button>
                     </div>
+                    {transcriptionRunning && (
+                      <progress max={1} value={transcriptionJob.progress} />
+                    )}
+                    <pre id="jobError">{transcriptionJob.error}</pre>
                   </div>
                 )}
+              {candidateArtifacts.map((item) => (
+                <section className="transcription-recovery" key={item.id}>
+                  {item.provenance.experimental === true && (
+                    <strong>多语种 · 实验性原文草稿</strong>
+                  )}
+                  {item.provenance.incomplete === true &&
+                    item.provenance.experimental !== true && (
+                      <strong>
+                        {item.provenance.completion_mode === "quick"
+                          ? "快速文字稿"
+                          : "精细转写"}{" "}
+                        · 未完成恢复稿
+                      </strong>
+                    )}
+                  <p>
+                    {item.provenance.incomplete
+                      ? "转写未完成，已完成部分已保留为恢复稿，不会覆盖当前文稿。可从检查点重试。"
+                      : item.provenance.experimental
+                        ? "可按音频块回听核对，也可导出文本进行校对。"
+                        : "重新转写期间文稿有修改，识别结果已作为候选稿保留。"}
+                  </p>
+                  {item.provenance.incomplete === true && (
+                    <details>
+                      <summary>查看已保留文字与缺段</summary>
+                      <p>
+                        以下为未完成稿，请勿视为整场完整文字稿。对齐异常的段落只保留块级时间。
+                      </p>
+                      {Array.isArray(item.provenance.missing_ranges) &&
+                        item.provenance.missing_ranges.map(
+                          (
+                            range: { start: number; end: number },
+                            i: number,
+                          ) => (
+                            <p key={i}>
+                              待识别：{clock(range.start)}–{clock(range.end)}
+                            </p>
+                          ),
+                        )}
+                      <textarea
+                        readOnly
+                        aria-label="未完成文字恢复稿"
+                        rows={12}
+                        value={
+                          Array.isArray(item.payload)
+                            ? (item.payload as Segment[])
+                                .map(
+                                  (s) =>
+                                    `[${clock(s.start)}–${clock(s.end)}]${s.alignment_warning ? "（时间待校准）" : ""} ${s.text}`,
+                                )
+                                .join("\n")
+                            : ""
+                        }
+                      />
+                    </details>
+                  )}
+                  {item.provenance.experimental === true &&
+                    !item.provenance.incomplete && (
+                      <ChineseMeetingRecord
+                        id={meeting.id}
+                        revision={item.revision}
+                        draftId={item.id}
+                        dirty={false}
+                        profiles={
+                          environment?.analysis.profiles.filter(
+                            (profile) => profile.provider_type === "local",
+                          ) || []
+                        }
+                        onSeek={(time) => seekRef.current?.(time)}
+                      />
+                    )}
+                  <button
+                    onClick={() => {
+                      if (
+                        item.provenance.experimental &&
+                        Array.isArray(item.payload)
+                      ) {
+                        const text = (item.payload as Segment[])
+                          .map(
+                            (segment) =>
+                              `[${clock(segment.start)}–${clock(segment.end)}] ${segment.text}`,
+                          )
+                          .join("\n\n");
+                        const url = URL.createObjectURL(
+                          new Blob(
+                            ["多语种实验性原文草稿（按音频块定位）\n\n", text],
+                            { type: "text/plain;charset=utf-8" },
+                          ),
+                        );
+                        const link = document.createElement("a");
+                        link.href = url;
+                        link.download = "实验草稿.txt";
+                        link.click();
+                        window.setTimeout(
+                          () => URL.revokeObjectURL(url),
+                          30_000,
+                        );
+                        return;
+                      }
+                      const link = document.createElement("a");
+                      link.href = URL.createObjectURL(
+                        new Blob(
+                          [
+                            JSON.stringify(
+                              item.provenance.incomplete ||
+                                item.provenance.experimental
+                                ? {
+                                    segments: item.payload,
+                                    provenance: item.provenance,
+                                  }
+                                : item.payload,
+                              null,
+                              2,
+                            ),
+                          ],
+                          {
+                            type: "application/json",
+                          },
+                        ),
+                      );
+                      link.download = item.provenance.incomplete
+                        ? "未完成恢复稿.json"
+                        : "候选转写.json";
+                      link.click();
+                    }}
+                  >
+                    {item.provenance.incomplete
+                      ? "导出未完成恢复稿"
+                      : item.provenance.experimental
+                        ? "导出原文草稿"
+                        : "查看候选稿"}
+                  </button>
+                </section>
+              ))}
+              <div className="workspace" id="meeting-workspace">
+                <div className="transcript-panel">
+                  <div className="panel-header">
+                    <div className="tabs">
+                      {(
+                        [
+                          ["minutes", "智能纪要"],
+                          ["analysis", "深度研判"],
+                          ["transcript", "精细校对"],
+                        ] as [Workspace, string][]
+                      ).map(([key, label]) => (
+                        <button
+                          className={`tab${workspace === key ? " active" : ""}`}
+                          key={key}
+                          onClick={() => setWorkspace(key)}
+                        >
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+                    {workspace === "transcript" && (
+                      <button
+                        className="text-btn"
+                        onClick={() => void saveTranscript()}
+                      >
+                        {savingTranscript
+                          ? "保存中…"
+                          : transcriptDirty
+                            ? "正在编辑…"
+                            : meeting.revision
+                              ? `已保存 · v${meeting.revision}`
+                              : "尚无文稿"}
+                      </button>
+                    )}
+                  </div>
+                  {workspace === "transcript" && (
+                    <TranscriptView
+                      activeSegment={activeSegment}
+                      qualityReviewView={qualityReviewRequest.view}
+                      qualityReviewRequest={
+                        qualityReviewRequest.id === meeting.id
+                          ? qualityReviewRequest.nonce
+                          : 0
+                      }
+                      meeting={meeting}
+                      jumpSegmentId={
+                        searchTarget?.meeting_id === meeting.id
+                          ? searchTarget.source_segment_ids[0]
+                          : restoredSegment
+                      }
+                      onChange={updateSegments}
+                      onSeek={(time, track) => seekRef.current?.(time, track)}
+                      onSave={saveTranscript}
+                      onRefresh={async () => {
+                        const fresh = await api.meeting(meeting.id);
+                        setMeeting(fresh);
+                        setTranscriptDirty(false);
+                        await client.invalidateQueries({
+                          queryKey: ["meetings"],
+                        });
+                      }}
+                      toast={toast}
+                      transcriptDirty={transcriptDirty}
+                      bilingualProfiles={
+                        environment?.analysis.profiles.filter(
+                          (item) => item.provider_type === "local",
+                        ) || []
+                      }
+                      onContinueBilingualMinutes={(profileId) => {
+                        setChineseMinutes({
+                          id: meeting.id,
+                          revision: meeting.revision,
+                          profileId,
+                        });
+                        setMinutesOptions((old) => ({
+                          ...old,
+                          method: "ai",
+                          output_language: "zh",
+                        }));
+                        setWorkspace("minutes");
+                      }}
+                    />
+                  )}
+                  {workspace === "analysis" && (
+                    <AnalysisView
+                      meeting={meeting}
+                      environment={environment}
+                      model={analysisModel}
+                      onGenerate={() => void generateAnalysis()}
+                      onCompose={() => void startMinutes(true)}
+                      composing={generating}
+                      onConfigure={() => shell.openManagement("models")}
+                      onJobAction={(id, action) => void jobAction(id, action)}
+                      onSeek={(time) => seekRef.current?.(time)}
+                      transcriptDirty={transcriptDirty}
+                    />
+                  )}
+                  {workspace === "minutes" && (
+                    <div
+                      className={`meeting-review-workspace ${reviewSourceOpen ? "split" : ""}`}
+                    >
+                      {reviewSourceOpen && (
+                        <ReviewSourcePane
+                          activeSegment={activeSegment}
+                          key={meeting.id}
+                          meeting={meeting}
+                          focusTime={reviewFocus}
+                          focusVersion={reviewFocusVersion}
+                          onSeek={(time) => {
+                            seekRef.current?.(time);
+                          }}
+                          onEdit={() => setWorkspace("transcript")}
+                        />
+                      )}
+                      <div className="review-notes-pane">
+                        <MinutesView
+                          meeting={meeting}
+                          environment={environment}
+                          draft={minutesDraft}
+                          dirty={minutesDirty}
+                          transcriptDirty={transcriptDirty}
+                          options={minutesOptions}
+                          selectedId={selectedMinutesId}
+                          templates={
+                            (templatesQuery.data || []) as MinutesTemplate[]
+                          }
+                          model={minutesModel}
+                          referenceMode={reviewSourceOpen}
+                          sourceOpen={reviewSourceOpen}
+                          onToggleSource={() =>
+                            setReviewSourceOpen((prev) => !prev)
+                          }
+                          showCitations={showCitations}
+                          generating={generating}
+                          onOptions={changeMinutesOptions}
+                          onConfirmInterviewRoles={async (roles) => {
+                            const target = meetingRef.current;
+                            const brief = target?.flow?.brief;
+                            if (
+                              !target ||
+                              !brief ||
+                              transcriptDirty ||
+                              (roles && target.revision !== roles.revision)
+                            )
+                              throw new Error("请先保存并刷新文字稿");
+                            const flow = await api.saveBrief(target.id, {
+                              ...brief,
+                              interview: {
+                                candidate: "",
+                                role: "",
+                                round: "",
+                                interviewers: "",
+                                focus: "",
+                                questions: "",
+                                job_description: "",
+                                ...brief.interview,
+                                speaker_roles: roles,
+                              },
+                            });
+                            setMeeting((old) =>
+                              old?.id === target.id ? { ...old, flow } : old,
+                            );
+                          }}
+                          onPreparation={() =>
+                            shell.openModal({ kind: "prepare" })
+                          }
+                          onSelect={(id) => void selectMinutes(id)}
+                          onAdopt={() => void adoptMinutes()}
+                          onCompare={(left, right) =>
+                            void compareMinutes(left, right)
+                          }
+                          onExport={(format) => void exportMinutes(format)}
+                          onConfigureModel={() =>
+                            shell.openManagement("models")
+                          }
+                          onCitations={setShowCitations}
+                          onGenerate={() => void startMinutes()}
+                          onDraft={(value) => {
+                            minutesGeneration.current++;
+                            minutesDraftRef.current = {
+                              draft: value,
+                              dirty: true,
+                            };
+                            setMinutesDraft(value);
+                            setMinutesDirty(true);
+                          }}
+                          onJobAction={(id, action) =>
+                            void jobAction(id, action)
+                          }
+                          onSave={() => void saveMinutes()}
+                          onPreview={() => void openMinutesPreview()}
+                          onSeek={(time, track) => {
+                            locateReview(time);
+                            setReviewSourceOpen(true);
+                            seekRef.current?.(time, track);
+                          }}
+                        />
+                        <MeetingOutcomes
+                          focusRequested={actionsFocus}
+                          onFocused={() => setActionsFocus(false)}
+                          onSeek={(time) => {
+                            locateReview(time);
+                            setReviewSourceOpen(true);
+                            seekRef.current?.(time);
+                          }}
+                          minutesDirty={minutesDirty}
+                          meeting={meeting}
+                          onNotes={() => shell.openModal({ kind: "notes" })}
+                          onRefresh={async () =>
+                            setMeeting(await api.meeting(meeting.id))
+                          }
+                          toast={toast}
+                        />
+                        <MinutesDeliveryPanel
+                          focusRequested={deliveryFocus}
+                          onFocused={() => setDeliveryFocus(false)}
+                          onNavigate={(target) => {
+                            if (target === "actions") {
+                              setActionsFocus(true);
+                              navigateReview("minutes");
+                            } else navigateReview(target);
+                          }}
+                          meeting={meeting}
+                          selectedId={selectedMinutesId}
+                          dirty={minutesDirty || transcriptDirty}
+                          includeCitations={showCitations}
+                          onRefresh={async () =>
+                            setMeeting(await api.meeting(meeting.id))
+                          }
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
-            </div>
-            <Player
-              onActiveSegment={setActiveSegment}
-              key={meeting.id}
-              initialView={playbackRestore}
-              onBookmark={(bookmark) =>
-                saveMeetingView(meeting.id, bookmark, browserMeetingStorage())
-              }
-              meetingId={meeting.id}
-              segments={meeting.segments}
-              seekRef={seekRef}
-              pauseRef={pausePlaybackRef}
-              audioTracks={meeting.audio_tracks}
-            />
-          </section>
-        )}
+              {hasMeetingAudio && (
+                <Player
+                  onActiveSegment={setActiveSegment}
+                  key={meeting.id}
+                  initialView={playbackRestore}
+                  onBookmark={(bookmark) =>
+                    saveMeetingView(
+                      meeting.id,
+                      bookmark,
+                      browserMeetingStorage(),
+                    )
+                  }
+                  meetingId={meeting.id}
+                  segments={meeting.segments}
+                  seekRef={seekRef}
+                  pauseRef={pausePlaybackRef}
+                  audioTracks={meeting.audio_tracks}
+                />
+              )}
+            </section>
+          ))}
       </main>
       <AppModals
         toastText={toastText}
         searchOpen={searchOpen}
         meetings={listQuery.data || []}
-        onSearchClose={() => setSearchOpen(false)}
+        onSearchClose={shell.closeModal}
         onSearchHit={async (hit) => {
           const current = await api.resolveSearch(hit);
           const opened = await openMeeting(current.meeting_id);
           if (!opened) throw new Error("会议未能打开，请重试");
           await api.resolveSearch(hit);
           if (current.source_segment_ids.length) setWorkspace("transcript");
-          setSearchOpen(false);
+          shell.closeModal();
           setSearchTarget(current);
         }}
-        onManageIndex={() => setManagementPage("index")}
-        onConfigureSearch={() => {
-          setSearchOpen(false);
-          setManagementPage("models");
-        }}
+        onManageIndex={() => shell.openManagement("index")}
+        onConfigureSearch={() => shell.openManagement("models")}
         renameOpen={renameOpen}
         meeting={meeting}
-        onRenameClose={() => setRenameOpen(false)}
+        onRenameClose={shell.closeModal}
         onRenameSave={async (title) => {
           await api.rename(meeting!.id, title);
           setMeeting((old) => (old ? { ...old, title } : old));
-          setRenameOpen(false);
+          shell.closeModal();
           await client.invalidateQueries({ queryKey: ["meetings"] });
           toast("会议名称已更新");
         }}
-        managementPage={managementPage}
-        recoveryCount={recordingRecoveryCount(recoveryQuery.data || [])}
-        recoveryEngine={engine === "qwen" ? "qwen" : "whisper"}
-        taskFocus={taskFocus}
-        onManagementClose={() => {
-          setTaskFocus(undefined);
-          setManagementPage(null);
-        }}
-        onManagementPageChange={(page) => {
-          setTaskFocus(undefined);
-          setManagementPage(page);
-        }}
-        onRecoveryComplete={async (id, options) => {
-          await completeRecording(id, options);
-          setManagementPage(null);
-          void client.invalidateQueries({
-            queryKey: ["recording-recoveries"],
-          });
-        }}
-        onRecordingFromManagement={() => {
-          setManagementPage(null);
-          setRecordingOpen(true);
-        }}
-        onSearchFromManagement={() => {
-          setManagementPage(null);
-          setSearchOpen(true);
-        }}
-        onOpenMeetingFromManagement={(id) => {
-          if (recordingOpen) {
-            toast("请先返回录音现场；结束录音后可打开其他会议。");
-            return;
-          }
-          setManagementPage(null);
-          setSearchOpen(false);
-          void openMeeting(id);
-        }}
-        onEnvironmentChanged={() =>
-          void client.invalidateQueries({ queryKey: ["environment"] })
-        }
         compareIds={compareIds}
-        onCompareClose={() => setCompareIds(null)}
+        onCompareClose={shell.closeModal}
         onSaveCompareSelection={
           compareIds && meeting
             ? (() => {
@@ -2025,7 +2080,7 @@ export default function App({ browserWorkspace = false }: { browserWorkspace?: b
                     if (meetingRef.current?.id !== meeting.id) return;
                     setMeeting(fresh);
                     displayMinutes(draft);
-                    setCompareIds(null);
+                    shell.closeModal();
                     toast("已保存为待采用草稿");
                   };
                 }
@@ -2051,49 +2106,28 @@ export default function App({ browserWorkspace = false }: { browserWorkspace?: b
         minutesDraft={minutesDraft}
         selectedMinutesId={selectedMinutesId}
         showCitations={showCitations}
-        onPreviewClose={() => setPreviewOpen(false)}
+        onPreviewClose={shell.closeModal}
         onExportMinutes={(format) => void exportMinutes(format)}
-        followupsOpen={followupsOpen}
-        onFollowupsClose={() => setFollowupsOpen(false)}
-        onOpenFollowupMeeting={async (id) => {
-          await openMeeting(id);
-          setWorkspace("minutes");
-        }}
-        recordingOpen={!browserWorkspace && recordingOpen}
-        targetRecordingId={targetRecordingId}
-        environment={environment}
-        minutesModel={minutesModel}
-        onMinutesModelChange={setMinutesModel}
-        engineLabel={engineLabel(engine)}
-        onRecordingClose={() => {
-          setRecordingOpen(false);
-          setTargetRecordingId(undefined);
-          void client.invalidateQueries({
-            queryKey: ["recording-recoveries"],
-          });
-        }}
-        onRecordingComplete={completeRecording}
-        onRecordingModels={() => setManagementPage("models")}
         companionId={companionId}
-        onCloseCompanion={closeCompanionStatus}
+        onCloseCompanion={shell.closeModal}
         onCompanionNativeRecording={
-          !browserWorkspace && !recordingOpen && !managementPage
+          !browserWorkspace &&
+          !shell.recordingLocked &&
+          shell.route.kind !== "management"
             ? (id) => {
-                closeCompanionStatus();
-                setTargetRecordingId(id);
-                setRecordingOpen(true);
+                shell.closeModal();
+                shell.openRecording(id);
               }
             : undefined
         }
         onCompanionMeeting={
-          !recordingOpen && !managementPage
+          !shell.recordingLocked && shell.route.kind !== "management"
             ? (id) => {
-                closeCompanionStatus();
+                shell.closeModal();
                 void openMeeting(id);
               }
             : undefined
         }
-        toast={toast}
       />
     </>
   );
@@ -2144,11 +2178,15 @@ function Welcome({
         <strong>导入已有录音 · 拖放或点击选择</strong>
         <span>WAV / MP3 / M4A / MP4 等 · 最大 4GB</span>
       </button>
-      {onRecord ? <button className="welcome-record" onClick={onRecord}>
-        <span>●</span>
-        <strong>开始线上或现场会议</strong>
-        <small>录音时可随手记下重点、问题、决策和待办</small>
-      </button> : <p className="muted">如需开始录音，请打开听记 App。</p>}
+      {onRecord ? (
+        <button className="welcome-record" onClick={onRecord}>
+          <span>●</span>
+          <strong>开始线上或现场会议</strong>
+          <small>录音时可随手记下重点、问题、决策和待办</small>
+        </button>
+      ) : (
+        <p className="muted">如需开始录音，请打开听记 App。</p>
+      )}
       <button className="text-btn" onClick={() => setSampleOpen(true)}>
         先体验样例会议 · 无需配置模型 →
       </button>

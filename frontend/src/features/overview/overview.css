@@ -19,7 +19,7 @@
 }
 .overview-heading small {
   display: block;
-  font-size: 11px;
+  font-size: var(--text-xs);
   color: var(--muted);
   margin-top: 6px;
 }
@@ -41,11 +41,11 @@
   align-items: center;
   margin: 12px 0;
   color: var(--muted);
-  font-size: 11px;
+  font-size: var(--text-xs);
 }
 .overview-toolbar select {
   max-width: 200px;
-  font-size: 11px;
+  font-size: var(--text-xs);
 }
 .overview-groups {
   flex: 1;
@@ -93,7 +93,7 @@
 .overview-item small {
   display: block;
   color: var(--muted);
-  font-size: 11px;
+  font-size: var(--text-xs);
   margin: 6px 0;
 }
 .overview-item-actions {
@@ -104,7 +104,7 @@
   margin-top: 10px;
 }
 .overview-item-actions button {
-  font-size: 11px;
+  font-size: var(--text-xs);
   padding: 5px 8px;
 }
 .overview-evidence blockquote {
@@ -274,12 +274,12 @@
   gap: 6px;
 }
 .overview-header-actions button {
-  font-size: 11px;
+  font-size: var(--text-xs);
   padding: 5px 8px;
 }
 .overview-live-state {
   color: #438471;
-  font-size: 11px;
+  font-size: var(--text-xs);
   white-space: nowrap;
 }
 .overview-live-state.attention {
@@ -303,13 +303,13 @@
   align-items: center;
   gap: 6px;
   color: #936d30;
-  font-size: 11px;
+  font-size: var(--text-xs);
   padding: 8px 0 0;
   flex-shrink: 0;
 }
 .overview-quiet-warning button {
   padding: 4px 6px;
-  font-size: 11px;
+  font-size: var(--text-xs);
 }
 .live-overview-panel > .overview-groups {
   padding-top: 12px;
@@ -317,7 +317,7 @@
 .overview-group h4 {
   margin: 12px 0 4px;
   color: #778497;
-  font-size: 11px;
+  font-size: var(--text-xs);
 }
 .overview-item {
   border: 0;
@@ -351,7 +351,7 @@
 }
 .overview-item small {
   margin: 4px 0 0;
-  font-size: 10px;
+  font-size: var(--text-xs);
 }
 .overview-group[data-kind="topic"] .overview-item-main p {
   font-size: 17px;
@@ -372,7 +372,7 @@
     font-size: 14px;
   }
   .overview-heading small {
-    font-size: 10px;
+    font-size: var(--text-xs);
   }
   .overview-header-actions {
     max-width: 55%;

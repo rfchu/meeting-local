@@ -74,6 +74,7 @@ export type RecordingDialogProps = {
   engineLabel: string;
   engines: EngineInfo[];
   onClose: () => void;
+  onPhaseChange?: (phase: "setup" | "active") => void;
   onComplete: (
     meetingId: string,
     options: {
@@ -273,7 +274,8 @@ export function useRecordingController({
     ),
     [correctionReviewOpen, setCorrectionReviewOpen] = useState(false),
     [preferredEchoMode, setEchoMode] = useState(preferences.echoMode),
-    [attachedEchoMode, setAttachedEchoMode] = useState<typeof preferredEchoMode>(),
+    [attachedEchoMode, setAttachedEchoMode] =
+      useState<typeof preferredEchoMode>(),
     [responsiveMode, setResponsiveMode] = useState(preferences.responsiveMode),
     [modelStatus, setModelStatus] = useState<Awaited<
       ReturnType<typeof api.liveModelStatus>
@@ -367,7 +369,10 @@ export function useRecordingController({
   );
   noteDraftRef.current = { text: noteText, type: noteType, scope: noteScope };
 
-  const echoMode = state === "idle" ? preferredEchoMode : attachedEchoMode ?? preferredEchoMode;
+  const echoMode =
+    state === "idle"
+      ? preferredEchoMode
+      : (attachedEchoMode ?? preferredEchoMode);
   const persistPreferences = (mode = completionMode) => {
     let saved = false;
     try {
@@ -602,7 +607,11 @@ export function useRecordingController({
       output_language: session.brief?.output_language || "zh",
     });
     setCaptureSource(
-      session.microphone_only ? "macos-microphone" : session.include_microphone ? "macos-both" : "macos-system",
+      session.microphone_only
+        ? "macos-microphone"
+        : session.include_microphone
+          ? "macos-both"
+          : "macos-system",
     );
     setRecordOnly(!entry.config);
     recordOnlyRef.current = !entry.config;

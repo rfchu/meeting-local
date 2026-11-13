@@ -5,6 +5,8 @@ const compiled=await build({entryPoints:[new URL('../src/utils.ts',import.meta.u
 const {latestMinutes,currentMinutes}=await import('data:text/javascript;base64,'+Buffer.from(compiled.outputFiles[0].text).toString('base64'));
 const composition=await build({entryPoints:[new URL('../src/features/minutes/composition.ts',import.meta.url).pathname],bundle:true,format:'esm',write:false});
 const {readMinutesOptions,persistMinutesOptions}=await import('data:text/javascript;base64,'+Buffer.from(composition.outputFiles[0].text).toString('base64'));
+const presentation=await build({entryPoints:[new URL('../src/features/minutes/presentation.ts',import.meta.url).pathname],bundle:true,format:'esm',write:false});
+const {resolveMinutesStaleNotice,resolveAnalysisStaleNotice}=await import('data:text/javascript;base64,'+Buffer.from(presentation.outputFiles[0].text).toString('base64'));
 test('new draft never silently replaces adopted minutes; stale adopted version remains viewable',()=>{
   const adopted={id:'adopted',kind:'meeting_minutes',revision:1,stale:false};
   const draft={id:'draft',kind:'meeting_minutes',revision:1,stale:false};
@@ -28,4 +30,57 @@ test('generation preferences persist without keeping an obsolete derivation sour
   data.set('tingji.minutes.options.v1','broken');
   assert.equal(readMinutesOptions().method,'ai');
   delete globalThis.localStorage;
+});
+test('stale notice consolidates revision lag and source drift into one compact banner with regenerate CTA',()=>{
+  const lag=resolveMinutesStaleNotice({
+    artifact:{revision:1,stale:true},
+    meetingRevision:2,
+    transcriptDirty:false,
+    readOnly:true,
+    sameRevisionRecordChanged:false,
+    analysisUpdated:false,
+  });
+  assert.ok(lag);
+  assert.match(lag.message,/v1.*v2/);
+  assert.equal(lag.actionLabel,'用 v2 重新生成');
+
+  const dirty=resolveMinutesStaleNotice({
+    artifact:{revision:2,stale:false},
+    meetingRevision:2,
+    transcriptDirty:true,
+    readOnly:false,
+  });
+  assert.ok(dirty);
+  assert.match(dirty.message,/正在修改/);
+  assert.equal(dirty.actionLabel,'用 v2 重新生成');
+
+  const sameRev=resolveMinutesStaleNotice({
+    artifact:{revision:2,stale:true},
+    meetingRevision:2,
+    transcriptDirty:false,
+    readOnly:true,
+    sameRevisionRecordChanged:true,
+  });
+  assert.ok(sameRev);
+  assert.match(sameRev.message,/中文记录/);
+
+  assert.equal(resolveMinutesStaleNotice({
+    artifact:{revision:2,stale:false},
+    meetingRevision:2,
+    transcriptDirty:false,
+    readOnly:false,
+  }),null);
+
+  const analysisLag=resolveAnalysisStaleNotice({
+    artifact:{revision:1},
+    meetingRevision:3,
+    transcriptDirty:false,
+  });
+  assert.ok(analysisLag);
+  assert.equal(analysisLag.actionLabel,'用 v3 重新生成');
+  assert.equal(resolveAnalysisStaleNotice({
+    artifact:{revision:3},
+    meetingRevision:3,
+    transcriptDirty:false,
+  }),null);
 });

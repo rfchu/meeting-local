@@ -152,7 +152,10 @@ export default function RecordingView({
   systemLevels,
   termsOpen,
   toast,
-}: RecordingViewModel) {
+  onPhaseChange,
+}: RecordingViewModel & {
+  onPhaseChange?: (phase: "setup" | "active") => void;
+}) {
   const timelineNotes = useQuery({
     queryKey: ["copilot-notes", correctionSessionId],
     queryFn: () => api.shorthandNotes(correctionSessionId!),
@@ -204,19 +207,20 @@ export default function RecordingView({
   const controlRequired =
     sessionRef.current?.source === "macos" &&
     !!nativeOwnership?.control_required;
-  if ((state === "idle" || state === "requesting") && !targetRecordingId) {
+  const setupMode =
+    (state === "idle" || state === "requesting") && !targetRecordingId;
+  const setupPhase =
+    state === "idle" && !targetRecordingId ? "setup" : "active";
+  useEffect(() => {
+    onPhaseChange?.(setupPhase);
+  }, [setupPhase, onPhaseChange]);
+
+  if (setupMode) {
     return (
-      <Modal
+      <section
         id="recordingWorkbench"
-        className="recording-workbench setup-mode"
-        ariaLabel="会议准备与预设"
-        onClose={() => {
-          if (state === "requesting") {
-            toast("正在启动录音通道，请稍候…");
-            return;
-          }
-          closeWithPreparation();
-        }}
+        className="shell-page recording-setup-host"
+        aria-label="会前准备与就绪舱"
       >
         {termsOpen && (
           <TermDialog
@@ -264,7 +268,7 @@ export default function RecordingView({
           environment={environment}
           minutesModel={minutesModel}
         />
-      </Modal>
+      </section>
     );
   }
 
@@ -475,333 +479,331 @@ export default function RecordingView({
       <div
         className={`workbench-history-wrapper${state === "finished" ? (historyOpen ? " ended open" : " ended") : ""}`}
       >
-          {state === "finished" && (
-            <button
-              className="history-toggle"
-              aria-expanded={historyOpen}
-              onClick={() => setHistoryOpen((value) => !value)}
-            >
-              {historyOpen ? "收起" : "查看"}本次实时文字与简记（{notes.length}{" "}
-              条简记）
-            </button>
-          )}
-          {(state !== "finished" || historyOpen) && (
-            <>
-              <nav className="recording-view-tabs" aria-label="会中视图">
-                <button
-                  aria-pressed={mobilePane === "transcript"}
-                  onClick={() => setMobilePane("transcript")}
-                >
-                  实时文字
-                </button>
-                <button
-                  aria-pressed={mobilePane === "overview"}
-                  onClick={() => {
-                    setMobilePane("overview");
-                    setSeenOverview(overviewVersion);
-                    setReturnToOverview(false);
-                  }}
-                >
-                  AI 概览
-                  {mobilePane !== "overview" &&
-                    overviewVersion > seenOverview &&
-                    " · 有更新"}
-                </button>
-                <button
-                  className="workbench-notes-tab"
-                  aria-pressed={mobilePane === "notes"}
-                  onClick={() => setMobilePane("notes")}
-                >
-                  我的简记{notes.length ? ` · ${notes.length}` : ""}
-                </button>
-                {recording && notesCollapsed && (
-                  <button
-                    className="workbench-restore-notes"
-                    onClick={() => setNotesCollapsed(false)}
-                  >
-                    展开简记
-                  </button>
-                )}
-              </nav>
-              <div
-                className="recording-workspace"
-                data-mobile-pane={mobilePane}
-                data-notes-collapsed={notesCollapsed}
+        {state === "finished" && (
+          <button
+            className="history-toggle"
+            aria-expanded={historyOpen}
+            onClick={() => setHistoryOpen((value) => !value)}
+          >
+            {historyOpen ? "收起" : "查看"}本次实时文字与简记（{notes.length}{" "}
+            条简记）
+          </button>
+        )}
+        {(state !== "finished" || historyOpen) && (
+          <>
+            <nav className="recording-view-tabs" aria-label="会中视图">
+              <button
+                aria-pressed={mobilePane === "transcript"}
+                onClick={() => setMobilePane("transcript")}
               >
-                <section className="live-draft">
-                  <header>
-                    <h3>实时文字</h3>
-                    {returnToOverview && (
-                      <button
-                        className="text-btn"
-                        onClick={() => {
-                          setMobilePane("overview");
-                          setSeenOverview(overviewVersion);
-                          setReturnToOverview(false);
-                        }}
-                      >
-                        返回概览
-                      </button>
-                    )}
-                  </header>
-                  <LiveDraftList
-                    active={mobilePane === "transcript"}
-                    subtitleTarget={subtitleTarget}
-                    subtitleEnabled={
-                      recording &&
-                      mobilePane === "overview" &&
-                      !subtitleCollapsed
-                    }
-                    onConfigureModels={onModels}
-                    onCollapseSubtitle={() => setSubtitleCollapsed(true)}
-                    jump={jumpDraft}
-                    drafts={displayDrafts}
-                    notes={notes}
-                    copilotNotes={timelineNotes.data}
-                    recordingId={correctionSessionId}
-                    sourceLanguage={brief.source_language || undefined}
-                    profiles={environment?.analysis.profiles.filter(
-                      (item) => item.provider_type === "local",
-                    )}
-                    canAddNote={recording}
-                    partial={partialDraft}
-                    emptyText={
-                      state === "idle"
-                        ? "就绪 · 点击右上角「开始录音」，实时文字与发言内容将在此跟随呈现"
-                        : recording &&
+                实时文字
+              </button>
+              <button
+                aria-pressed={mobilePane === "overview"}
+                onClick={() => {
+                  setMobilePane("overview");
+                  setSeenOverview(overviewVersion);
+                  setReturnToOverview(false);
+                }}
+              >
+                AI 概览
+                {mobilePane !== "overview" &&
+                  overviewVersion > seenOverview &&
+                  " · 有更新"}
+              </button>
+              <button
+                className="workbench-notes-tab"
+                aria-pressed={mobilePane === "notes"}
+                onClick={() => setMobilePane("notes")}
+              >
+                我的简记{notes.length ? ` · ${notes.length}` : ""}
+              </button>
+              {recording && notesCollapsed && (
+                <button
+                  className="workbench-restore-notes"
+                  onClick={() => setNotesCollapsed(false)}
+                >
+                  展开简记
+                </button>
+              )}
+            </nav>
+            <div
+              className="recording-workspace"
+              data-mobile-pane={mobilePane}
+              data-notes-collapsed={notesCollapsed}
+            >
+              <section className="live-draft">
+                <header>
+                  <h3>实时文字</h3>
+                  {returnToOverview && (
+                    <button
+                      className="text-btn"
+                      onClick={() => {
+                        setMobilePane("overview");
+                        setSeenOverview(overviewVersion);
+                        setReturnToOverview(false);
+                      }}
+                    >
+                      返回概览
+                    </button>
+                  )}
+                </header>
+                <LiveDraftList
+                  active={mobilePane === "transcript"}
+                  subtitleTarget={subtitleTarget}
+                  subtitleEnabled={
+                    recording && mobilePane === "overview" && !subtitleCollapsed
+                  }
+                  onConfigureModels={onModels}
+                  onCollapseSubtitle={() => setSubtitleCollapsed(true)}
+                  jump={jumpDraft}
+                  drafts={displayDrafts}
+                  notes={notes}
+                  copilotNotes={timelineNotes.data}
+                  recordingId={correctionSessionId}
+                  sourceLanguage={brief.source_language || undefined}
+                  profiles={environment?.analysis.profiles.filter(
+                    (item) => item.provider_type === "local",
+                  )}
+                  canAddNote={recording}
+                  partial={partialDraft}
+                  emptyText={
+                    state === "idle"
+                      ? "就绪 · 点击右上角「开始录音」，实时文字与发言内容将在此跟随呈现"
+                      : recording &&
                           captureSource !== "browser" &&
                           (captureHealth?.stalled || nativeUnavailable)
-                          ? "已保存的原音保留，当前采集状态异常；请查看底部详情。"
-                          : recordOnly
-                            ? "本次未开启实时识别，请关注下方音轨与文件状态。会后可配置模型生成文字稿。"
-                            : captureSource === "macos-both"
-                              ? "电脑声音和麦克风分别识别，确认后的文字会按时间出现。"
-                              : responsiveMode &&
-                                  draftEngine === "qwen" &&
-                                  streamEnabled
-                                ? "约 3 秒开始预览，后端根据识别速度调整更新节奏。"
-                                : undefined
-                    }
-                    onAddNote={(draft) =>
-                      setNotes((old) => [
-                        ...old,
-                        {
-                          captured_at: draft.start,
-                          note_type: "note",
-                          raw_text: draft.text,
-                          note_scope: "meeting",
-                        },
-                      ])
-                    }
+                        ? "已保存的原音保留，当前采集状态异常；请查看底部详情。"
+                        : recordOnly
+                          ? "本次未开启实时识别，请关注下方音轨与文件状态。会后可配置模型生成文字稿。"
+                          : captureSource === "macos-both"
+                            ? "电脑声音和麦克风分别识别，确认后的文字会按时间出现。"
+                            : responsiveMode &&
+                                draftEngine === "qwen" &&
+                                streamEnabled
+                              ? "约 3 秒开始预览，后端根据识别速度调整更新节奏。"
+                              : undefined
+                  }
+                  onAddNote={(draft) =>
+                    setNotes((old) => [
+                      ...old,
+                      {
+                        captured_at: draft.start,
+                        note_type: "note",
+                        raw_text: draft.text,
+                        note_scope: "meeting",
+                      },
+                    ])
+                  }
+                />
+                {recording && correctionSessionId && (
+                  <LiveCopilot
+                    key={correctionSessionId}
+                    recordingId={correctionSessionId}
+                    elapsed={currentSeconds()}
                   />
-                  {recording && correctionSessionId && (
-                    <LiveCopilot
-                      key={correctionSessionId}
-                      recordingId={correctionSessionId}
-                      elapsed={currentSeconds()}
-                    />
+                )}
+              </section>
+              <section className="live-overview">
+                <LiveOverviewPanel
+                  recordingId={correctionSessionId || ""}
+                  engine={draftEngine}
+                  timeline
+                  onVersion={setOverviewVersion}
+                  locateLabel="原话"
+                  active={recording && !recordOnly}
+                  profiles={environment?.analysis.profiles || []}
+                  onModels={onModels}
+                  onLocate={(e) => {
+                    setReturnToOverview(true);
+                    setMobilePane("transcript");
+                    setJumpDraft({ id: e.segment_id, nonce: Date.now() });
+                  }}
+                />
+              </section>
+              <section className="live-notes">
+                <header>
+                  <h3>我的简记</h3>
+                  <span>
+                    {notes.length ? `${notes.length} 条` : "记录此刻的关注"}
+                  </span>
+                  {recording && (
+                    <button
+                      className="text-btn workbench-collapse-notes"
+                      onClick={() => setNotesCollapsed(true)}
+                    >
+                      收起
+                    </button>
                   )}
-                </section>
-                <section className="live-overview">
-                  <LiveOverviewPanel
-                    recordingId={correctionSessionId || ""}
-                    engine={draftEngine}
-                    timeline
-                    onVersion={setOverviewVersion}
-                    locateLabel="原话"
-                    active={recording && !recordOnly}
-                    profiles={environment?.analysis.profiles || []}
-                    onModels={onModels}
-                    onLocate={(e) => {
-                      setReturnToOverview(true);
-                      setMobilePane("transcript");
-                      setJumpDraft({ id: e.segment_id, nonce: Date.now() });
+                </header>
+                <div className="live-note-form">
+                  <textarea
+                    aria-label="会议简记"
+                    placeholder={
+                      recording
+                        ? "写下想法、问题或待办"
+                        : "开始录音后可记下重点"
+                    }
+                    value={noteText}
+                    disabled={!recording}
+                    onChange={(event) => setNoteText(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (
+                        (event.metaKey || event.ctrlKey) &&
+                        event.key === "Enter"
+                      )
+                        addNote();
                     }}
                   />
-                </section>
-                <section className="live-notes">
-                  <header>
-                    <h3>我的简记</h3>
-                    <span>
-                      {notes.length ? `${notes.length} 条` : "记录此刻的关注"}
-                    </span>
-                    {recording && (
-                      <button
-                        className="text-btn workbench-collapse-notes"
-                        onClick={() => setNotesCollapsed(true)}
-                      >
-                        收起
-                      </button>
-                    )}
-                  </header>
-                  <div className="live-note-form">
-                    <textarea
-                      aria-label="会议简记"
-                      placeholder={
-                        recording
-                          ? "写下想法、问题或待办"
-                          : "开始录音后可记下重点"
-                      }
-                      value={noteText}
-                      disabled={!recording}
-                      onChange={(event) => setNoteText(event.target.value)}
-                      onKeyDown={(event) => {
-                        if (
-                          (event.metaKey || event.ctrlKey) &&
-                          event.key === "Enter"
-                        )
-                          addNote();
-                      }}
-                    />
-                    <button
-                      disabled={!recording || !noteText.trim()}
-                      onClick={addNote}
-                    >
-                      保存简记
-                    </button>
-                  </div>
-                  <div className="note-capture-actions">
-                    <div className="attention-quick-actions">
-                      {(
-                        [
-                          ["highlight", "标重点"],
-                          ["question", "记问题"],
-                          ["action", "记待办"],
-                          ["note", "随手记"],
-                        ] as const
-                      ).map(([type, label]) => (
-                        <button
-                          key={type}
-                          disabled={!recording}
-                          onClick={() => {
-                            if (noteText.trim()) {
-                              setNotes((old) => [
-                                ...old,
-                                {
-                                  captured_at: Math.max(0, currentSeconds()),
-                                  note_type: type,
-                                  raw_text: noteText.trim(),
-                                  note_scope: "personal",
-                                },
-                              ]);
-                              setNoteText("");
-                            } else markNow(type);
-                          }}
-                        >
-                          {label}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                  <p className="note-purpose-hint">
-                    随手记下关键词，系统会关联此刻的录音。
-                  </p>
-                  <div className="live-note-options" ref={noteOptionsRef}>
-                    <button
-                      className="note-options-trigger"
-                      disabled={!recording}
-                      aria-expanded={noteOptionsOpen}
-                      onClick={() => setNoteOptionsOpen(!noteOptionsOpen)}
-                    >
-                      {noteLabels[noteType]} ·{" "}
-                      {noteScope === "personal" ? "个人备注" : "会议内容"}{" "}
-                      <span>调整用途</span>
-                    </button>
-                    {noteOptionsOpen && (
-                      <div
-                        className="note-options-popover"
-                        role="group"
-                        aria-label="简记标签与用途"
-                      >
-                        <select
-                          aria-label="记录用途"
-                          value={noteScope}
-                          onChange={(e) =>
-                            setNoteScope(e.target.value as typeof noteScope)
-                          }
-                          disabled={!recording}
-                        >
-                          <option value="personal">个人备注</option>
-                          <option value="meeting">会议内容（待核对）</option>
-                        </select>
-                        <select
-                          aria-label="简记类型"
-                          value={noteType}
-                          disabled={!recording}
-                          onChange={(event) =>
-                            setNoteType(event.target.value as MeetingNoteType)
-                          }
-                        >
-                          {Object.entries(noteLabels).map(([value, label]) => (
-                            <option value={value} key={value}>
-                              {label}
-                            </option>
-                          ))}
-                        </select>
-                        <button onClick={() => setNoteOptionsOpen(false)}>
-                          完成
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                  <div
-                    className={`live-note-list${!notes.length ? " empty" : ""}`}
+                  <button
+                    disabled={!recording || !noteText.trim()}
+                    onClick={addNote}
                   >
-                    {!notes.length && <p>⌘ / Ctrl + Enter 保存简记</p>}
-                    {notes.map((note, index) => (
-                      <article key={`${note.captured_at}-${index}`}>
-                        <button
-                          className="text-btn danger"
-                          aria-label="删除简记"
-                          disabled={!recording}
-                          onClick={() =>
-                            setNotes((old) => old.filter((_, i) => i !== index))
-                          }
-                        >
-                          删除
-                        </button>
-                        <b>{clock(note.captured_at)}</b>
-                        <span>{noteLabels[note.note_type]}</span>
-                        <p>
-                          {note.is_marker && !note.raw_text
-                            ? "⚑ 时间标记 · 会后补充"
-                            : note.raw_text}
-                        </p>
-                        <small>
-                          {note.note_scope === "meeting"
-                            ? "会议内容 · 待核对"
-                            : "个人备注"}
-                        </small>
-                        {note.raw_text.trim() &&
-                          note.note_scope !== "meeting" && (
-                            <button
-                              className="text-btn overview-focus-toggle"
-                              disabled={!recording}
-                              title="开启概览后，选入内容会发送至本场所选模型；仍保留个人备注用途"
-                              onClick={() =>
-                                setNotes((old) =>
-                                  old.map((n, i) =>
-                                    i === index ? toggleOverviewFocus(n) : n,
-                                  ),
-                                )
-                              }
-                            >
-                              {note.overview_focus
-                                ? "移出概览关注点"
-                                : "用作概览关注点"}
-                            </button>
-                          )}
-                        {note.note_scope === "meeting" && (
-                          <small>可作为概览关注点 · 仍需原文依据</small>
-                        )}
-                      </article>
+                    保存简记
+                  </button>
+                </div>
+                <div className="note-capture-actions">
+                  <div className="attention-quick-actions">
+                    {(
+                      [
+                        ["highlight", "标重点"],
+                        ["question", "记问题"],
+                        ["action", "记待办"],
+                        ["note", "随手记"],
+                      ] as const
+                    ).map(([type, label]) => (
+                      <button
+                        key={type}
+                        disabled={!recording}
+                        onClick={() => {
+                          if (noteText.trim()) {
+                            setNotes((old) => [
+                              ...old,
+                              {
+                                captured_at: Math.max(0, currentSeconds()),
+                                note_type: type,
+                                raw_text: noteText.trim(),
+                                note_scope: "personal",
+                              },
+                            ]);
+                            setNoteText("");
+                          } else markNow(type);
+                        }}
+                      >
+                        {label}
+                      </button>
                     ))}
                   </div>
-                </section>
-              </div>
-            </>
-          )}
-        </div>
+                </div>
+                <p className="note-purpose-hint">
+                  随手记下关键词，系统会关联此刻的录音。
+                </p>
+                <div className="live-note-options" ref={noteOptionsRef}>
+                  <button
+                    className="note-options-trigger"
+                    disabled={!recording}
+                    aria-expanded={noteOptionsOpen}
+                    onClick={() => setNoteOptionsOpen(!noteOptionsOpen)}
+                  >
+                    {noteLabels[noteType]} ·{" "}
+                    {noteScope === "personal" ? "个人备注" : "会议内容"}{" "}
+                    <span>调整用途</span>
+                  </button>
+                  {noteOptionsOpen && (
+                    <div
+                      className="note-options-popover"
+                      role="group"
+                      aria-label="简记标签与用途"
+                    >
+                      <select
+                        aria-label="记录用途"
+                        value={noteScope}
+                        onChange={(e) =>
+                          setNoteScope(e.target.value as typeof noteScope)
+                        }
+                        disabled={!recording}
+                      >
+                        <option value="personal">个人备注</option>
+                        <option value="meeting">会议内容（待核对）</option>
+                      </select>
+                      <select
+                        aria-label="简记类型"
+                        value={noteType}
+                        disabled={!recording}
+                        onChange={(event) =>
+                          setNoteType(event.target.value as MeetingNoteType)
+                        }
+                      >
+                        {Object.entries(noteLabels).map(([value, label]) => (
+                          <option value={value} key={value}>
+                            {label}
+                          </option>
+                        ))}
+                      </select>
+                      <button onClick={() => setNoteOptionsOpen(false)}>
+                        完成
+                      </button>
+                    </div>
+                  )}
+                </div>
+                <div
+                  className={`live-note-list${!notes.length ? " empty" : ""}`}
+                >
+                  {!notes.length && <p>⌘ / Ctrl + Enter 保存简记</p>}
+                  {notes.map((note, index) => (
+                    <article key={`${note.captured_at}-${index}`}>
+                      <button
+                        className="text-btn danger"
+                        aria-label="删除简记"
+                        disabled={!recording}
+                        onClick={() =>
+                          setNotes((old) => old.filter((_, i) => i !== index))
+                        }
+                      >
+                        删除
+                      </button>
+                      <b>{clock(note.captured_at)}</b>
+                      <span>{noteLabels[note.note_type]}</span>
+                      <p>
+                        {note.is_marker && !note.raw_text
+                          ? "⚑ 时间标记 · 会后补充"
+                          : note.raw_text}
+                      </p>
+                      <small>
+                        {note.note_scope === "meeting"
+                          ? "会议内容 · 待核对"
+                          : "个人备注"}
+                      </small>
+                      {note.raw_text.trim() &&
+                        note.note_scope !== "meeting" && (
+                          <button
+                            className="text-btn overview-focus-toggle"
+                            disabled={!recording}
+                            title="开启概览后，选入内容会发送至本场所选模型；仍保留个人备注用途"
+                            onClick={() =>
+                              setNotes((old) =>
+                                old.map((n, i) =>
+                                  i === index ? toggleOverviewFocus(n) : n,
+                                ),
+                              )
+                            }
+                          >
+                            {note.overview_focus
+                              ? "移出概览关注点"
+                              : "用作概览关注点"}
+                          </button>
+                        )}
+                      {note.note_scope === "meeting" && (
+                        <small>可作为概览关注点 · 仍需原文依据</small>
+                      )}
+                    </article>
+                  ))}
+                </div>
+              </section>
+            </div>
+          </>
+        )}
+      </div>
       {recording && (
         <footer className="workbench-footer">
           <div ref={setSubtitleTarget} />

@@ -1,5 +1,11 @@
 import { useState } from "react";
-import type { InterviewEvidence, InterviewSection, MeetingMinutes, PendingInterviewItem, Segment } from "../../types";
+import type {
+  InterviewEvidence,
+  InterviewSection,
+  MeetingMinutes,
+  PendingInterviewItem,
+  Segment,
+} from "../../types";
 export const coverageLabels = {
   covered: "已找到相关回答",
   needs_examples: "需要补充例证",
@@ -19,7 +25,13 @@ export function projectInterview(doc: MeetingMinutes): MeetingMinutes {
     content = x.content,
   ) => ({
     content,
-    source_segment_ids: [...new Set(x.evidence.flatMap((e) => e.span_segment_ids?.length ? e.span_segment_ids : [e.segment_id]))],
+    source_segment_ids: [
+      ...new Set(
+        x.evidence.flatMap((e) =>
+          e.span_segment_ids?.length ? e.span_segment_ids : [e.segment_id],
+        ),
+      ),
+    ],
     owner: x.owner || null,
     due_date: x.due_date || null,
     status: null,
@@ -135,7 +147,7 @@ export default function InterviewMinutesBody({
       interview: {
         ...data,
         pending_review: item
-          ? pending.map((entry, i) => i === index ? item : entry)
+          ? pending.map((entry, i) => (i === index ? item : entry))
           : pending.filter((_, i) => i !== index),
       },
     });
@@ -158,19 +170,43 @@ export default function InterviewMinutesBody({
   function matchesRole(source: Segment, role?: string) {
     const roles = doc.interview_context?.speaker_roles;
     if (!roles || !role) return true;
-    const fallback = source.source_track === "system" ? "线上发言" : source.source_track === "microphone" ? "现场发言" : "";
-    const speaker = !source.speaker_locked && (!source.speaker?.trim() || source.speaker === "未分配")
-      ? fallback || source.speaker : source.speaker;
-    return role === "candidate" ? speaker === roles.candidate : roles.interviewers.includes(speaker);
+    const fallback =
+      source.source_track === "system"
+        ? "线上发言"
+        : source.source_track === "microphone"
+          ? "现场发言"
+          : "";
+    const speaker =
+      !source.speaker_locked &&
+      (!source.speaker?.trim() || source.speaker === "未分配")
+        ? fallback || source.speaker
+        : source.speaker;
+    return role === "candidate"
+      ? speaker === roles.candidate
+      : roles.interviewers.includes(speaker);
   }
   function canAdopt(sources: InterviewEvidence[], role?: string) {
-    return sources.length > 0 && sources.every((source) =>
-      (source.span_segment_ids?.length ? source.span_segment_ids : [source.segment_id]).every((id) =>
-        segments.some((segment) => segment.id === id && matchesRole(segment, role)),
-      ),
+    return (
+      sources.length > 0 &&
+      sources.every((source) =>
+        (source.span_segment_ids?.length
+          ? source.span_segment_ids
+          : [source.segment_id]
+        ).every((id) =>
+          segments.some(
+            (segment) => segment.id === id && matchesRole(segment, role),
+          ),
+        ),
+      )
     );
   }
-  function candidateSources(entry: PendingInterviewItem, index: number, key: "evidence" | "question_evidence", label: string, role?: string) {
+  function candidateSources(
+    entry: PendingInterviewItem,
+    index: number,
+    key: "evidence" | "question_evidence",
+    label: string,
+    role?: string,
+  ) {
     const picker = `${index}:${key}`;
     return (
       <div>
@@ -179,35 +215,72 @@ export default function InterviewMinutesBody({
         {entry[key].map((source, i) => (
           <blockquote key={i}>
             <p>{source.quote}</p>
-            {(source.span_segment_ids?.length ? source.span_segment_ids : [source.segment_id]).map((id) => {
+            {(source.span_segment_ids?.length
+              ? source.span_segment_ids
+              : [source.segment_id]
+            ).map((id) => {
               const segment = segments.find((value) => value.id === id);
-              return segment && (
-                <button key={id} onClick={() => onSeek(segment.start, segment.source_track)}>
-                  回听 {Math.floor(segment.start / 60)}:{String(Math.floor(segment.start % 60)).padStart(2, "0")}
-                </button>
+              return (
+                segment && (
+                  <button
+                    key={id}
+                    onClick={() => onSeek(segment.start, segment.source_track)}
+                  >
+                    回听 {Math.floor(segment.start / 60)}:
+                    {String(Math.floor(segment.start % 60)).padStart(2, "0")}
+                  </button>
+                )
               );
             })}
           </blockquote>
         ))}
-        <button onClick={() => setSourcePicker(sourcePicker === picker ? null : picker)}
-          aria-expanded={sourcePicker === picker}>更换{label}</button>
-        {sourcePicker === picker && <label>
-          从文字稿选择
-          <select value="" onChange={(event) => {
-            const segment = segments.find((value) => value.id === event.target.value);
-            if (segment) {
-              updatePending(index, { ...entry, [key]: [{ segment_id: segment.id, quote: segment.text.trim().slice(0, 1000) }] });
-              setSourcePicker(null);
-            }
-          }}>
-            <option value="">选择文字稿片段</option>
-            {segments.filter((segment) => segment.text.trim() && matchesRole(segment, role)).map((segment) => (
-              <option key={segment.id} value={segment.id}>
-                {Math.floor(segment.start / 60)}:{String(Math.floor(segment.start % 60)).padStart(2, "0")} · {segment.speaker} · {segment.text.slice(0, 50)}
-              </option>
-            ))}
-          </select>
-        </label>}
+        <button
+          onClick={() =>
+            setSourcePicker(sourcePicker === picker ? null : picker)
+          }
+          aria-expanded={sourcePicker === picker}
+        >
+          更换{label}
+        </button>
+        {sourcePicker === picker && (
+          <label>
+            从文字稿选择
+            <select
+              value=""
+              onChange={(event) => {
+                const segment = segments.find(
+                  (value) => value.id === event.target.value,
+                );
+                if (segment) {
+                  updatePending(index, {
+                    ...entry,
+                    [key]: [
+                      {
+                        segment_id: segment.id,
+                        quote: segment.text.trim().slice(0, 1000),
+                      },
+                    ],
+                  });
+                  setSourcePicker(null);
+                }
+              }}
+            >
+              <option value="">选择文字稿片段</option>
+              {segments
+                .filter(
+                  (segment) =>
+                    segment.text.trim() && matchesRole(segment, role),
+                )
+                .map((segment) => (
+                  <option key={segment.id} value={segment.id}>
+                    {Math.floor(segment.start / 60)}:
+                    {String(Math.floor(segment.start % 60)).padStart(2, "0")} ·{" "}
+                    {segment.speaker} · {segment.text.slice(0, 50)}
+                  </option>
+                ))}
+            </select>
+          </label>
+        )}
       </div>
     );
   }
@@ -215,7 +288,8 @@ export default function InterviewMinutesBody({
     <div className="interview-body">
       {!!data.omitted_items && (
         <p className="interview-hint">
-          有 {data.omitted_items} 条 AI 生成内容未通过原文或角色校验，已从本版省略。
+          有 {data.omitted_items} 条 AI
+          生成内容未通过原文或角色校验，已从本版省略。
         </p>
       )}
       <div className="interview-context-card">
@@ -238,32 +312,141 @@ export default function InterviewMinutesBody({
         AI 关注点经人工保留后进入导出。
       </p>
       {!!pending.length && (
-        <details className="minutes-section" open={!data.qa.length && !data.summary.length}>
+        <details
+          className="minutes-section"
+          open={!data.qa.length && !data.summary.length}
+        >
           <summary>待人工核对 · {pending.length} 条</summary>
-          <p className="interview-hint">候选位置仅供回听。请确认原话支持条目内容，再采用并保存。待核对条目不进入导出。</p>
+          <p className="interview-hint">
+            候选位置仅供回听。请确认原话支持条目内容，再采用并保存。待核对条目不进入导出。
+          </p>
           {pending.map((entry, index) => {
-            const answerRole = entry.section === "qa" || entry.section === "background" ? "candidate" : undefined;
+            const answerRole =
+              entry.section === "qa" || entry.section === "background"
+                ? "candidate"
+                : undefined;
             return (
               <article className="interview-item" key={index}>
-                <strong>{headings.find(([key]) => key === entry.section)?.[1]}{entry.dimension ? ` · ${entry.dimension}` : ""}</strong>
+                <strong>
+                  {headings.find(([key]) => key === entry.section)?.[1]}
+                  {entry.dimension ? ` · ${entry.dimension}` : ""}
+                </strong>
                 <p className="interview-hint">{entry.issue}</p>
                 {entry.section === "qa" && (
-                  <label>问题<textarea maxLength={1000} value={entry.question || ""} onChange={(event) => updatePending(index, { ...entry, question: event.target.value })} /></label>
+                  <label>
+                    问题
+                    <textarea
+                      maxLength={1000}
+                      value={entry.question || ""}
+                      onChange={(event) =>
+                        updatePending(index, {
+                          ...entry,
+                          question: event.target.value,
+                        })
+                      }
+                    />
+                  </label>
                 )}
-                <label>待核对内容<textarea maxLength={2000} value={entry.content} onChange={(event) => updatePending(index, { ...entry, content: event.target.value })} /></label>
-                {entry.reason && <label>依据说明<textarea maxLength={1000} value={entry.reason} onChange={(event) => updatePending(index, { ...entry, reason: event.target.value })} /></label>}
-                {entry.followup && <label>建议追问<textarea maxLength={1000} value={entry.followup} onChange={(event) => updatePending(index, { ...entry, followup: event.target.value })} /></label>}
+                <label>
+                  待核对内容
+                  <textarea
+                    maxLength={2000}
+                    value={entry.content}
+                    onChange={(event) =>
+                      updatePending(index, {
+                        ...entry,
+                        content: event.target.value,
+                      })
+                    }
+                  />
+                </label>
+                {entry.reason && (
+                  <label>
+                    依据说明
+                    <textarea
+                      maxLength={1000}
+                      value={entry.reason}
+                      onChange={(event) =>
+                        updatePending(index, {
+                          ...entry,
+                          reason: event.target.value,
+                        })
+                      }
+                    />
+                  </label>
+                )}
+                {entry.followup && (
+                  <label>
+                    建议追问
+                    <textarea
+                      maxLength={1000}
+                      value={entry.followup}
+                      onChange={(event) =>
+                        updatePending(index, {
+                          ...entry,
+                          followup: event.target.value,
+                        })
+                      }
+                    />
+                  </label>
+                )}
                 {entry.section === "followups" && (
                   <>
-                    <label>负责人<input maxLength={200} value={entry.owner || ""} onChange={(event) => updatePending(index, { ...entry, owner: event.target.value || null })} /></label>
-                    <label>期限<input maxLength={200} value={entry.due_date || ""} onChange={(event) => updatePending(index, { ...entry, due_date: event.target.value || null })} /></label>
+                    <label>
+                      负责人
+                      <input
+                        maxLength={200}
+                        value={entry.owner || ""}
+                        onChange={(event) =>
+                          updatePending(index, {
+                            ...entry,
+                            owner: event.target.value || null,
+                          })
+                        }
+                      />
+                    </label>
+                    <label>
+                      期限
+                      <input
+                        maxLength={200}
+                        value={entry.due_date || ""}
+                        onChange={(event) =>
+                          updatePending(index, {
+                            ...entry,
+                            due_date: event.target.value || null,
+                          })
+                        }
+                      />
+                    </label>
                   </>
                 )}
-                {entry.section === "qa" && candidateSources(entry, index, "question_evidence", "问题候选原文", "interviewer")}
-                {candidateSources(entry, index, "evidence", entry.section === "qa" ? "回答候选原文" : "候选原文", answerRole)}
-                <button disabled={!entry.content.trim() || !canAdopt(entry.evidence, answerRole)
-                  || (entry.section === "qa" && (!entry.question?.trim() || !canAdopt(entry.question_evidence, "interviewer")))}
-                  onClick={() => adoptPending(index, entry)}>确认采用</button>
+                {entry.section === "qa" &&
+                  candidateSources(
+                    entry,
+                    index,
+                    "question_evidence",
+                    "问题候选原文",
+                    "interviewer",
+                  )}
+                {candidateSources(
+                  entry,
+                  index,
+                  "evidence",
+                  entry.section === "qa" ? "回答候选原文" : "候选原文",
+                  answerRole,
+                )}
+                <button
+                  disabled={
+                    !entry.content.trim() ||
+                    !canAdopt(entry.evidence, answerRole) ||
+                    (entry.section === "qa" &&
+                      (!entry.question?.trim() ||
+                        !canAdopt(entry.question_evidence, "interviewer")))
+                  }
+                  onClick={() => adoptPending(index, entry)}
+                >
+                  确认采用
+                </button>
                 <button onClick={() => updatePending(index)}>忽略</button>
               </article>
             );
@@ -410,7 +593,9 @@ export default function InterviewMinutesBody({
                     })),
                   ].map((e, i) => {
                     const segment = segments.find((s) => s.id === e.segment_id);
-                    const ids = e.span_segment_ids?.length ? e.span_segment_ids : [e.segment_id];
+                    const ids = e.span_segment_ids?.length
+                      ? e.span_segment_ids
+                      : [e.segment_id];
                     return (
                       <blockquote key={i}>
                         <small>
@@ -427,9 +612,16 @@ export default function InterviewMinutesBody({
                             <button
                               key={id}
                               disabled={!source}
-                              onClick={() => source && onSeek(source.start, source.source_track)}
+                              onClick={() =>
+                                source &&
+                                onSeek(source.start, source.source_track)
+                              }
                             >
-                              {!source ? "原文依据待核对" : ids.length > 1 ? `回听片段 ${index + 1}` : "定位并回听原文"}
+                              {!source
+                                ? "原文依据待核对"
+                                : ids.length > 1
+                                  ? `回听片段 ${index + 1}`
+                                  : "定位并回听原文"}
                             </button>
                           );
                         })}

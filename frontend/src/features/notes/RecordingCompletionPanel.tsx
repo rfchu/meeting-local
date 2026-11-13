@@ -48,11 +48,7 @@ export default function RecordingCompletionPanel({
       <button
         className="primary"
         disabled={completing}
-        onClick={() =>
-          void (recordOnly
-            ? onOpen()
-            : onProcess(completionMode))
-        }
+        onClick={() => void (recordOnly ? onOpen() : onProcess(completionMode))}
       >
         {recordOnly ? "打开已保存的会议" : "进入会后整理"}
       </button>

@@ -1,10 +1,12 @@
 import ActionMenu from "../../components/ActionMenu";
+import { IconColumns } from "../../styles/icons";
 import InterviewRolesForm from "./InterviewRolesForm";
 import InterviewMinutesBody from "./InterviewMinutesBody";
 import {
   hasMinutesFollowup,
   pendingMinutesDrafts,
   minutesVersionDescription,
+  resolveMinutesStaleNotice,
 } from "./presentation";
 import type { MinutesOptions } from "./composition";
 import { Fragment } from "react";
@@ -112,6 +114,8 @@ interface Props {
   onSave: () => void;
   onJobAction: (id: string, action: "cancel" | "retry") => void;
   onPreview: () => void;
+  sourceOpen?: boolean;
+  onToggleSource?: () => void;
   onSeek: (
     time: number,
     track?: import("../../types").Segment["source_track"],
@@ -181,19 +185,26 @@ export default function MinutesView(props: Props) {
   const newDraft = pendingMinutesDrafts(meeting).find(
     (a) => a.id !== selectedId,
   );
-  const notice =
-    transcriptDirty && artifact
-      ? "文字稿正在修改；保存后当前会议纪要将过期，请重新生成。"
-      : artifact && artifact.revision !== meeting.revision
-        ? `该纪要基于文字稿 v${artifact.revision}，当前为 v${meeting.revision}，请重新生成纪要。`
-        : artifact?.stale
-          ? "会议准备、关注点或原文依据已变化，此纪要需重新核对或生成。"
-          : current &&
-              current.payload.style !== "ai" &&
-              analysis &&
-              current.provenance?.source_analysis_id !== analysis.id
-            ? "会议分析已经更新，建议重新生成纪要；当前人工编辑内容仍会保留。"
-            : "";
+  const staleNotice = resolveMinutesStaleNotice({
+    artifact,
+    meetingRevision: meeting.revision,
+    transcriptDirty,
+    readOnly,
+    sameRevisionRecordChanged: Boolean(
+      coverage && artifact?.revision === meeting.revision,
+    ),
+    analysisUpdated: Boolean(
+      current &&
+      current.payload.style !== "ai" &&
+      analysis &&
+      current.provenance?.source_analysis_id !== analysis.id,
+    ),
+  });
+  const canRegenerate =
+    !generating &&
+    !!meeting.segments.length &&
+    !!model &&
+    !(options.method === "current" && !current);
   const update = <K extends keyof MeetingMinutes>(
     key: K,
     value: MeetingMinutes[K],
@@ -335,7 +346,7 @@ export default function MinutesView(props: Props) {
       {generation?.state === "waiting" && !automaticBusy && (
         <p role="status">
           {generation.message ||
-            "纪要任务等待继续；已有纪要和检查点保留，可在运行管理中取消。"}
+            "纪要任务等待继续；已有纪要和检查点保留，可在运行与模型管理中取消。"}
         </p>
       )}
       {generation?.state === "running" && (
@@ -373,6 +384,17 @@ export default function MinutesView(props: Props) {
               : "草稿／历史版本"}
             {dirty ? " · 有未保存修改" : ""}
           </span>
+          {props.onToggleSource && (
+            <button
+              type="button"
+              className={`review-source-inline-btn${props.sourceOpen ? " active" : ""}`}
+              aria-pressed={props.sourceOpen}
+              onClick={props.onToggleSource}
+            >
+              <IconColumns size={13} />{" "}
+              {props.sourceOpen ? "收起原文" : "对照原文"}
+            </button>
+          )}
           {artifact && artifact.id !== meeting.active_minutes_id && (
             <button
               className="primary"
@@ -389,11 +411,13 @@ export default function MinutesView(props: Props) {
           <ActionMenu
             key={artifact?.id ?? meeting.id}
             label="导出当前显示版本 ↓"
-            actions={([
-              ["docx", "Word 文档"],
-              ["pdf", "PDF 文档"],
-              ["md", "Markdown"],
-            ] as const).map(([format, label]) => ({
+            actions={(
+              [
+                ["docx", "Word 文档"],
+                ["pdf", "PDF 文档"],
+                ["md", "Markdown"],
+              ] as const
+            ).map(([format, label]) => ({
               label,
               run: () => props.onExport(format),
             }))}
@@ -442,6 +466,18 @@ export default function MinutesView(props: Props) {
             >
               {generating ? "正在生成…" : draft ? "生成新草稿" : "生成会议纪要"}
             </button>
+            {!draft && props.onToggleSource && (
+              <button
+                type="button"
+                className={`review-source-inline-btn${props.sourceOpen ? " active" : ""}`}
+                style={{ marginLeft: "auto" }}
+                aria-pressed={props.sourceOpen}
+                onClick={props.onToggleSource}
+              >
+                <IconColumns size={13} />{" "}
+                {props.sourceOpen ? "收起原文" : "对照原文"}
+              </button>
+            )}
           </div>
           {options.template_id === "online-interview" && (
             <InterviewRolesForm
@@ -547,7 +583,7 @@ export default function MinutesView(props: Props) {
                 "尚未配置模型"}
               {" · "}
               <button className="text-btn" onClick={props.onConfigureModel}>
-                在运行管理中配置
+                在运行与模型管理中配置
               </button>
             </p>
             <p>
@@ -624,14 +660,19 @@ export default function MinutesView(props: Props) {
             "缺少译文的片段使用原文，请核对。"}
         </p>
       )}
-      {readOnly && (
-        <p className="analysis-notice">
-          {coverage && artifact?.revision === meeting.revision
-            ? "中文记录、译文或其他整理资料已变化。可用当前资料生成并对比新草稿；旧稿仍保留。"
-            : "这个版本的来源已变化，仅供查看和导出；请根据当前原文生成新草稿，旧稿仍保留。"}
-        </p>
+      {staleNotice && (
+        <div className="analysis-notice stale-compact-notice" role="status">
+          <span className="stale-notice-text">{staleNotice.message}</span>
+          <button
+            type="button"
+            className="notice-action-btn stale-regen-btn"
+            disabled={!canRegenerate}
+            onClick={props.onGenerate}
+          >
+            {generating ? "正在生成…" : staleNotice.actionLabel}
+          </button>
+        </div>
       )}
-      {notice && <div className="analysis-notice">{notice}</div>}
       {!draft ? (
         <div className="empty">
           <div>▤</div>

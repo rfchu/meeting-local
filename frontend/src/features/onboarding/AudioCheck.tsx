@@ -448,7 +448,11 @@ export default function AudioCheck({
               className="btn-audio-check-transcribe"
               disabled={active || !engineReady}
               onClick={() => void transcribe()}
-              title={engineReady ? "使用所选引擎转写这段测试音频" : "识别引擎尚未就绪"}
+              title={
+                engineReady
+                  ? "使用所选引擎转写这段测试音频"
+                  : "识别引擎尚未就绪"
+              }
             >
               {state === "recognizing" ? "正在识别…" : "📝 验证转写"}
             </button>
