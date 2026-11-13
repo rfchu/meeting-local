@@ -4,6 +4,20 @@ import math
 import time
 from .native_capture import NativeCapture
 from .capture_diagnostics import sanitize
+from .recording_commands import control_view
+
+
+def has_brief_content(value,skip_language_keys=True):
+    """Return True only when meeting preparation contains non-empty user content."""
+    if value is None:return False
+    if isinstance(value,bool):return value
+    if isinstance(value,str):return bool(value.strip())
+    if isinstance(value,(int,float)):return bool(value)
+    if isinstance(value,list):return any(has_brief_content(item,False) for item in value)
+    if isinstance(value,dict):
+        return any(has_brief_content(v,False) for k,v in value.items()
+                   if not (skip_language_keys and k in ('source_language','output_language')))
+    return bool(value)
 
 
 def number(value):
@@ -67,11 +81,12 @@ class RecordingHealth:
         if native and capture.get('state')=='failed':
             failure_code='permission_required' if '隐私与安全性' in error and '允许听记采集器' in error else 'storage_failed' if diagnostics.get('failure_stage')=='storage' or error.startswith('磁盘保存失败') else 'capture_failed'
         # Empty failed starts are not recordings. Keep metadata and offer reversible hiding.
-        has_preparation=any(value for key,value in (session.get('brief') or {}).items()
-                            if key not in ('source_language','output_language'))
+        has_preparation=has_brief_content(session.get('brief'))
         has_asr=bool(self.store.one('SELECT 1 FROM live_asr_ranges WHERE recording_id=? LIMIT 1',(rid,)))
         extra_audio=any(file_bytes(p)>0 for pattern in ('*.tmp','*.wav') for p in folder.glob(pattern))
+        unconfirmed_control=control_view(session).get('status')=='unconfirmed'
         empty=native and not completed and not running and state in ('failed','interrupted','stopped') and not saved_bytes and not session.get('notes') and not has_preparation and not has_asr and not extra_audio
+        no_audio_archivable=not completed and not running and state in ('failed','interrupted','stopped') and not saved_bytes and not expected and not extra_audio and not unconfirmed_control
         warnings=[]
         if not saved_bytes:warnings.append('no_saved_audio')
         if missing and not native and not completed:warnings.append('missing_chunks')
@@ -97,4 +112,5 @@ class RecordingHealth:
                          'contiguous_chunks':contiguous,'tracks':tracks,
                          'recoverable':not completed and not running and saved_bytes>0 and (native or not missing)},
                 'notes_count':len(session.get('notes',[])), 'empty_session':bool(empty),
+                'no_audio_archivable':bool(no_audio_archivable),
                 'recovery_archived':bool(session.get('recovery_archived')),'capture_failure_code':failure_code, 'asr':asr,'warning_codes':warnings}

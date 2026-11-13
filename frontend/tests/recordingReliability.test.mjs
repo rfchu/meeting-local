@@ -77,3 +77,15 @@ test('Local language preferences do not turn a permission failure into a pending
   assert.equal(recordingRecoveryCount(mergeRecordingInventory(
     [{...local,brief:{...local.brief,purpose:'待整理的会前准备'}}],[failed])),1);
 });
+
+test('Permission failures with 0 B audio and empty nested interview structs stay out of pending recovery',()=>{
+  const base={...fixture,source:'macos',state:'interrupted',chunk_count:0,duration:0,
+    health:{state:'failed',native_running:false,empty_session:true,capture_failure_code:'permission_required',audio:{saved_bytes:0},asr:{}}};
+  const withTitle={...base,updated:20,brief:{source_language:'auto',output_language:'zh',title:'视频面试',interview:{candidate:'',role:'',speaker_roles:null}}};
+  assert.equal(emptyRecording(withTitle),true);
+  assert.equal(recordingRecoveryCount([withTitle]),0);
+  const nonPermEmptyInterview={...base,brief:{title:'',interview:{candidate:'',role:'',speaker_roles:null}},
+    health:{state:'failed',native_running:false,empty_session:true,capture_failure_code:'capture_failed',audio:{saved_bytes:0},asr:{}}};
+  assert.equal(emptyRecording(nonPermEmptyInterview),true);
+  assert.equal(recordingRecoveryCount([nonPermEmptyInterview]),0);
+});

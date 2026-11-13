@@ -119,7 +119,8 @@ def register_routes(app,services:ApplicationServices):
         try:
             with native_capture.lock,recordings.lock:
                 report=recording_health.snapshot(rid)
-                if not report['empty_session']:raise HTTPException(409,'仅可收起已停止且没有音频、简记、准备内容或识别结果的空会话')
+                if not report['empty_session'] and not report.get('no_audio_archivable'):
+                    raise HTTPException(409,'仅可收起已停止且没有已保存音频的记录')
                 value=recordings.read(rid);value['recovery_archived']=archived
                 recordings.write(recordings.folder(rid)/'session.json',value)
             return {'ok':True}

@@ -1,5 +1,5 @@
 import { recordingActive } from "./recordingStatus";
-import type { RecordingSession } from "../../types";
+import type { RecordingHealth, RecordingSession } from "../../types";
 
 export function mergeRecordingInventory(
   local: RecordingSession[],
@@ -70,6 +70,51 @@ export function clientRecordingDiagnostics(
   };
 }
 
+function hasAsrActivity(health: RecordingHealth) {
+  return Object.values(health.asr || {}).some(
+    (a) => a.covered_seconds || a.running_attempts,
+  );
+}
+
+export function hasBriefContent(
+  value: unknown,
+  skipLanguageKeys = true,
+): boolean {
+  if (value == null) return false;
+  if (typeof value === "boolean") return value;
+  if (typeof value === "string") return value.trim().length > 0;
+  if (typeof value === "number") return Boolean(value);
+  if (Array.isArray(value))
+    return value.some((item) => hasBriefContent(item, false));
+  if (typeof value === "object") {
+    return Object.entries(value as Record<string, unknown>).some(
+      ([key, nested]) =>
+        !(
+          skipLanguageKeys &&
+          (key === "source_language" || key === "output_language")
+        ) && hasBriefContent(nested, false),
+    );
+  }
+  return Boolean(value);
+}
+
+export function hasSavedAudio(session: RecordingSession): boolean {
+  return !!(
+    session.chunk_count ||
+    session.native_audio_saved ||
+    session.health?.audio.saved_bytes
+  );
+}
+
+export function noAudioArchivable(session: RecordingSession): boolean {
+  const h = session.health;
+  if (!h || hasSavedAudio(session)) return false;
+  if (h.audio.recoverable || h.audio.missing_chunk_count) return false;
+  if (recordingActive(h) || h.runtime?.control?.status === "unconfirmed")
+    return false;
+  return ["failed", "interrupted", "stopped"].includes(h.state);
+}
+
 /** A known failed native start with no saved material is never counted as a recording. */
 export function emptyRecording(session: RecordingSession): boolean {
   const h = session.health;
@@ -81,21 +126,12 @@ export function emptyRecording(session: RecordingSession): boolean {
     !["failed", "interrupted", "stopped"].includes(h.state)
   )
     return false;
-  if (
-    h.audio.saved_bytes ||
-    session.native_audio_saved ||
-    session.chunk_count ||
-    session.notes.length ||
-    Object.entries(session.brief || {}).some(
-      ([key, value]) =>
-        key !== "source_language" && key !== "output_language" && !!value,
-    )
-  )
-    return false;
+  if (hasSavedAudio(session) || session.notes.length) return false;
+  if (h.capture_failure_code === "permission_required" && !hasAsrActivity(h))
+    return true;
+  if (hasBriefContent(session.brief)) return false;
   if (h.empty_session !== undefined) return h.empty_session;
-  return !Object.values(h.asr || {}).some(
-    (a) => a.covered_seconds || a.running_attempts,
-  );
+  return !hasAsrActivity(h);
 }
 export function recordingRecoveryCount(sessions: RecordingSession[]) {
   return sessions.filter(

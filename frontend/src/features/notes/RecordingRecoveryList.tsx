@@ -1,20 +1,44 @@
 import RecordingStateSummary from "./RecordingStateSummary";
 import { recordingActive } from "./recordingStatus";
 import { useState } from "react";
-import { emptyRecording } from "./recordingInventory";
-import type { RecordingSession } from "../../types";
+import {
+  emptyRecording,
+  hasSavedAudio,
+  noAudioArchivable,
+} from "./recordingInventory";
+import type { MeetingBrief, RecordingSession } from "../../types";
 import { clock } from "../../utils";
+
+function briefSummaryItems(brief?: MeetingBrief): [string, string][] {
+  if (!brief) return [];
+  const candidates: [string, string | undefined | null][] = [
+    ["会议目的", brief.purpose],
+    ["议程", brief.agenda],
+    ["参会人", brief.participants],
+    ["关注问题", brief.questions],
+    ["候选人", brief.interview?.candidate],
+    ["应聘岗位", brief.interview?.role],
+    ["考察重点", brief.interview?.focus],
+  ];
+  return candidates
+    .map(([label, val]): [string, string] => [label, (val || "").trim()])
+    .filter(([, val]) => val.length > 0);
+}
+
 export function recoveryGroups(sessions: RecordingSession[]) {
   return {
     pending: sessions.filter(
-      (s) => !recordingActive(s.health) && !emptyRecording(s),
+      (s) =>
+        !recordingActive(s.health) &&
+        !s.health?.recovery_archived &&
+        !emptyRecording(s),
     ),
     active: sessions.filter((s) => recordingActive(s.health)),
     empty: sessions.filter(
       (s) => emptyRecording(s) && !s.health?.recovery_archived,
     ),
     archived: sessions.filter(
-      (s) => emptyRecording(s) && s.health?.recovery_archived,
+      (s) => !recordingActive(s.health) && !!s.health?.recovery_archived,
     ),
   };
 }
@@ -67,11 +91,9 @@ export default function RecordingRecoveryList({
       )}
       {groups.pending.map((session) => {
         const h = session.health;
-        const audio = !!(
-          session.chunk_count ||
-          session.native_audio_saved ||
-          h?.audio.saved_bytes
-        );
+        const audio = hasSavedAudio(session);
+        const canArchiveNoAudio = noAudioArchivable(session);
+        const briefItems = briefSummaryItems(session.brief);
         return (
           <article className="recovery-session-card" key={session.id}>
             <header>
@@ -109,7 +131,9 @@ export default function RecordingRecoveryList({
             {!audio && (
               <p className="health-warning">
                 {h
-                  ? "没有已知音频可恢复；已保存的简记和准备信息仍保留。"
+                  ? h.capture_failure_code === "permission_required"
+                    ? "当时未获得屏幕与系统音频录制权限，没有已知音频可恢复；已保存的简记和准备信息仍保留。"
+                    : "没有已知音频可恢复；已保存的简记和准备信息仍保留。"
                   : "本机音频尚未核对，暂不能判断是否有可恢复音频。已有简记和准备信息仍保留。"}
               </p>
             )}
@@ -119,13 +143,22 @@ export default function RecordingRecoveryList({
               unavailable={stateUnavailable || !h?.runtime}
             />
             <div className="recovery-session-actions">
-              <button
-                className="primary"
-                disabled={!audio || !recoveryAvailable}
-                onClick={() => onRecover(session)}
-              >
-                核对并保存为会议
-              </button>
+              {canArchiveNoAudio ? (
+                <button
+                  disabled={stateUnavailable}
+                  onClick={() => void onArchive(session.id, true)}
+                >
+                  收起无音频记录
+                </button>
+              ) : (
+                <button
+                  className="primary"
+                  disabled={!audio || !recoveryAvailable}
+                  onClick={() => onRecover(session)}
+                >
+                  核对并保存为会议
+                </button>
+              )}
               <details>
                 <summary>保存详情</summary>
                 {h?.asr && (
@@ -134,6 +167,15 @@ export default function RecordingRecoveryList({
                     {Math.round(h.asr.qwen?.covered_seconds || 0)} 秒 / Whisper{" "}
                     {Math.round(h.asr.whisper?.covered_seconds || 0)} 秒
                   </p>
+                )}
+                {briefItems.length > 0 && (
+                  <div>
+                    {briefItems.map(([label, val]) => (
+                      <p key={label}>
+                        {label}：{val}
+                      </p>
+                    ))}
+                  </div>
                 )}
                 {session.notes.length > 0 && (
                   <div>
@@ -223,18 +265,23 @@ function EmptySession({
 }) {
   const [busy, setBusy] = useState(false);
   const archived = !!session.health?.recovery_archived;
+  const canArchive =
+    !!session.health?.empty_session || archived || noAudioArchivable(session);
   return (
     <article className="recovery-empty-session">
       <strong>
+        {session.brief?.title ? `${session.brief.title} · ` : ""}
         {date(session)} · {archived ? "已收起" : "未保存音频"}
       </strong>
       <p>
         {session.health?.capture_failure_code === "permission_required"
           ? "当时未获得屏幕与系统音频录制权限，采集未能启动。"
-          : "采集未留下音频，也没有已保存的简记或会议准备。"}
+          : session.health?.empty_session === false
+            ? `未保存音频（${session.notes.length} 条简记）；原有准备与简记信息仍保留。`
+            : "采集未留下音频，也没有已保存的简记或会议准备。"}
       </p>
       <div>
-        {session.health?.empty_session && (
+        {canArchive && (
           <button
             disabled={busy}
             onClick={async () => {

@@ -33,8 +33,11 @@ test('Publication failure preserves recovery data; cleanup failure after publica
 test('Recovery grouping keeps empty history and active capture outside pending counts',()=>{
  const empty={...session,notes:[],health:{...health,state:'failed',audio:{saved_bytes:0},empty_session:true}};
  const archived={...empty,id:'archived',health:{...empty.health,recovery_archived:true}};
+ const archivedNotes={...session,id:'archived-notes',health:{...health,state:'failed',audio:{saved_bytes:0},empty_session:false,recovery_archived:true}};
+ const permFailedWithBrief={...session,id:'perm-failed',notes:[],brief:{title:'视频面试'},health:{...health,state:'failed',audio:{saved_bytes:0},empty_session:true,capture_failure_code:'permission_required'}};
  const active={...session,id:'active',health:{...health,native_running:true}};
- const grouped=recoveryGroups([session,empty,archived,active]);assert.equal(grouped.pending.length,1);assert.equal(grouped.active.length,1);assert.equal(grouped.empty.length,1);assert.equal(grouped.archived.length,1);
+ const grouped=recoveryGroups([session,empty,archived,archivedNotes,permFailedWithBrief,active]);
+ assert.equal(grouped.pending.length,1);assert.equal(grouped.active.length,1);assert.equal(grouped.empty.length,2);assert.equal(grouped.archived.length,2);
 });
 test('Unavailable storage or server cannot be mistaken for a successfully checked empty inventory',async()=>{
  const originalFetch=globalThis.fetch,originalIDB=globalThis.indexedDB;

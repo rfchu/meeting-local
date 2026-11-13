@@ -164,3 +164,29 @@ def test_empty_archive_is_reversible_and_cannot_hide_material(tmp_path):
         assert client.post(endpoint).status_code==409
         assert (folder/'system.pcm').read_bytes()==b'\0\0'
         assert client.post('/api/recordings/'+'0'*32+'/recovery-archive').status_code==404
+
+
+def test_no_audio_with_brief_or_notes_is_archivable_while_unconfirmed_control_is_blocked(tmp_path):
+    with TestClient(create_app(tmp_path,start_worker=False)) as client:
+        recordings=RecordingStore(client.app.state.store)
+        session=recordings.create('audio/wav');rid=session['id'];folder=recordings.folder(rid)
+        session['source']='macos';session['brief']={'title':'视频面试','interview':{'candidate':'','role':''}}
+        session['notes']=[{'raw_text':'保留简记'}]
+        recordings.write(folder/'session.json',session)
+        recordings.write(folder/'capture.json',{'state':'failed','duration':0})
+        snap=client.get(f'/api/recordings/{rid}/health').json()
+        assert not snap['empty_session'] and snap['no_audio_archivable']
+        endpoint=f'/api/recordings/{rid}/recovery-archive'
+        assert client.post(endpoint).status_code==200
+        assert client.get('/api/recordings').json()[0]['health']['recovery_archived']
+        assert client.post(endpoint+'?archived=false').status_code==200
+        unconfirmed=recordings.read(rid)
+        unconfirmed['control']={'version':1,'pending':{'command':'stop'}}
+        recordings.write(folder/'session.json',unconfirmed)
+        assert client.post(endpoint).status_code==409
+        empty_nested=recordings.create('audio/wav');erid=empty_nested['id']
+        empty_nested['source']='macos'
+        empty_nested['brief']={'source_language':'auto','output_language':'zh','title':'','interview':{'candidate':'','speaker_roles':None}}
+        recordings.write(recordings.folder(erid)/'session.json',empty_nested)
+        recordings.write(recordings.folder(erid)/'capture.json',{'state':'failed','duration':0})
+        assert client.get(f'/api/recordings/{erid}/health').json()['empty_session']
