@@ -1127,7 +1127,12 @@ export default function App({
               });
             }}
             onComplete={completeRecording}
-            onModels={() => shell.openManagement("models")}
+            onModels={() =>
+              void (async () => {
+                if (await leaveRecordingIfAllowed())
+                  shell.openManagement("models");
+              })()
+            }
             toast={toast}
           />
         )}

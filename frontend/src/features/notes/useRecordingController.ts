@@ -185,7 +185,7 @@ export function useRecordingController({
 
   const closeWithPreparation = async () => {
     if (!(await flushPreparationSave(true))) return;
-    if (stateRef.current !== "idle") return;
+    if (!["idle", "failed", "finished"].includes(stateRef.current)) return;
     onClose();
   };
   useEffect(() => {
