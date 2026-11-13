@@ -119,6 +119,7 @@ interface Props {
   onSeek: (
     time: number,
     track?: import("../../types").Segment["source_track"],
+    segmentId?: string,
   ) => void;
 }
 
@@ -245,7 +246,9 @@ export default function MinutesView(props: Props) {
       return first ? (
         <button
           className="citation minutes-table-citations"
-          onClick={() => props.onSeek(first.start, first.source_track)}
+          onClick={() =>
+            props.onSeek(first.start, first.source_track, first.id)
+          }
         >
           回听原话 {clock(first.start)}
         </button>
@@ -268,7 +271,7 @@ export default function MinutesView(props: Props) {
               <button
                 className="citation"
                 onClick={() =>
-                  props.onSeek(segment.start, segment.source_track)
+                  props.onSeek(segment.start, segment.source_track, segment.id)
                 }
               >
                 回听原话 {clock(segment.start)}

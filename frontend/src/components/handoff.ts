@@ -52,12 +52,16 @@ export const handoffRelations = {
 };
 
 // Apply only at the recording-to-meeting handoff, never during background polling.
-export function handoffWorkspace(
-  meeting: Meeting,
-): "notes" | "minutes" | "transcript" {
+export function handoffWorkspace(meeting: Meeting): "minutes" | "transcript" {
   const target = currentHandoff(meeting)?.primary.target;
-  if (!target || target === "notes" || target === "overview") return "notes";
-  if (["minutes", "actions", "preview"].includes(target)) return "minutes";
+  if (!target) {
+    return meeting.active_minutes_id ||
+      meeting.artifacts?.some((a) => a.kind === "meeting_minutes")
+      ? "minutes"
+      : "transcript";
+  }
+  if (["minutes", "actions", "preview", "notes", "overview"].includes(target))
+    return "minutes";
   return "transcript";
 }
 

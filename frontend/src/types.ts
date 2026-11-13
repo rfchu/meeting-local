@@ -2,8 +2,7 @@ export type SourceTrack = "system" | "microphone";
 export type SourceLanguage = "auto" | "zh" | "en" | "ja";
 export type TranscriptionLanguage = SourceLanguage;
 export type OutputLanguage = "zh" | "en";
-export type Workspace =
-  "prepare" | "transcript" | "notes" | "analysis" | "minutes" | "copilot";
+export type Workspace = "transcript" | "analysis" | "minutes";
 export type JobState =
   "queued" | "running" | "completed" | "failed" | "cancelled";
 export type MinutesStyle = "formal" | "brief" | "internal" | "ai";

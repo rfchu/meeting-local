@@ -26,7 +26,10 @@ interface Props {
   composing: boolean;
   onConfigure: () => void;
   onJobAction: (id: string, action: "cancel" | "retry") => void;
-  onSeek: (time: number) => void;
+  onSeek: (
+    time: number,
+    track?: import("../../types").Segment["source_track"],
+  ) => void;
   transcriptDirty: boolean;
 }
 
@@ -131,23 +134,23 @@ export default function AnalysisView({
       {!artifact ? (
         <div className="analysis-empty-dashboard">
           <div className="analysis-empty-card">
-            <div className="analysis-empty-badge">🧠 深度研判与洞察</div>
+            <div className="analysis-empty-badge">深度研判与洞察</div>
             <h3>尚未运行会议深度分析</h3>
             <p className="analysis-empty-desc">
-              深度研判结合全场文字稿，提炼议题演进脉络、观点立场透视、核心决议与行动项，并支持毫秒级精准溯源原声。
+              基于当前完整文字稿提炼会议概述、关键讨论、已定事项、待办与待确认问题，每条结论均关联原文片段，点击时间戳即可定位回听。
             </p>
             <div className="analysis-value-grid">
               <div className="analysis-value-item">
-                <strong>议题脉络追踪</strong>
-                <span>对照原文推演讨论转折与共识形成</span>
+                <strong>会议概述与关键讨论</strong>
+                <span>提炼核心内容与重要讨论点，关联原文出处</span>
               </div>
               <div className="analysis-value-item">
-                <strong>观点立场透视</strong>
-                <span>梳理各方诉求、核心关切与潜在分歧</span>
+                <strong>已定事项与待办清单</strong>
+                <span>整理明确决议、负责人与截止时间</span>
               </div>
               <div className="analysis-value-item">
-                <strong>决议闭环核对</strong>
-                <span>萃取确定事项、责任归属与待办计划</span>
+                <strong>待确认问题与原声回听</strong>
+                <span>汇总待澄清事项，点击引用时间定位原声片段</span>
               </div>
             </div>
             {environment?.analysis.ready && meeting.revision ? (
@@ -198,7 +201,9 @@ export default function AnalysisView({
                             key={segment!.id}
                             className="citation"
                             title={`${segment!.speaker}：${segment!.text}`}
-                            onClick={() => onSeek(segment!.start)}
+                            onClick={() =>
+                              onSeek(segment!.start, segment!.source_track)
+                            }
                           >
                             {clock(segment!.start)}
                           </button>

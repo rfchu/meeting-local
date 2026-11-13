@@ -75,6 +75,9 @@ export type RecordingDialogProps = {
   engines: EngineInfo[];
   onClose: () => void;
   onPhaseChange?: (phase: "setup" | "active") => void;
+  leaveGuardRef?: import("react").MutableRefObject<
+    (() => Promise<boolean>) | null
+  >;
   onComplete: (
     meetingId: string,
     options: {
@@ -99,6 +102,7 @@ export function useRecordingController({
   environment,
   minutesModel,
   onMinutesModel,
+  leaveGuardRef,
 }: RecordingDialogProps) {
   const mountedRef = useRef(true);
   const pendingStartCleanup = useRef<(() => void) | null>(null);
@@ -115,31 +119,75 @@ export function useRecordingController({
     };
   }, []);
 
-  const closeWithPreparation = () => {
-    if (stateRef.current === "requesting") {
-      toast("正在启动录音通道，请稍候…");
-      return;
-    }
-    if (!flowReady || stateRef.current !== "idle" || !briefReady) {
-      onClose();
-      return;
-    }
-    briefQueue.current = briefQueue.current
-      .catch(() => {})
-      .then(() => api.savePreparation(briefRef.current))
-      .then(() => {
-        if (stateRef.current !== "idle") return;
-        toast("已自动保存备会草稿");
-        onClose();
-      })
-      .catch((e) => toast("会议准备未保存，窗口已保留：" + e.message));
-  };
   const [brief, setBrief] = useState<MeetingBrief>(emptyBrief);
   const briefRef = useRef(brief);
   briefRef.current = brief;
   const [briefReady, setBriefReady] = useState(false),
     [briefSaved, setBriefSaved] = useState(true);
+  const briefReadyRef = useRef(briefReady);
+  briefReadyRef.current = briefReady;
+  const briefSavedRef = useRef(briefSaved);
+  briefSavedRef.current = briefSaved;
   const briefQueue = useRef(Promise.resolve());
+  const briefTimerRef = useRef<number | undefined>(undefined);
+  const lastSavedBriefRef = useRef<MeetingBrief | null>(null);
+
+  const flushPreparationSave = useCallback(
+    async (notifySuccess = false): Promise<boolean> => {
+      if (stateRef.current === "requesting") {
+        toast("正在启动录音通道，请稍候…");
+        return false;
+      }
+      if (!flowReady || stateRef.current !== "idle" || !briefReadyRef.current) {
+        return true;
+      }
+      if (briefTimerRef.current !== undefined) {
+        window.clearTimeout(briefTimerRef.current);
+        briefTimerRef.current = undefined;
+      }
+      const snapshot = briefRef.current;
+      let ok = true;
+      let savedNow = false;
+      const task = briefQueue.current
+        .catch(() => {})
+        .then(async () => {
+          if (briefSavedRef.current && lastSavedBriefRef.current === snapshot) {
+            return;
+          }
+          await api.savePreparation(snapshot);
+          savedNow = true;
+          lastSavedBriefRef.current = snapshot;
+          if (briefRef.current === snapshot && mountedRef.current) {
+            setBriefSaved(true);
+          }
+        })
+        .catch((e) => {
+          ok = false;
+          toast("会议准备未保存，窗口已保留：" + (e as Error).message);
+        });
+      briefQueue.current = task;
+      await task;
+      if (ok && notifySuccess && savedNow && stateRef.current === "idle") {
+        toast("已自动保存备会草稿");
+      }
+      return ok && briefRef.current === snapshot;
+    },
+    [flowReady, toast],
+  );
+
+  useEffect(() => {
+    if (!leaveGuardRef) return;
+    leaveGuardRef.current = () => flushPreparationSave(false);
+    return () => {
+      leaveGuardRef.current = null;
+    };
+  }, [leaveGuardRef, flushPreparationSave]);
+
+  const closeWithPreparation = async () => {
+    if (!(await flushPreparationSave(true))) return;
+    if (stateRef.current !== "idle") return;
+    onClose();
+  };
   useEffect(() => {
     if (!flowReady) {
       setBriefReady(true);
@@ -150,14 +198,17 @@ export function useRecordingController({
     void api
       .preparation()
       .then((value) => {
-        if (live)
-          setBrief({
+        if (live) {
+          const initialBrief = {
             ...value,
             source_language:
               value.source_language || preferences.sourceLanguage || "auto",
             output_language:
               value.output_language || preferences.outputLanguage || "zh",
-          });
+          };
+          lastSavedBriefRef.current = initialBrief;
+          setBrief(initialBrief);
+        }
       })
       .catch((e) => toast("会议准备未载入：" + e.message))
       .finally(() => live && setBriefReady(true));
@@ -1536,21 +1587,36 @@ export function useRecordingController({
   };
   useEffect(() => {
     if (!flowReady || !briefReady || state !== "idle") return;
+    if (lastSavedBriefRef.current === brief) {
+      setBriefSaved(true);
+      return;
+    }
     setBriefSaved(false);
+    const snapshot = brief;
     const timer = window.setTimeout(() => {
-      const snapshot = brief;
+      briefTimerRef.current = undefined;
       briefQueue.current = briefQueue.current
         .catch(() => {})
-        .then(() => api.savePreparation(snapshot))
-        .then(() => {
-          if (briefRef.current === snapshot) setBriefSaved(true);
+        .then(async () => {
+          if (lastSavedBriefRef.current === snapshot) return;
+          await api.savePreparation(snapshot);
+          lastSavedBriefRef.current = snapshot;
+          if (briefRef.current === snapshot && mountedRef.current) {
+            setBriefSaved(true);
+          }
         })
         .catch((e) => {
-          toast("会议准备保存失败：" + e.message);
+          toast("会议准备保存失败：" + (e as Error).message);
         });
     }, 600);
-    return () => window.clearTimeout(timer);
-  }, [brief, briefReady, state, flowReady]);
+    briefTimerRef.current = timer;
+    return () => {
+      window.clearTimeout(timer);
+      if (briefTimerRef.current === timer) {
+        briefTimerRef.current = undefined;
+      }
+    };
+  }, [brief, briefReady, state, flowReady, toast]);
   const addNote = () => {
     const text = noteText.trim();
     if (!text) return;

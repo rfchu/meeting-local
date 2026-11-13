@@ -1,33 +1,35 @@
 import { useState, useRef, useEffect } from "react";
-import type { Meeting } from "../../types";
+import type { Meeting, SourceTrack } from "../../types";
 import { paragraphs } from "../transcript/paragraphs";
 import TranscriptList from "../transcript/TranscriptList";
+import {
+  resolveReviewFocusedSegment,
+  type ReviewFocusTarget,
+} from "./reviewFocus";
+
+export { resolveReviewFocusedSegment, type ReviewFocusTarget };
+
 export default function ReviewSourcePane({
   meeting,
-  focusTime,
+  focus,
   focusVersion,
   onSeek,
   activeSegment,
   onEdit,
 }: {
   meeting: Meeting;
-  focusTime: number | null;
+  focus: ReviewFocusTarget | null;
   focusVersion: number;
   activeSegment?: string;
-  onSeek: (time: number) => void;
+  onSeek: (time: number, track?: SourceTrack) => void;
   onEdit: () => void;
 }) {
   const pane = useRef<HTMLElement>(null);
   const [query, setQuery] = useState("");
   useEffect(() => {
-    if (focusTime !== null) setQuery("");
+    if (focus !== null) setQuery("");
   }, [focusVersion]);
-  const focused =
-    focusTime === null
-      ? undefined
-      : meeting.segments.find(
-          (s) => s.start <= focusTime && s.end > focusTime,
-        ) || meeting.segments.find((s) => s.start >= focusTime);
+  const focused = resolveReviewFocusedSegment(meeting.segments, focus);
   const grouped = paragraphs(meeting.segments).map(({ parts, ...segment }) => ({
     ...segment,
     reading_parts: parts,
@@ -68,6 +70,7 @@ export default function ReviewSourcePane({
           segments={segments}
           total={grouped.length}
           jumpSegmentId={query ? undefined : focusedGroup?.id}
+          jumpVersion={focusVersion}
           onSeek={onSeek}
           onUpdate={() => {}}
           onEditingChange={() => {}}

@@ -5,7 +5,9 @@ import OverviewArchiveButton from "./features/overview/OverviewArchiveButton";
 import SampleMeetingDialog from "./features/onboarding/SampleMeetingDialog";
 import { recordingRecoveryCount } from "./features/notes/recordingInventory";
 import MinutesDeliveryPanel from "./features/minutes/MinutesDeliveryPanel";
-import ReviewSourcePane from "./features/meeting/ReviewSourcePane";
+import ReviewSourcePane, {
+  type ReviewFocusTarget,
+} from "./features/meeting/ReviewSourcePane";
 import {
   browserMeetingStorage,
   readMeetingView,
@@ -41,6 +43,7 @@ import type {
   MinutesTemplate,
   MinutesStyle,
   Segment,
+  SourceTrack,
   Workspace,
   TranscriptionLanguage,
 } from "./types";
@@ -56,7 +59,7 @@ import {
 } from "./utils";
 import Sidebar from "./components/Sidebar";
 import Workflow from "./components/Workflow";
-import { handoffWorkspace } from "./components/handoff";
+import { currentHandoff, handoffWorkspace } from "./components/handoff";
 import Player from "./components/Player";
 import { AppModals } from "./components/AppModals";
 import Modal from "./components/Modal";
@@ -195,8 +198,11 @@ export default function App({
           (meeting.revision ? "zh" : "auto"),
       );
   }, [meeting?.id, meeting?.flow?.brief.source_language]);
-  const [reviewFocus, setReviewFocus] = useState<number | null>(null);
+  const [reviewFocus, setReviewFocus] = useState<ReviewFocusTarget | null>(
+    null,
+  );
   const [reviewFocusVersion, setReviewFocusVersion] = useState(0);
+  const recordingLeaveGuardRef = useRef<(() => Promise<boolean>) | null>(null);
   const [reviewSourceOpen, setReviewSourceOpen] = useState(false);
   const [reviewBusy, setReviewBusy] = useState(false);
   const [searchTarget, setSearchTarget] = useState<SearchHit | null>(null);
@@ -448,17 +454,30 @@ export default function App({
     return () => window.clearTimeout(timer);
   }, [minutesDirty, minutesDraft, saveMinutes]);
 
-  const locateReview = (time: number) => {
-    setReviewFocus(time);
+  const locateReview = (
+    time: number,
+    segmentId?: string,
+    track?: SourceTrack | null,
+  ) => {
+    setReviewFocus({ time, segmentId, track });
     setReviewFocusVersion((value) => value + 1);
+  };
+
+  const leaveRecordingIfAllowed = async () => {
+    if (shell.route.kind !== "recording") return true;
+    if (shell.recordingLocked) {
+      toast("请先返回录音现场；结束录音后可离开。");
+      return false;
+    }
+    if (!recordingLeaveGuardRef.current) return true;
+    return await recordingLeaveGuardRef.current();
   };
 
   const openMeeting = async (
     id: string,
     { switchRoute = true }: { switchRoute?: boolean } = {},
   ) => {
-    if (switchRoute && shell.recordingLocked) {
-      toast("请先返回录音现场；结束录音后可打开其他会议。");
+    if (switchRoute && !(await leaveRecordingIfAllowed())) {
       return null;
     }
     setReviewFocus(null);
@@ -498,9 +517,7 @@ export default function App({
       if (!artifact && minutesOptions.method === "current")
         setMinutesOptions((old) => ({ ...old, method: "ai" }));
       setShowCitations(artifact?.payload.style === "internal");
-      setWorkspace(
-        readMeetingView(id, browserMeetingStorage()).workspace || "minutes",
-      );
+      setWorkspace(restored.workspace);
 
       meetingRef.current = value;
       const job = latestJob(value, "transcription");
@@ -535,8 +552,7 @@ export default function App({
       );
   }, [meeting?.id, workspace, selectedMinutesId]);
   const goHome = async () => {
-    if (shell.recordingLocked) {
-      toast("请先返回录音现场；结束录音后可打开其他会议。");
+    if (!(await leaveRecordingIfAllowed())) {
       return;
     }
     if (savingTranscript) {
@@ -602,6 +618,7 @@ export default function App({
   }, [meeting?.id, transcriptDirty, minutesDirty, savingMinutes]);
 
   const upload = async (file: File) => {
+    if (!(await leaveRecordingIfAllowed())) return;
     setUploading(true);
     try {
       toast("正在将录音保存到本机…");
@@ -694,9 +711,18 @@ export default function App({
       if (!opened)
         throw new Error("本机会议已保存，打开暂未成功，请重试进入会后整理");
       shell.exitRecording();
-      setWorkspace(
-        options.mode === "none" ? "notes" : handoffWorkspace(opened),
-      );
+      const handoffTarget = currentHandoff(opened)?.primary.target;
+      if (options.mode === "none") {
+        setWorkspace("transcript");
+      } else {
+        setWorkspace(handoffWorkspace(opened));
+        if (handoffTarget === "notes") {
+          shell.openModal({ kind: "notes" });
+        } else if (handoffTarget === "overview") {
+          setOverviewSourceId(undefined);
+          setOverviewFocus(true);
+        }
+      }
       toast(
         reusedHandoff
           ? `已打开会议，沿用首次交接的任务。处理状态可在${UNIFIED_MANAGEMENT_LABEL}查看，失败或取消的任务可在那里重试。`
@@ -951,7 +977,11 @@ export default function App({
         activeRoute={shell.route.kind}
         recordingLocked={shell.recordingLocked}
         onHome={() => void goHome()}
-        onLibrary={shell.openLibrary}
+        onLibrary={() =>
+          void (async () => {
+            if (await leaveRecordingIfAllowed()) shell.openLibrary();
+          })()
+        }
         meetings={listQuery.data || []}
         currentId={meeting?.id}
         uploading={uploading}
@@ -959,14 +989,25 @@ export default function App({
         onUpload={(file) => void upload(file)}
         onRecord={browserWorkspace ? undefined : () => shell.openRecording()}
         onManage={
-          browserWorkspace ? undefined : () => shell.openManagement("overview")
+          browserWorkspace
+            ? undefined
+            : () =>
+                void (async () => {
+                  if (await leaveRecordingIfAllowed())
+                    shell.openManagement("overview");
+                })()
         }
         onSearch={() => shell.openModal({ kind: "search" })}
         browserWorkspace={browserWorkspace}
         onFollowups={() =>
-          environment?.meeting_flow_ready
-            ? shell.openFollowups()
-            : toast("跨会议跟进需在录音和任务结束后更新服务，现有内容已保留。")
+          void (async () => {
+            if (!(await leaveRecordingIfAllowed())) return;
+            environment?.meeting_flow_ready
+              ? shell.openFollowups()
+              : toast(
+                  "跨会议跟进需在录音和任务结束后更新服务，现有内容已保留。",
+                );
+          })()
         }
         recoveryCount={recordingRecoveryCount(recoveryQuery.data || [])}
       />
@@ -1019,9 +1060,9 @@ export default function App({
                 (item) => item.id === segmentId,
               );
               if (segment) {
-                setWorkspace("notes");
+                setWorkspace("minutes");
                 setReviewSourceOpen(true);
-                locateReview(segment.start);
+                locateReview(segment.start, segment.id, segment.source_track);
               }
             }}
           />
@@ -1078,6 +1119,7 @@ export default function App({
             engineLabel={engineLabel(engine)}
             engines={environment?.engines || []}
             onPhaseChange={shell.setRecordingPhase}
+            leaveGuardRef={recordingLeaveGuardRef}
             onClose={() => {
               shell.exitRecording();
               void client.invalidateQueries({
@@ -1851,7 +1893,7 @@ export default function App({
                       composing={generating}
                       onConfigure={() => shell.openManagement("models")}
                       onJobAction={(id, action) => void jobAction(id, action)}
-                      onSeek={(time) => seekRef.current?.(time)}
+                      onSeek={(time, track) => seekRef.current?.(time, track)}
                       transcriptDirty={transcriptDirty}
                     />
                   )}
@@ -1864,10 +1906,10 @@ export default function App({
                           activeSegment={activeSegment}
                           key={meeting.id}
                           meeting={meeting}
-                          focusTime={reviewFocus}
+                          focus={reviewFocus}
                           focusVersion={reviewFocusVersion}
-                          onSeek={(time) => {
-                            seekRef.current?.(time);
+                          onSeek={(time, track) => {
+                            seekRef.current?.(time, track);
                           }}
                           onEdit={() => setWorkspace("transcript")}
                         />
@@ -1949,8 +1991,8 @@ export default function App({
                           }
                           onSave={() => void saveMinutes()}
                           onPreview={() => void openMinutesPreview()}
-                          onSeek={(time, track) => {
-                            locateReview(time);
+                          onSeek={(time, track, segmentId) => {
+                            locateReview(time, segmentId, track);
                             setReviewSourceOpen(true);
                             seekRef.current?.(time, track);
                           }}
@@ -1958,10 +2000,10 @@ export default function App({
                         <MeetingOutcomes
                           focusRequested={actionsFocus}
                           onFocused={() => setActionsFocus(false)}
-                          onSeek={(time) => {
-                            locateReview(time);
+                          onSeek={(time, track, segmentId) => {
+                            locateReview(time, segmentId, track);
                             setReviewSourceOpen(true);
-                            seekRef.current?.(time);
+                            seekRef.current?.(time, track);
                           }}
                           minutesDirty={minutesDirty}
                           meeting={meeting}
@@ -2029,8 +2071,16 @@ export default function App({
           shell.closeModal();
           setSearchTarget(current);
         }}
-        onManageIndex={() => shell.openManagement("index")}
-        onConfigureSearch={() => shell.openManagement("models")}
+        onManageIndex={() =>
+          void (async () => {
+            if (await leaveRecordingIfAllowed()) shell.openManagement("index");
+          })()
+        }
+        onConfigureSearch={() =>
+          void (async () => {
+            if (await leaveRecordingIfAllowed()) shell.openManagement("models");
+          })()
+        }
         renameOpen={renameOpen}
         meeting={meeting}
         onRenameClose={shell.closeModal}

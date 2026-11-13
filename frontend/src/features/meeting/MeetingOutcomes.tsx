@@ -19,7 +19,11 @@ export default function MeetingOutcomes({
   minutesDirty?: boolean;
   onRefresh: () => Promise<void>;
   onNotes: () => void;
-  onSeek: (time: number) => void;
+  onSeek: (
+    time: number,
+    track?: import("../../types").Segment["source_track"],
+    segmentId?: string,
+  ) => void;
   toast: (text: string) => void;
 }) {
   const [busy, setBusy] = useState(false);
@@ -200,7 +204,11 @@ function ActionCandidate({
   index: number;
   item: import("../../types").MinutesItem;
   sources: import("../../types").Segment[];
-  onSeek: (time: number) => void;
+  onSeek: (
+    time: number,
+    track?: import("../../types").Segment["source_track"],
+    segmentId?: string,
+  ) => void;
   alreadyTracked: boolean;
   onRefresh: () => Promise<void>;
   toast: (text: string) => void;
@@ -217,7 +225,15 @@ function ActionCandidate({
         <summary>核对原文依据 · {sources.length} 条</summary>
         {sources.map((source) => (
           <article key={source.id}>
-            <button onClick={() => onSeek(source.start)}>
+            <button
+              onClick={() =>
+                onSeek(
+                  source.start,
+                  source.source_track ?? undefined,
+                  source.id,
+                )
+              }
+            >
               回听 {source.start.toFixed(0)} 秒
             </button>
             <p>

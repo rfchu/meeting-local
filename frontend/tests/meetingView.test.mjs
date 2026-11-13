@@ -7,10 +7,30 @@ const {deliveryAttentionCount}=await compile('../src/components/deliveryAttentio
 const memory=()=>{const rows=new Map();return {getItem:k=>rows.get(k)||null,setItem:(k,v)=>rows.set(k,v),rows};};
 test('meeting view merges playback and workspace changes while keeping different meetings independent',()=>{
   const storage=memory();saveMeetingView('a',{workspace:'transcript',minutesId:'old',position:35,rate:1.5,track:'system'},storage);
-  saveMeetingView('b',{workspace:'minutes',position:9},storage);saveMeetingView('a',{workspace:'notes'},storage);
-  assert.deepEqual(readMeetingView('a',storage),{workspace:'notes',minutesId:'old',position:35,rate:1.5,track:'system'});
+  saveMeetingView('b',{workspace:'minutes',position:9},storage);saveMeetingView('a',{workspace:'analysis'},storage);
+  assert.deepEqual(readMeetingView('a',storage),{workspace:'analysis',minutesId:'old',position:35,rate:1.5,track:'system'});
   assert.equal(readMeetingView('b',storage).position,9);
   rememberMeeting('a',storage);assert.equal(lastMeeting(storage),'a');rememberMeeting('',storage);assert.equal(lastMeeting(storage),'');
+});
+test('resolveMeetingView covers audio-only, transcript-only, minutes-ready, and legacy bookmarks',()=>{
+  const minutes={id:'m1',kind:'meeting_minutes',revision:1,stale:false};
+  const audioOnly={revision:0,duration:30,artifacts:[],audio_tracks:['microphone']};
+  const transcriptOnly={revision:1,duration:30,artifacts:[],audio_tracks:['microphone']};
+  const withMinutes={revision:1,duration:30,active_minutes_id:'m1',artifacts:[minutes],audio_tracks:['microphone']};
+
+  assert.equal(resolveMeetingView(audioOnly,{}).workspace,'transcript');
+  assert.equal(resolveMeetingView(transcriptOnly,{}).workspace,'transcript');
+  assert.equal(resolveMeetingView(withMinutes,{}).workspace,'minutes');
+
+  const storage=memory();
+  for (const legacy of ['notes','prepare','copilot']) {
+    storage.setItem('tingji.meeting.views.v1',JSON.stringify({a:{workspace:legacy,position:5}}));
+    const saved=readMeetingView('a',storage);
+    assert.equal(saved.workspace,undefined);
+    assert.equal(resolveMeetingView(audioOnly,saved).workspace,'transcript');
+    assert.equal(resolveMeetingView(withMinutes,saved).workspace,'minutes');
+    assert.equal(resolveMeetingView(audioOnly,{workspace:legacy}).workspace,'transcript');
+  }
 });
 test('missing or foreign minutes fall back to adopted artifact; unavailable tracks and excessive position are corrected',()=>{
   const active={id:'active',kind:'meeting_minutes',revision:1,stale:false};const old={id:'old',kind:'meeting_minutes',revision:1,stale:true};

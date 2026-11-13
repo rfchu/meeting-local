@@ -647,8 +647,13 @@ h1 {
   color: var(--text-heading, #0f172a);
   cursor: pointer;
 }
-.action-menu-dropdown button:hover {
+.action-menu-dropdown button:hover,
+.action-menu-dropdown button:focus-visible {
   background: var(--bg-hover, #f1f5f9);
+}
+.action-menu-dropdown button:focus-visible {
+  outline: 2px solid var(--accent, #2563eb);
+  outline-offset: -2px;
 }
 .action-menu-dropdown button.danger-text {
   color: #dc2626;

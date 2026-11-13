@@ -233,6 +233,7 @@ export default function TranscriptList({
   onUpdate,
   onSeek,
   jumpSegmentId,
+  jumpVersion,
   onEditingChange,
   scrollRoot,
   activeSegment,
@@ -248,6 +249,7 @@ export default function TranscriptList({
   onUpdate: (segment: Segment) => void;
   onSeek: (time: number, track?: SourceTrack) => void;
   jumpSegmentId?: string;
+  jumpVersion?: number;
   onEditingChange: (id: string | null) => void;
   fullDom?: boolean;
   hideVirtualBar?: boolean;
@@ -300,7 +302,7 @@ export default function TranscriptList({
         });
       else row?.scrollIntoView({ block: "center" });
     }
-  }, [jumpSegmentId, segments, virtual, list, scrollRoot]);
+  }, [jumpSegmentId, jumpVersion, segments, virtual, list, scrollRoot]);
   useEffect(() => {
     if (!pendingFocus) return;
     const index = segments.findIndex((s) => s.id === pendingFocus.id);

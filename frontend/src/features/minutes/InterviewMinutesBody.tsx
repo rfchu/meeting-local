@@ -104,7 +104,11 @@ export default function InterviewMinutesBody({
   segments: Segment[];
   translations?: Record<string, string>;
   onChange: (d: MeetingMinutes) => void;
-  onSeek: (t: number, track?: Segment["source_track"]) => void;
+  onSeek: (
+    t: number,
+    track?: Segment["source_track"],
+    segmentId?: string,
+  ) => void;
   onPreparation: () => void;
 }) {
   const [sourcePicker, setSourcePicker] = useState<string | null>(null);
@@ -224,7 +228,9 @@ export default function InterviewMinutesBody({
                 segment && (
                   <button
                     key={id}
-                    onClick={() => onSeek(segment.start, segment.source_track)}
+                    onClick={() =>
+                      onSeek(segment.start, segment.source_track, segment.id)
+                    }
                   >
                     回听 {Math.floor(segment.start / 60)}:
                     {String(Math.floor(segment.start % 60)).padStart(2, "0")}
@@ -614,7 +620,11 @@ export default function InterviewMinutesBody({
                               disabled={!source}
                               onClick={() =>
                                 source &&
-                                onSeek(source.start, source.source_track)
+                                onSeek(
+                                  source.start,
+                                  source.source_track,
+                                  source.id,
+                                )
                               }
                             >
                               {!source

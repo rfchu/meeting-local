@@ -13,7 +13,7 @@ test('Meeting attention counts use the shared projection with an old-server fall
 test('Context, explicit adoption and confirmed tracking have different labels',()=>{assert.notEqual(handoffRelations.context,handoffRelations.explicit_adoption);assert.match(handoffRelations.confirmed_tracking,/确认/);});
 
 const {handoffWorkspace}=await load('../src/components/handoff.ts');
-test('Recording handoff chooses the relevant workspace and keeps compatibility fallback',()=>{for(const [target,expected] of [['tasks','transcript'],['transcript','transcript'],['notes','notes'],['actions','minutes'],['minutes','minutes'],['overview','notes']]){const value=fixture();value.handoff.primary.target=target;assert.equal(handoffWorkspace(value),expected);}assert.equal(handoffWorkspace({}), 'notes');});
+test('Recording handoff chooses valid rendered workspace and avoids blank notes view',()=>{for(const [target,expected] of [['tasks','transcript'],['transcript','transcript'],['notes','minutes'],['actions','minutes'],['minutes','minutes'],['overview','minutes']]){const value=fixture();value.handoff.primary.target=target;assert.equal(handoffWorkspace(value),expected);}assert.equal(handoffWorkspace({}), 'transcript');assert.equal(handoffWorkspace({artifacts:[{id:'m1',kind:'meeting_minutes'}]}), 'minutes');});
 
 const {handoffTaskFocus}=await load('../src/components/handoff.ts');
 const {taskQuery}=await load('../src/features/management/taskScope.ts');
