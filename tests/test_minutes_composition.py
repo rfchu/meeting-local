@@ -262,3 +262,36 @@ def test_compat_minutes_does_not_bypass_live_priority_or_send_to_model(setup,mon
     scheduler.set_realtime([])
     assert client.post(f'/api/meetings/{mid}/minutes/compose',json={'model':'synthetic'}).status_code==201
     assert called==['must not send'] and not scheduler.snapshot()['requests']
+
+
+def test_overlong_minutes_citations_are_capped_without_losing_validation(tmp_path):
+    provider=LMStudioProvider()
+    segments=[{'id':f'real-{i+1}','start':i,'end':i+1,'speaker':'甲','text':f'第{i+1}句'} for i in range(143)]
+    aliases=[f's{i+1}' for i in range(143)]
+
+    def run_valid(args,extra):
+        output=result().model_dump()
+        output['basic_info']['source_segment_ids']=list(aliases)
+        output['core_content'][0]['source_segment_ids']=list(aliases)
+        for key in ('overview','decisions','action_items','open_questions','summary'):
+            for entry in output[key]:
+                entry['source_segment_ids']=['s1']
+        Path(args[args.index('--output')+1]).write_text(encode(output))
+
+    out=provider.generate_ai_minutes('synthetic',segments,{'composition':{'detail_level':'standard'},'minutes_template':{}},tmp_path/'valid',run_valid)
+    assert out.basic_info.source_segment_ids==[f'real-{i+1}' for i in range(6)]
+    assert len(out.core_content[0].source_segment_ids)==100
+    doc=build_from_ai('2026-11-13 00:00:00',out,CompositionSettings())
+    assert len(doc.basic_info_source_segment_ids)==6
+    assert len(doc.conclusions[0].source_segment_ids)==100
+
+    def run_invalid(args,extra):
+        output=result().model_dump()
+        output['basic_info']['source_segment_ids']=aliases[:-1]+['hallucinated']
+        for key in ('overview','core_content','decisions','action_items','open_questions','summary'):
+            for entry in output[key]:
+                entry['source_segment_ids']=['s1']
+        Path(args[args.index('--output')+1]).write_text(encode(output))
+
+    with pytest.raises(ValueError,match='基本信息包含不存在的原文引用'):
+        provider.generate_ai_minutes('synthetic',segments,{'composition':{'detail_level':'standard'},'minutes_template':{}},tmp_path/'invalid',run_invalid)

@@ -100,6 +100,42 @@ class AIMinutesResult(BaseModel):
         if self.interview:yield from self.interview.analysis_items()
 
 
+MAX_BASIC_INFO_CITATIONS=6
+MAX_ITEM_CITATIONS=100
+
+
+def _cap_source_ids(values,valid_ids,limit):
+    if not isinstance(values,list) or not all(isinstance(item,str) for item in values):
+        return values
+    deduped=list(dict.fromkeys(values))
+    if len(deduped)<=limit:
+        return deduped
+    # Preserve at least one unknown ID so downstream citation checks still reject hallucinations.
+    invalid=[sid for sid in deduped if sid not in valid_ids]
+    valid=[sid for sid in deduped if sid in valid_ids]
+    return (invalid[:1]+valid)[:limit] if invalid else valid[:limit]
+
+
+def cap_generated_minutes_citations(raw_result,valid_ids,speakers):
+    """Bound overlong model citation lists before validating persisted minutes schemas."""
+    if not isinstance(raw_result,dict):
+        return
+    basic_info=raw_result.get('basic_info')
+    if isinstance(basic_info,dict):
+        if 'source_segment_ids' in basic_info:
+            basic_info['source_segment_ids']=_cap_source_ids(basic_info['source_segment_ids'],valid_ids,MAX_BASIC_INFO_CITATIONS)
+        attendees=basic_info.get('attendees')
+        if isinstance(attendees,list) and all(isinstance(name,str) for name in attendees):
+            basic_info['attendees']=[name for name in dict.fromkeys(attendees) if name in speakers][:100]
+    for section in ('core_content','action_items','summary','overview','decisions','open_questions'):
+        items=raw_result.get(section)
+        if not isinstance(items,list):
+            continue
+        for item in items:
+            if isinstance(item,dict) and 'source_segment_ids' in item:
+                item['source_segment_ids']=_cap_source_ids(item['source_segment_ids'],valid_ids,MAX_ITEM_CITATIONS)
+
+
 def validate_citations(result:MeetingAnalysis,valid_ids:set[str]):
     for item in result.all_items():
         if not set(item.source_segment_ids).issubset(valid_ids):
@@ -354,6 +390,7 @@ class LMStudioProvider:
             source_segments=[{**segment,'id':aliases[segment['id']]} for segment in segments]
             if isinstance(raw_result, dict):
                 cap_generated_evidence(raw_result.get('interview'),source_segments,alias_roles)
+        cap_generated_minutes_citations(raw_result,valid_ids,speakers)
         result=AIMinutesResult.model_validate(raw_result)
         if template.get('id')=='online-interview':
             if not result.interview:raise ValueError('模型未返回结构化面试纪要')
